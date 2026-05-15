@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -27,9 +27,8 @@ export function loadSession(): Session | null {
 }
 
 export function saveSession(session: Session): void {
-  if (!existsSync(SESSION_DIR)) {
-    mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
-  }
+  mkdirSync(SESSION_DIR, { recursive: true });
+  chmodSync(SESSION_DIR, 0o700);
   writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
 
@@ -40,5 +39,9 @@ export function clearSession(): void {
 }
 
 export function getApiUrl(): string {
-  return process.env.NOPASS_API_URL ?? "http://localhost:3001";
+  const url = process.env.NOPASS_API_URL ?? "http://localhost:3001";
+  if (url.startsWith("http://") && !url.includes("localhost") && !url.includes("127.0.0.1")) {
+    process.stderr.write("Warning: NOPASS_API_URL uses plaintext HTTP over a non-local host — credentials may be exposed\n");
+  }
+  return url;
 }

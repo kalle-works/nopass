@@ -53,5 +53,8 @@ export async function importKeys(
     crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]),
   ]);
 
+  encKeyBytes.fill(0);
+  macKeyBytes.fill(0);
+
   return { vaultEncKey, vaultMacKey };
 }

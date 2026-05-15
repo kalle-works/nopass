@@ -6,28 +6,29 @@ import { ApiError } from "../api-client.js";
 
 function prompt(question: string, hidden = false): Promise<string> {
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
     if (hidden) {
-      // Disable echo for password input
       process.stdout.write(question);
       process.stdin.setRawMode?.(true);
-      let input = "";
-      process.stdin.setEncoding("utf-8");
-      process.stdin.once("data", function handler(chunk: string) {
-        process.stdin.setRawMode?.(false);
-        process.stdin.removeListener("data", handler);
-        process.stdout.write("\n");
-        rl.close();
-        for (const c of chunk) {
-          if (c === "\r" || c === "\n") break;
-          if (c === "\x7f" || c === "\b") { input = input.slice(0, -1); continue; }
-          if (c === "\x03") process.exit(1);
-          input += c;
-        }
-        resolve(input);
-      });
       process.stdin.resume();
+      let input = "";
+      const handler = (chunk: Buffer) => {
+        for (const byte of chunk) {
+          if (byte === 0x0d || byte === 0x0a) { // enter
+            process.stdin.setRawMode?.(false);
+            process.stdin.removeListener("data", handler);
+            process.stdin.pause();
+            process.stdout.write("\n");
+            resolve(input);
+            return;
+          }
+          if (byte === 0x03) process.exit(1); // Ctrl+C
+          if (byte === 0x7f || byte === 0x08) { input = input.slice(0, -1); continue; } // backspace
+          input += String.fromCharCode(byte);
+        }
+      };
+      process.stdin.on("data", handler);
     } else {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
       rl.question(question, (answer) => {
         rl.close();
         resolve(answer.trim());
