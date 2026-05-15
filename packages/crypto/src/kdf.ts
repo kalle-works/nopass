@@ -76,6 +76,22 @@ export async function stretchMasterKey(
   return { stretchedMasterKey, vaultEncKey, vaultMacKey };
 }
 
+/**
+ * Raw subkeys for contexts that need to pass key material across a trust boundary
+ * (e.g. extension popup → service worker). Caller is responsible for zeroing buffers.
+ */
+export async function stretchMasterKeyRaw(
+  masterKey: Uint8Array,
+  email: string,
+): Promise<{ encKeyBytes: Uint8Array<ArrayBuffer>; macKeyBytes: Uint8Array<ArrayBuffer> }> {
+  const salt = enc.encode(email.toLowerCase());
+  const toAb = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => new Uint8Array(bytes);
+  return {
+    encKeyBytes: toAb(hkdf(sha256, masterKey, salt, enc.encode("nopass-v1-enc"), 32)),
+    macKeyBytes: toAb(hkdf(sha256, masterKey, salt, enc.encode("nopass-v1-mac"), 32)),
+  };
+}
+
 /** Compute the email hash sent to the server: SHA-256("nopass-v1-email:" + lowercase(email)) */
 export function computeEmailHash(email: string): string {
   const bytes = sha256(enc.encode(`nopass-v1-email:${email.toLowerCase()}`));

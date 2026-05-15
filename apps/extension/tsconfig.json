@@ -1,0 +1,7 @@
+{
+  "extends": "@nopass/config/tsconfig/react",
+  "compilerOptions": {
+    "types": ["chrome", "vite/client"]
+  },
+  "include": ["src", "vite.config.ts"]
+}
