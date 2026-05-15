@@ -5,6 +5,18 @@ use uuid::Uuid;
 
 use crate::models::vault::{Vault, VaultItem};
 
+pub async fn create_vault(pool: &PgPool, user_id: Uuid) -> Result<Vault> {
+    let vault = sqlx::query_as::<_, Vault>(
+        "INSERT INTO vaults (user_id, name_blob, name_iv) VALUES ($1, $2, $3) RETURNING *",
+    )
+    .bind(user_id)
+    .bind(b"default".as_ref())
+    .bind(b"\x00".as_ref())
+    .fetch_one(pool)
+    .await?;
+    Ok(vault)
+}
+
 pub async fn list_vaults_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Vault>> {
     let vaults =
         sqlx::query_as::<_, Vault>("SELECT * FROM vaults WHERE user_id = $1 ORDER BY created_at")

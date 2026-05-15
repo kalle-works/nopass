@@ -40,7 +40,7 @@ describe("encryptItem / decryptItem", () => {
 
     // Flip a byte in the ciphertext
     const blobBytes = atob(encrypted.blob).split("").map((c) => c.charCodeAt(0));
-    blobBytes[0] ^= 0xff;
+    blobBytes[0] = (blobBytes[0]! ^ 0xff);
     const tamperedBlob = btoa(String.fromCharCode(...blobBytes));
 
     await expect(
@@ -53,7 +53,7 @@ describe("encryptItem / decryptItem", () => {
     const encrypted = await encryptItem(SAMPLE_LOGIN, vaultEncKey, vaultMacKey);
 
     const macBytes = atob(encrypted.blobMac).split("").map((c) => c.charCodeAt(0));
-    macBytes[0] ^= 0xff;
+    macBytes[0] = (macBytes[0]! ^ 0xff);
     const tamperedMac = btoa(String.fromCharCode(...macBytes));
 
     await expect(

@@ -1,7 +1,6 @@
 {
-  "extends": "@nopass/config/tsconfig/base",
+  "extends": "@nopass/config/tsconfig/react",
   "compilerOptions": {
-    "lib": ["ES2022", "DOM"],
     "outDir": "dist",
     "rootDir": "src"
   },

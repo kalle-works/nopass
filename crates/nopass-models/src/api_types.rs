@@ -81,6 +81,7 @@ pub struct SrpVerifyResponse {
     pub server_proof_m2: String,
     pub session_token: String,
     pub user_id: Uuid,
+    pub default_vault_id: Uuid,
     pub protected_symmetric_key: String,
     pub protected_symmetric_key_iv: String,
 }

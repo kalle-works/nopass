@@ -1,0 +1,112 @@
+/**
+ * Typed API client for nopass-api.
+ * All responses are typed via @nopass/types.
+ * The base URL is injected so the same client works on web, desktop, and extension.
+ */
+import type {
+  ConflictResponse,
+  CreateVaultItemRequest,
+  DeviceInfo,
+  EncryptedVaultItem,
+  RegisterDeviceRequest,
+  RegisterRequest,
+  RegisterResponse,
+  SrpInitRequest,
+  SrpInitResponse,
+  SrpVerifyRequest,
+  SrpVerifyResponse,
+  SyncRequest,
+  SyncResponse,
+  UpdateVaultItemRequest,
+} from "@nopass/types";
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export class ConflictError extends ApiError {
+  constructor(public readonly serverVersion: number) {
+    super("conflict", 409);
+  }
+}
+
+async function request<T>(
+  baseUrl: string,
+  path: string,
+  options: RequestInit & { token?: string | undefined },
+): Promise<T> {
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (options.token) headers["Authorization"] = `Bearer ${options.token}`;
+
+  const res = await fetch(`${baseUrl}/v1${path}`, { ...options, headers });
+
+  if (!res.ok) {
+    if (res.status === 409) {
+      const body = (await res.json()) as ConflictResponse;
+      throw new ConflictError(body.serverVersion);
+    }
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error: string };
+    throw new ApiError(body.error, res.status);
+  }
+
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+export function createApiClient(baseUrl: string) {
+  const get = <T>(path: string, token?: string) =>
+    request<T>(baseUrl, path, { method: "GET", token });
+
+  const post = <T>(path: string, body: unknown, token?: string) =>
+    request<T>(baseUrl, path, { method: "POST", body: JSON.stringify(body), token });
+
+  const put = <T>(path: string, body: unknown, token?: string) =>
+    request<T>(baseUrl, path, { method: "PUT", body: JSON.stringify(body), token });
+
+  const del = <T>(path: string, token?: string) =>
+    request<T>(baseUrl, path, { method: "DELETE", token });
+
+  return {
+    auth: {
+      register: (req: RegisterRequest) => post<RegisterResponse>("/auth/register", req),
+      srpInit: (req: SrpInitRequest) => post<SrpInitResponse>("/auth/srp/init", req),
+      srpVerify: (req: SrpVerifyRequest) => post<SrpVerifyResponse>("/auth/srp/verify", req),
+      logout: (token: string) => post<void>("/auth/logout", {}, token),
+    },
+    devices: {
+      list: (token: string) => get<DeviceInfo[]>("/devices", token),
+      register: (req: RegisterDeviceRequest, token: string) =>
+        post<{ deviceId: string }>("/devices", req, token),
+      remove: (deviceId: string, token: string) => del<void>(`/devices/${deviceId}`, token),
+    },
+    vault: {
+      items: (vaultId: string, token: string, since?: string) =>
+        get<EncryptedVaultItem[]>(
+          `/vaults/${vaultId}/items${since ? `?since=${encodeURIComponent(since)}` : ""}`,
+          token,
+        ),
+      create: (vaultId: string, req: CreateVaultItemRequest, token: string) =>
+        post<EncryptedVaultItem>(`/vaults/${vaultId}/items`, req, token),
+      update: (vaultId: string, itemId: string, req: UpdateVaultItemRequest, token: string) =>
+        put<{ version: number; updatedAt: string }>(
+          `/vaults/${vaultId}/items/${itemId}`,
+          req,
+          token,
+        ),
+      delete: (vaultId: string, itemId: string, token: string) =>
+        del<void>(`/vaults/${vaultId}/items/${itemId}`, token),
+    },
+    sync: {
+      pull: (req: SyncRequest, token: string) => post<SyncResponse>("/sync", req, token),
+      push: (events: unknown[], token: string) => post<{ accepted: number }>("/sync/events", events, token),
+    },
+  };
+}
+
+export type ApiClient = ReturnType<typeof createApiClient>;

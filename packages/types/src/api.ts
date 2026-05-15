@@ -59,6 +59,7 @@ export interface SrpVerifyResponse {
   serverProofM2: string;
   sessionToken: string;
   userId: string;
+  defaultVaultId: string;
   protectedSymmetricKey: string;
   protectedSymmetricKeyIv: string;
 }

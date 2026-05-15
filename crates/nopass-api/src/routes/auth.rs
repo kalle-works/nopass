@@ -8,7 +8,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, sessions},
+    db::{auth as db_auth, sessions, vaults as db_vaults},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     state::{AppState, SrpPendingSession},
@@ -56,6 +56,11 @@ async fn register(
         &protected_key_iv,
     )
     .await?;
+
+    // Create the user's default vault automatically on registration
+    db_vaults::create_vault(&state.db, user.id)
+        .await
+        .map_err(|e| ApiError::Internal(e))?;
 
     Ok((StatusCode::CREATED, Json(RegisterResponse { user_id: user.id })))
 }
@@ -149,12 +154,21 @@ async fn srp_verify(
         .await?
         .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("user vanished during SRP")))?;
 
+    let vaults = db_vaults::list_vaults_for_user(&state.db, user.id)
+        .await
+        .map_err(|e| ApiError::Internal(e))?;
+    let default_vault_id = vaults
+        .first()
+        .map(|v| v.id)
+        .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("no vault found for user")))?;
+
     let session_token = sessions::create_session(&state.db, user.id, None).await?;
 
     Ok(Json(SrpVerifyResponse {
         server_proof_m2: B64.encode(&verify_result.server_proof_m2),
         session_token,
         user_id: user.id,
+        default_vault_id,
         protected_symmetric_key: B64.encode(&user.protected_symmetric_key),
         protected_symmetric_key_iv: B64.encode(&user.protected_symmetric_key_iv),
     }))

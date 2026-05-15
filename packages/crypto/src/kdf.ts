@@ -53,14 +53,16 @@ export async function stretchMasterKey(
   const encKeyBytes = hkdf(sha256, masterKey, salt, enc.encode("nopass-v1-enc"), 32);
   const macKeyBytes = hkdf(sha256, masterKey, salt, enc.encode("nopass-v1-mac"), 32);
 
+  const toAb = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => new Uint8Array(bytes);
+
   const importAesKey = (bytes: Uint8Array) =>
-    crypto.subtle.importKey("raw", bytes, { name: "AES-GCM", length: 256 }, false, [
+    crypto.subtle.importKey("raw", toAb(bytes), { name: "AES-GCM", length: 256 }, false, [
       "encrypt",
       "decrypt",
     ]);
 
   const importHmacKey = (bytes: Uint8Array) =>
-    crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, [
+    crypto.subtle.importKey("raw", toAb(bytes), { name: "HMAC", hash: "SHA-256" }, false, [
       "sign",
       "verify",
     ]);
