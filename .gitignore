@@ -49,3 +49,10 @@ lcov.info
 *.db
 *.db-wal
 *.db-shm
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Test results and screenshots
+apps/web/test-results/
+*.png
