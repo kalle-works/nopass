@@ -1,0 +1,32 @@
+{
+  "name": "@nopass/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nopass/crypto": "workspace:*",
+    "@nopass/types": "workspace:*",
+    "@nopass/ui": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-sql": "^2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "zustand": "^5.0.6"
+  },
+  "devDependencies": {
+    "@nopass/config": "workspace:*",
+    "@tailwindcss/vite": "^4",
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vite": "^6"
+  }
+}

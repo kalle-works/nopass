@@ -8,10 +8,10 @@ import type { VaultItemPlaintext, VaultItemType } from "@nopass/types";
 
 interface ItemEditorProps {
   itemType: VaultItemType;
-  initial?: Partial<VaultItemPlaintext>;
+  initial?: Partial<VaultItemPlaintext> | undefined;
   onSave: (item: VaultItemPlaintext) => void;
   onCancel: () => void;
-  saving?: boolean;
+  saving?: boolean | undefined;
 }
 
 export function ItemEditor({ itemType, initial, onSave, onCancel, saving }: ItemEditorProps) {

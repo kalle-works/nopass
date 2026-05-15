@@ -13,6 +13,9 @@
   "devDependencies": {
     "turbo": "^2.9.14"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "@tauri-apps/cli"]
+  },
   "engines": {
     "node": ">=20",
     "pnpm": ">=9"
