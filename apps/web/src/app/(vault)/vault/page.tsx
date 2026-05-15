@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useNopassStore, ItemEditor } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
-import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
+import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType, LoginItem } from "@nopass/types";
 import { api } from "@/lib/api";
 
 type Filter = "all" | VaultItemType;
@@ -16,9 +16,86 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
   identity: "Identities",
 };
 
+const TYPE_COLORS: Record<VaultItemType, string> = {
+  login: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+  note: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  card: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
+  identity: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+};
+
+const AVATAR_COLORS = [
+  "bg-blue-500",
+  "bg-violet-500",
+  "bg-emerald-500",
+  "bg-amber-500",
+  "bg-rose-500",
+  "bg-cyan-500",
+  "bg-pink-500",
+  "bg-indigo-500",
+];
+
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
 interface DecryptedEntry {
   item: EncryptedVaultItem;
   plaintext: VaultItemPlaintext;
+}
+
+function ItemAvatar({ name, type }: { name: string; type: VaultItemType }) {
+  const initial = name.trim().charAt(0).toUpperCase() || "?";
+  const color = getAvatarColor(name);
+  return (
+    <div className={`w-9 h-9 rounded-lg ${color} flex items-center justify-center shrink-0`}>
+      <span className="text-sm font-semibold text-white">{initial}</span>
+    </div>
+  );
+}
+
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      title={label}
+      className={`flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-all ${
+        copied
+          ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400"
+          : "text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700"
+      }`}
+    >
+      {copied ? (
+        <>
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          Copied
+        </>
+      ) : (
+        <>
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+          {label}
+        </>
+      )}
+    </button>
+  );
 }
 
 export default function VaultPage() {
@@ -31,6 +108,7 @@ export default function VaultPage() {
     vaultMacKey,
     items,
     isLoading,
+    email: userEmail,
     setItems,
     upsertItem,
     markDeleted,
@@ -49,36 +127,42 @@ export default function VaultPage() {
   const [typePicker, setTypePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const typePickerRef = useRef<HTMLDivElement>(null);
 
-  // Redirect to login if vault is locked
+  // Close type picker on outside click
+  useEffect(() => {
+    if (!typePicker) return;
+    function handleClick(e: MouseEvent) {
+      if (typePickerRef.current && !typePickerRef.current.contains(e.target as Node)) {
+        setTypePicker(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [typePicker]);
+
   useEffect(() => {
     if (!isUnlocked()) {
       router.replace("/login");
     }
   }, [isUnlocked, router]);
 
-  // Load items from API on mount
   useEffect(() => {
     if (!isUnlocked() || !sessionToken || !defaultVaultId) return;
 
     setLoading(true);
     api.vault
       .items(defaultVaultId, sessionToken)
-      .then((apiItems) => {
-        // Map camelCase API response to store shape
-        setItems(apiItems);
-      })
+      .then((apiItems) => setItems(apiItems))
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load vault"))
       .finally(() => setLoading(false));
   }, [isUnlocked, sessionToken, defaultVaultId, setItems, setLoading]);
 
-  // Decrypt all items whenever the encrypted list changes
   useEffect(() => {
     if (!vaultEncKey || !vaultMacKey) return;
 
     const enc = vaultEncKey;
     const mac = vaultMacKey;
-
     const active = items.filter((i) => i.deletedAt === null);
 
     Promise.all(
@@ -154,7 +238,7 @@ export default function VaultPage() {
   const handleDelete = useCallback(
     async (item: EncryptedVaultItem) => {
       if (!sessionToken || !defaultVaultId) return;
-      try {
+        try {
         await api.vault.delete(defaultVaultId, item.id, sessionToken);
         markDeleted(item.id);
       } catch (err) {
@@ -182,38 +266,65 @@ export default function VaultPage() {
 
   if (!isUnlocked()) return null;
 
+  const userInitial = userEmail ? userEmail.charAt(0).toUpperCase() : "?";
+
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
       {/* Sidebar */}
       <aside className="w-56 flex flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0">
-        <div className="px-4 py-5 border-b border-gray-200 dark:border-gray-700">
-          <h1 className="text-base font-semibold text-gray-900 dark:text-white">nopass</h1>
+        <div className="px-4 py-4 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-md bg-blue-600 flex items-center justify-center shrink-0">
+              <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <span className="font-semibold text-sm text-gray-900 dark:text-white tracking-tight">nopass</span>
+          </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-2">
-          {(["all", "login", "note", "card", "identity"] as Filter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                filter === f
-                  ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium"
-                  : "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-              }`}
-            >
-              {f === "all" ? "All items" : TYPE_LABELS[f]}
-              <span className="ml-1 text-xs text-gray-400">
-                ({f === "all" ? activeItems.length : activeItems.filter((i) => i.itemType === f).length})
-              </span>
-            </button>
-          ))}
+        <nav className="flex-1 overflow-y-auto p-2">
+          {(["all", "login", "note", "card", "identity"] as Filter[]).map((f) => {
+            const count = f === "all" ? activeItems.length : activeItems.filter((i) => i.itemType === f).length;
+            const isActive = filter === f;
+            return (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between mb-0.5 ${
+                  isActive
+                    ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium"
+                    : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white"
+                }`}
+              >
+                <span>{f === "all" ? "All items" : TYPE_LABELS[f]}</span>
+                <span className={`text-xs ${isActive ? "text-blue-500 dark:text-blue-400" : "text-gray-400 dark:text-gray-500"}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </nav>
 
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+        {/* User info + lock */}
+        <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2.5 mb-2.5">
+            <div className="w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-600 flex items-center justify-center shrink-0">
+              <span className="text-xs font-medium text-gray-600 dark:text-gray-300">{userInitial}</span>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1" title={userEmail ?? ""}>
+              {userEmail}
+            </p>
+          </div>
           <button
             onClick={handleLock}
-            className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg transition-colors"
           >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
             Lock vault
           </button>
         </div>
@@ -221,28 +332,36 @@ export default function VaultPage() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <header className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-          <input
-            type="search"
-            placeholder="Search…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 max-w-sm px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+        {/* Toolbar */}
+        <header className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <div className="relative flex-1 max-w-sm">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+            </svg>
+            <input
+              type="search"
+              placeholder="Search…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+            />
+          </div>
 
-          <div className="ml-auto relative">
+          <div className="ml-auto relative" ref={typePickerRef}>
             <button
               data-testid="new-item-btn"
               onClick={() => setTypePicker((v) => !v)}
-              className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
+              className="flex items-center gap-1.5 px-3.5 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
             >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
               New item
             </button>
             {typePicker && (
               <div
                 data-testid="type-picker"
-                className="absolute right-0 top-full mt-1 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[120px]"
+                className="absolute right-0 top-full mt-1.5 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg py-1.5 min-w-[140px]"
               >
                 {(["Login", "Note", "Card", "Identity"] as const).map((label) => (
                   <button
@@ -252,7 +371,7 @@ export default function VaultPage() {
                       setModal({ mode: "create", itemType: label.toLowerCase() as VaultItemType });
                       setTypePicker(false);
                     }}
-                    className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    className="w-full text-left px-3.5 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                   >
                     {label}
                   </button>
@@ -263,48 +382,93 @@ export default function VaultPage() {
         </header>
 
         {/* Item list */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="flex-1 overflow-y-auto p-5">
           {error && (
-            <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+            <div className="mb-4 flex items-center gap-2.5 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
               {error}
             </div>
           )}
 
           {isLoading ? (
-            <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
-              Loading…
+            <div className="space-y-2 max-w-2xl">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 animate-pulse">
+                  <div className="w-9 h-9 rounded-lg bg-gray-200 dark:bg-gray-700 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3.5 bg-gray-200 dark:bg-gray-700 rounded w-32" />
+                    <div className="h-2.5 bg-gray-100 dark:bg-gray-700/50 rounded w-48" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : filteredItems.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-gray-400">
-              <p className="text-sm">
-                {search ? "No matching items" : "No items yet — add one above"}
+            <div className="flex flex-col items-center justify-center h-64 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
+                <svg className="w-7 h-7 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="3" y="11" width="18" height="11" rx="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                {search ? "No matching items" : "Your vault is empty"}
               </p>
+              {!search && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                  Add your first item with the button above
+                </p>
+              )}
             </div>
           ) : (
             <div className="max-w-2xl space-y-1">
               {filteredItems.map((item) => {
                 const plain = decrypted.get(item.id);
+                const name = plain?.name ?? "…";
+                const subtitle =
+                  plain?.type === "login"
+                    ? (plain as LoginItem).username || (plain as LoginItem).urls?.[0] || ""
+                    : plain?.type === "card"
+                      ? `•••• ${((plain as { lastFour?: string }).lastFour ?? "")}`
+                      : "";
+
                 return (
-                  <div key={item.id} className="flex items-center gap-1 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+                  <div
+                    key={item.id}
+                    className="group flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-all cursor-default"
+                  >
+                    <ItemAvatar name={name} type={item.itemType} />
+
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                        {plain?.name ?? "…"}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
-                        {item.itemType}
-                      </p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{name}</p>
+                      {subtitle && (
+                        <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">{subtitle}</p>
+                      )}
                     </div>
+
+                    {/* Type badge */}
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${TYPE_COLORS[item.itemType]}`}>
+                      {TYPE_LABELS[item.itemType].slice(0, -1)}
+                    </span>
+
+                    {/* Copy password button — login only */}
+                    {plain?.type === "login" && (plain as LoginItem).password && (
+                      <CopyButton text={(plain as LoginItem).password} label="Copy password" />
+                    )}
+
+                    {/* Edit / Delete — always in DOM, subtle styling */}
                     <button
                       onClick={() => {
                         if (plain) setModal({ mode: "edit", entry: { item, plaintext: plain } });
                       }}
-                      className="px-2 py-1 text-xs text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 border border-gray-200 dark:border-gray-600 rounded"
+                      className="px-2 py-1 text-xs text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700 rounded-md transition-all border border-transparent hover:border-gray-200 dark:hover:border-gray-600"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => handleDelete(item)}
-                      className="px-2 py-1 text-xs text-red-500 hover:text-red-700 border border-red-200 dark:border-red-800 rounded"
+                      className="px-2 py-1 text-xs text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-900/20 rounded-md transition-all border border-transparent hover:border-red-200 dark:hover:border-red-800"
                     >
                       Delete
                     </button>
@@ -316,22 +480,34 @@ export default function VaultPage() {
         </main>
       </div>
 
-      {/* Modal */}
+      {/* Item editor modal */}
       {modal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">
-              {modal.mode === "create"
-                ? `New ${modal.itemType}`
-                : `Edit ${modal.entry.plaintext.type}`}
-            </h2>
-            <ItemEditor
-              itemType={modal.mode === "create" ? modal.itemType : modal.entry.plaintext.type}
-              initial={modal.mode === "edit" ? modal.entry.plaintext : undefined}
-              onSave={handleSave}
-              onCancel={() => setModal(null)}
-              saving={saving}
-            />
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget) setModal(null); }}>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                {modal.mode === "create"
+                  ? `New ${modal.itemType}`
+                  : `Edit ${modal.entry.plaintext.type}`}
+              </h2>
+              <button
+                onClick={() => setModal(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto p-6">
+              <ItemEditor
+                itemType={modal.mode === "create" ? modal.itemType : modal.entry.plaintext.type}
+                initial={modal.mode === "edit" ? modal.entry.plaintext : undefined}
+                onSave={handleSave}
+                onCancel={() => setModal(null)}
+                saving={saving}
+              />
+            </div>
           </div>
         </div>
       )}
