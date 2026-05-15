@@ -5,6 +5,7 @@
     "dev:web": "pnpm --filter @nopass/web dev",
     "dev:desktop": "pnpm --filter @nopass/desktop tauri dev",
     "dev:extension": "pnpm --filter @nopass/extension dev",
+    "build:cli": "pnpm --filter @nopass/cli build",
     "build": "turbo build",
     "test": "turbo test",
     "lint": "turbo lint",
