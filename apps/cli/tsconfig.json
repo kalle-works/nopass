@@ -1,0 +1,10 @@
+{
+  "extends": "@nopass/config/tsconfig/base",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src"]
+}

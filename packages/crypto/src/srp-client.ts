@@ -228,7 +228,7 @@ export function srpStep2(
       const serverM2 = hexToBytes(base64ToHex(serverM2B64));
       let diff = 0;
       if (serverM2.length !== expectedM2.length) diff = 1;
-      for (let i = 0; i < expectedM2.length; i++) diff |= expectedM2[i] ^ (serverM2[i] ?? 0);
+      for (let i = 0; i < expectedM2.length; i++) diff |= (expectedM2[i] ?? 0) ^ (serverM2[i] ?? 0);
       if (diff !== 0) throw new Error("Server proof M2 verification failed — mutual auth check");
     },
   };
