@@ -1,0 +1,51 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+target/
+
+# Turbo
+.turbo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Tauri
+apps/desktop/src-tauri/target/
+
+# Android
+apps/android/.gradle/
+apps/android/local.properties
+apps/android/app/build/
+*.keystore
+!debug.keystore
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+lcov.info
+
+# SQLCipher local DBs (never commit vault data)
+*.db
+*.db-wal
+*.db-shm

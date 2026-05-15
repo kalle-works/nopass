@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: nopass_dev
+      POSTGRES_USER: nopass
+      POSTGRES_PASSWORD: nopass_dev_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nopass -d nopass_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: crates/nopass-api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://nopass:nopass_dev_secret@postgres:5432/nopass_dev
+      NOPASS_SESSION_SECRET: ${NOPASS_SESSION_SECRET:-dev_change_in_production_32bytes_}
+      NOPASS_HOST: 0.0.0.0
+      NOPASS_PORT: 3001
+      RUST_LOG: nopass_api=debug,tower_http=debug
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: rebuild
+          path: ./crates/
+
+volumes:
+  postgres_data:

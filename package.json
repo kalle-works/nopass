@@ -1,0 +1,21 @@
+{
+  "name": "nopass",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter @nopass/web dev",
+    "dev:desktop": "pnpm --filter @nopass/desktop tauri dev",
+    "dev:extension": "pnpm --filter @nopass/extension dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.9.14"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.4"
+}
