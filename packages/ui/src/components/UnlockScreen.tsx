@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import { computeEmailHash, deriveMasterKey, stretchMasterKey } from "@nopass/crypto";
 import type { ApiClient } from "../lib/api-client";
@@ -14,6 +14,19 @@ interface UnlockScreenProps {
   onSwitchMode: () => void;
 }
 
+function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string; color: string; bg: string } {
+  if (!pw) return { score: 0, label: "", color: "", bg: "" };
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 16) score++;
+  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
+  if (/[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw)) score++;
+  const labels = ["", "Weak", "Fair", "Strong", "Very strong"];
+  const colors = ["", "text-red-600", "text-amber-600", "text-blue-600", "text-green-600"];
+  const bgs = ["", "bg-red-500", "bg-amber-400", "bg-blue-500", "bg-green-500"];
+  return { score: score as 0 | 1 | 2 | 3 | 4, label: labels[score], color: colors[score], bg: bgs[score] };
+}
+
 export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: UnlockScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,6 +36,12 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
   const [loadingStep, setLoadingStep] = useState<"kdf" | "auth" | null>(null);
 
   const { setSession } = useNopassStore();
+
+  useEffect(() => {
+    document.title = mode === "login" ? "Sign in — nopass" : "Create account — nopass";
+  }, [mode]);
+
+  const strength = mode === "register" ? passwordStrength(password) : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -116,26 +135,27 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
           : "Unlocking…";
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex items-center justify-center mb-8">
-          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center">
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-              <rect x="3" y="11" width="18" height="11" rx="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-          </div>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 px-4 py-12">
+      {/* Logo */}
+      <div className="flex items-center gap-2.5 mb-8">
+        <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-md shadow-blue-600/20">
+          <svg className="w-4.5 h-4.5 text-white w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+            <rect x="3" y="11" width="18" height="11" rx="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
         </div>
+        <span className="font-semibold text-gray-900 dark:text-white tracking-tight">nopass</span>
+      </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200/80 dark:border-gray-700 p-8">
+      <div className="w-full max-w-sm">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg shadow-gray-200/80 dark:shadow-black/30 border border-gray-200 dark:border-gray-700 p-8">
           <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">
             {mode === "login" ? "Unlock your vault" : "Create account"}
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
             {mode === "login"
               ? "Your master password never leaves this device."
-              : "Choose a strong master password — it cannot be recovered."}
+              : "Pick a strong master password — it encrypts your entire vault."}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -172,7 +192,7 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
                 <button
                   type="button"
                   onClick={() => setShowPassword((s) => !s)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                   tabIndex={-1}
                 >
                   {showPassword ? (
@@ -188,7 +208,38 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
                   )}
                 </button>
               </div>
+
+              {/* Password strength — register only */}
+              {mode === "register" && strength && password && (
+                <div className="mt-2">
+                  <div className="flex gap-1 mb-1">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className={`h-1 flex-1 rounded-full transition-all duration-300 ${
+                          i <= strength.score ? strength.bg : "bg-gray-200 dark:bg-gray-700"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <p className={`text-xs font-medium ${strength.color}`}>{strength.label}</p>
+                </div>
+              )}
             </div>
+
+            {/* Recovery warning — register only */}
+            {mode === "register" && (
+              <div className="flex items-start gap-2.5 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg">
+                <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                  <strong className="font-semibold">Write this password down.</strong> It encrypts your vault and cannot be reset — not even by us.
+                </p>
+              </div>
+            )}
 
             {error && (
               <div className="flex items-start gap-2.5 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -205,7 +256,7 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
               className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-70 text-white font-medium rounded-lg transition-colors text-sm flex items-center justify-center gap-2"
             >
               {loading && (
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
