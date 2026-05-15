@@ -57,6 +57,9 @@ async fn register(
         kdf_params_json,
         &protected_key,
         &protected_key_iv,
+        req.public_key.as_deref(),
+        req.protected_private_key.as_deref(),
+        req.protected_private_key_iv.as_deref(),
     )
     .await?;
 
@@ -171,6 +174,8 @@ async fn srp_verify(
         default_vault_id,
         protected_symmetric_key: B64.encode(&user.protected_symmetric_key),
         protected_symmetric_key_iv: B64.encode(&user.protected_symmetric_key_iv),
+        protected_private_key: user.protected_private_key.clone(),
+        protected_private_key_iv: user.protected_private_key_iv.clone(),
     }))
 }
 

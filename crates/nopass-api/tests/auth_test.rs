@@ -23,6 +23,9 @@ async fn register_returns_201_with_user_id(pool: PgPool) {
         kdf_params: KdfParams::default(),
         protected_symmetric_key: B64.encode(&[0u8; 32]),
         protected_symmetric_key_iv: B64.encode(&[0u8; 12]),
+        public_key: None,
+        protected_private_key: None,
+        protected_private_key_iv: None,
     };
 
     let resp = server.post("/v1/auth/register").json(&req).await;
@@ -50,6 +53,9 @@ async fn register_duplicate_email_returns_409(pool: PgPool) {
         kdf_params: KdfParams::default(),
         protected_symmetric_key: B64.encode(&[0u8; 32]),
         protected_symmetric_key_iv: B64.encode(&[0u8; 12]),
+        public_key: None,
+        protected_private_key: None,
+        protected_private_key_iv: None,
     };
 
     let resp = server.post("/v1/auth/register").json(&req).await;

@@ -29,6 +29,8 @@ function makeFakeAuthResponse(partial: Partial<SrpVerifyResponse> = {}): SrpVeri
     userId: "user-1",
     defaultVaultId: "vault-1",
     serverProofM2: "proof",
+    protectedSymmetricKey: "enc-key",
+    protectedSymmetricKeyIv: "enc-iv",
     ...partial,
   };
 }

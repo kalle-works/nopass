@@ -57,6 +57,8 @@ export interface EncryptedVaultItem {
   id: string;
   vaultId: string;
   userId: string;
+  /** null = personal item; UUID = org-shared item */
+  orgId?: string | null;
   itemType: VaultItemType;
   /** base64(AES-256-GCM ciphertext of JSON-serialized VaultItemPlaintext) */
   blob: string;

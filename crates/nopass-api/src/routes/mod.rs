@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod devices;
+pub mod orgs;
 pub mod sync;
 pub mod vault;
 
@@ -30,6 +31,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let protected = Router::new()
         .nest("/auth", auth::protected_router())
         .nest("/devices", devices::router())
+        .nest("/organizations", orgs::router())
         .nest("/vaults", vault::router())
         .nest("/sync", sync::router())
         .route_layer(middleware::from_fn_with_state(state, require_auth));

@@ -12,6 +12,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 pub enum ApiError {
     NotFound(String),
     Unauthorized(String),
+    Forbidden(String),
     BadRequest(String),
     Conflict(String),
     Internal(anyhow::Error),
@@ -22,6 +23,7 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             ApiError::Internal(err) => {

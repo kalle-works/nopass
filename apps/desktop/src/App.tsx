@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor } from "@nopass/ui";
+import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { createApiClient } from "@nopass/ui";
@@ -13,6 +13,7 @@ const API_BASE = import.meta.env["VITE_API_URL"] ?? "http://localhost:3001";
 const api = createApiClient(API_BASE);
 
 type Screen = "unlock-mode-select" | "unlock-srp" | "unlock-register" | "vault";
+type SidebarTab = "vault" | "orgs";
 type Filter = "all" | VaultItemType;
 
 const TYPE_LABELS: Record<VaultItemType, string> = {
@@ -206,6 +207,7 @@ function VaultScreen({
   api, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey,
   items, isLoading, upsertItem, markDeleted, onLock,
 }: VaultScreenProps) {
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
@@ -288,8 +290,22 @@ function VaultScreen({
         <div className="px-4 py-5 border-b border-gray-200 dark:border-gray-700">
           <h1 className="text-base font-semibold text-gray-900 dark:text-white">nopass</h1>
         </div>
+        {/* Sidebar tab switcher */}
+        <div className="flex border-b border-gray-200 dark:border-gray-700">
+          {(["vault", "orgs"] as SidebarTab[]).map((t) => (
+            <button key={t} onClick={() => setSidebarTab(t)}
+              className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                sidebarTab === t
+                  ? "border-b-2 border-blue-600 text-blue-700 dark:text-blue-300"
+                  : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+              }`}
+            >
+              {t === "vault" ? "Vault" : "Teams"}
+            </button>
+          ))}
+        </div>
         <nav className="flex-1 overflow-y-auto py-2">
-          {(["all", "login", "note", "card", "identity"] as Filter[]).map((f) => (
+          {sidebarTab === "vault" && (["all", "login", "note", "card", "identity"] as Filter[]).map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               className={`w-full text-left px-4 py-2 text-sm transition-colors ${
                 filter === f
@@ -303,6 +319,13 @@ function VaultScreen({
               </span>
             </button>
           ))}
+          {sidebarTab === "orgs" && (
+            <OrgPanel
+              apiClient={api}
+              sessionToken={sessionToken}
+              onOrgVaultKeyChange={() => {}}
+            />
+          )}
         </nav>
         <div className="p-4 border-t border-gray-200 dark:border-gray-700">
           <button onClick={onLock}

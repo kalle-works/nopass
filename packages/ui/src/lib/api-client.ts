@@ -4,10 +4,16 @@
  * The base URL is injected so the same client works on web, desktop, and extension.
  */
 import type {
+  AcceptInviteRequest,
   ConflictResponse,
+  CreateOrgRequest,
   CreateVaultItemRequest,
   DeviceInfo,
   EncryptedVaultItem,
+  InviteMemberRequest,
+  OrgDetails,
+  OrgSummary,
+  PublicKeyResponse,
   RegisterDeviceRequest,
   RegisterRequest,
   RegisterResponse,
@@ -105,6 +111,19 @@ export function createApiClient(baseUrl: string) {
     sync: {
       pull: (req: SyncRequest, token: string) => post<SyncResponse>("/sync", req, token),
       push: (events: unknown[], token: string) => post<{ accepted: number }>("/sync/events", events, token),
+    },
+    orgs: {
+      list: (token: string) => get<OrgSummary[]>("/organizations", token),
+      get: (orgId: string, token: string) => get<OrgDetails>(`/organizations/${orgId}`, token),
+      create: (req: CreateOrgRequest, token: string) => post<OrgSummary>("/organizations", req, token),
+      invite: (orgId: string, req: InviteMemberRequest, token: string) =>
+        post<void>(`/organizations/${orgId}/members`, req, token),
+      accept: (orgId: string, token: string) =>
+        post<void>(`/organizations/${orgId}/accept`, {}, token),
+      removeMember: (orgId: string, userId: string, token: string) =>
+        del<void>(`/organizations/${orgId}/members/${userId}`, token),
+      getPublicKey: (emailHash: string, token: string) =>
+        get<PublicKeyResponse>(`/organizations/public-key/${emailHash}`, token),
     },
   };
 }

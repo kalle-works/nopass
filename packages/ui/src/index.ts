@@ -1,5 +1,6 @@
 // Components
 export * from "./components/ItemEditor/index";
+export * from "./components/OrgPanel";
 export * from "./components/UnlockScreen";
 export * from "./components/VaultItemCard";
 

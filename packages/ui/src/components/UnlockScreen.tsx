@@ -24,7 +24,7 @@ function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string
   const labels = ["", "Weak", "Fair", "Strong", "Very strong"];
   const colors = ["", "text-red-600", "text-amber-600", "text-blue-600", "text-green-600"];
   const bgs = ["", "bg-red-500", "bg-amber-400", "bg-blue-500", "bg-green-500"];
-  return { score: score as 0 | 1 | 2 | 3 | 4, label: labels[score], color: colors[score], bg: bgs[score] };
+  return { score: score as 0 | 1 | 2 | 3 | 4, label: labels[score]!, color: colors[score]!, bg: bgs[score]! };
 }
 
 export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: UnlockScreenProps) {
@@ -78,6 +78,10 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
     const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
     encKeyBytes.fill(0);
 
+    // Generate RSA-OAEP key pair so the user can join/create orgs immediately
+    const { generateUserKeyPair } = await import("@nopass/crypto");
+    const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
+
     setLoadingStep("auth");
     await apiClient.auth.register({
       emailHash: computeEmailHash(email),
@@ -86,6 +90,9 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
       kdfParams,
       protectedSymmetricKey: protectedKey.blob,
       protectedSymmetricKeyIv: protectedKey.blobIv,
+      publicKey: keyPair.publicKeyB64,
+      protectedPrivateKey: keyPair.protectedPrivateKey,
+      protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
     });
 
     await performLogin(keys);

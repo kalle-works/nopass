@@ -91,14 +91,8 @@ function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
 
 function getRandomBytes(n: number): Uint8Array {
   const buf = new Uint8Array(n);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(buf);
-  } else {
-    // Node.js: fall back to require('crypto')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nodeCrypto = require("crypto") as { randomFillSync: (b: Uint8Array) => void };
-    nodeCrypto.randomFillSync(buf);
-  }
+  // crypto.getRandomValues is available in all browsers and Node 15+
+  globalThis.crypto.getRandomValues(buf);
   return buf;
 }
 
