@@ -74,13 +74,10 @@ pub async fn login(server: &TestServer, email: &str, password: &str) -> SrpVerif
         .expect("SRP client process_reply failed");
 
     let client_proof = client_verifier.proof();
-    let client_public_a_b64 = B64.encode(&client_public_a);
-
     let verify_resp: SrpVerifyResponse = server
         .post("/v1/auth/srp/verify")
         .json(&SrpVerifyRequest {
             session_id: init_resp.session_id,
-            client_public_a: Some(client_public_a_b64),
             client_proof_m1: B64.encode(client_proof),
         })
         .await

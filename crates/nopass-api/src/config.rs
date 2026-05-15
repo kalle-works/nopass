@@ -7,6 +7,8 @@ pub struct Config {
     pub port: u16,
     /// 32-byte secret for signing session tokens
     pub session_secret: [u8; 32],
+    /// Allowed CORS origins, e.g. ["https://nopass.app", "http://localhost:4020"]
+    pub allowed_origins: Vec<String>,
 }
 
 impl Config {
@@ -31,11 +33,21 @@ impl Config {
         let mut session_secret = [0u8; 32];
         session_secret.copy_from_slice(&secret_str.as_bytes()[..32]);
 
+        // NOPASS_ALLOWED_ORIGINS: comma-separated list of allowed CORS origins.
+        // Default to localhost dev origin; in production set to https://nopass.app
+        let allowed_origins = std::env::var("NOPASS_ALLOWED_ORIGINS")
+            .unwrap_or_else(|_| "http://localhost:4020".into())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         Ok(Config {
             database_url,
             host,
             port,
             session_secret,
+            allowed_origins,
         })
     }
 

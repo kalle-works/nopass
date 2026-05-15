@@ -68,8 +68,6 @@ pub struct SrpInitResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SrpVerifyRequest {
     pub session_id: Uuid,
-    /// Base64-encoded client ephemeral public key A (repeated from step 1 for SRP math)
-    pub client_public_a: Option<String>,
     /// Base64-encoded client proof M1
     pub client_proof_m1: String,
 }

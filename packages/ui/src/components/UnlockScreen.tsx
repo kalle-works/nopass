@@ -98,7 +98,6 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
 
     const verifyResp = await apiClient.auth.srpVerify({
       sessionId: initResp.sessionId,
-      clientPublicA: step1.clientPublicA,
       clientProofM1: step2.clientProofM1,
     });
 

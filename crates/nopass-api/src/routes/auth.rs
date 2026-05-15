@@ -80,7 +80,10 @@ async fn srp_init(
     let client_public_a = B64.decode(&req.client_public_a)
         .map_err(|_| ApiError::BadRequest("invalid client_public_a".into()))?;
 
-    let _ = client_public_a; // validated, stored in session for step 2
+    // Reject trivially weak or empty ephemeral A
+    if client_public_a.is_empty() {
+        return Err(ApiError::BadRequest("client_public_a must not be empty".into()));
+    }
 
     let srp_result = srp_server_init(&user.srp_verifier)
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("SRP init: {e}")))?;
@@ -97,6 +100,7 @@ async fn srp_init(
                 user_id: user.id,
                 verifier: user.srp_verifier.clone(),
                 server_ephemeral_b: srp_result.server_ephemeral_b,
+                client_public_a,
                 created_at: std::time::Instant::now(),
             },
         );
@@ -134,19 +138,12 @@ async fn srp_verify(
     let client_proof_m1 = B64.decode(&req.client_proof_m1)
         .map_err(|_| ApiError::BadRequest("invalid client_proof_m1".into()))?;
 
-    // Store client_public_a in pending session in future; for now require it in verify request.
-    // This is a known limitation — the full SRP verify needs A+M1 together.
-    // Sending a placeholder empty A causes verify to fail with auth error (secure fallback).
-    let client_a = req
-        .client_public_a
-        .as_deref()
-        .map(|a| B64.decode(a).unwrap_or_default())
-        .unwrap_or_default();
-
+    // Use client_public_a stored in the pending session from step 1 — do not accept it again
+    // from the request to prevent A-substitution attacks.
     let verify_result = srp_server_verify(
         &pending.verifier,
         &pending.server_ephemeral_b,
-        &client_a,
+        &pending.client_public_a,
         &client_proof_m1,
     )
     .map_err(|_| ApiError::Unauthorized("authentication failed".into()))?;

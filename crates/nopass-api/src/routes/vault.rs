@@ -49,20 +49,22 @@ async fn list_items(
 
     let response = items
         .into_iter()
-        .map(|item| EncryptedVaultItem {
-            id: item.id,
-            vault_id: item.vault_id,
-            user_id: item.user_id,
-            item_type: parse_item_type(&item.item_type),
-            blob: B64.encode(&item.blob),
-            blob_iv: B64.encode(&item.blob_iv),
-            blob_mac: B64.encode(&item.blob_mac),
-            version: item.version,
-            deleted_at: item.deleted_at,
-            created_at: item.created_at,
-            updated_at: item.updated_at,
+        .map(|item| {
+            Ok(EncryptedVaultItem {
+                id: item.id,
+                vault_id: item.vault_id,
+                user_id: item.user_id,
+                item_type: parse_item_type(&item.item_type)?,
+                blob: B64.encode(&item.blob),
+                blob_iv: B64.encode(&item.blob_iv),
+                blob_mac: B64.encode(&item.blob_mac),
+                version: item.version,
+                deleted_at: item.deleted_at,
+                created_at: item.created_at,
+                updated_at: item.updated_at,
+            })
         })
-        .collect();
+        .collect::<ApiResult<Vec<_>>>()?;
 
     Ok(Json(response))
 }
@@ -161,13 +163,13 @@ async fn delete_item(
     }
 }
 
-fn parse_item_type(s: &str) -> VaultItemType {
+fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
     match s {
-        "login" => VaultItemType::Login,
-        "note" => VaultItemType::Note,
-        "card" => VaultItemType::Card,
-        "identity" => VaultItemType::Identity,
-        _ => VaultItemType::Login,
+        "login" => Ok(VaultItemType::Login),
+        "note" => Ok(VaultItemType::Note),
+        "card" => Ok(VaultItemType::Card),
+        "identity" => Ok(VaultItemType::Identity),
+        other => Err(ApiError::BadRequest(format!("unknown item type: {other}"))),
     }
 }
 

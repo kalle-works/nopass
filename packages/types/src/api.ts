@@ -48,8 +48,6 @@ export interface SrpInitResponse {
 
 export interface SrpVerifyRequest {
   sessionId: string;
-  /** base64 client ephemeral public A (repeated for server SRP math) */
-  clientPublicA: string;
   /** base64 SRP client proof M1 */
   clientProofM1: string;
 }
