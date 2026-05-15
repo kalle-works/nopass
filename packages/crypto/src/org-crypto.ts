@@ -134,11 +134,13 @@ export async function decryptOrgKey(
     privateKey,
     ciphertext,
   );
+  // extractable: true so the caller can re-wrap it for new members via encryptOrgKeyForMember.
+  // The raw bytes only live in memory for the duration of that operation.
   return crypto.subtle.importKey(
     "raw",
     rawOrgKey,
     { name: "AES-GCM" },
-    false,
+    true,
     ["encrypt", "decrypt"],
   );
 }
