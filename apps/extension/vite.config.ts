@@ -5,6 +5,11 @@ import { resolve } from "path";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    // Injected at build time so the background script knows the API endpoint.
+    // Override in production: VITE_API_BASE=https://api.nopass.app pnpm build
+    __API_BASE__: JSON.stringify(process.env["VITE_API_BASE"] ?? "http://localhost:3001"),
+  },
   build: {
     outDir: "dist",
     rollupOptions: {

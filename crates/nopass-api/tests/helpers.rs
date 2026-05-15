@@ -13,8 +13,8 @@ pub fn test_config() -> Config {
         database_url: String::new(), // pool is injected directly in sqlx::test
         host: "127.0.0.1".into(),
         port: 3001,
-        session_secret: *b"test_secret_32_bytes_for_testing",
         allowed_origins: vec!["http://localhost:3000".into()],
+        trusted_proxies: vec![],
     }
 }
 

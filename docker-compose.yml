@@ -21,10 +21,12 @@ services:
       dockerfile: crates/nopass-api/Dockerfile
     environment:
       DATABASE_URL: postgres://nopass:nopass_dev_secret@postgres:5432/nopass_dev
-      NOPASS_SESSION_SECRET: ${NOPASS_SESSION_SECRET:-dev_change_in_production_32bytes_}
+      # NOPASS_SESSION_SECRET must be set — no fallback to avoid weak-secret deployments.
+      # Generate: openssl rand -base64 32
+      NOPASS_SESSION_SECRET: ${NOPASS_SESSION_SECRET:?NOPASS_SESSION_SECRET must be set in .env}
       NOPASS_HOST: 0.0.0.0
       NOPASS_PORT: 3001
-      RUST_LOG: nopass_api=debug,tower_http=debug
+      RUST_LOG: nopass_api=info,tower_http=info
     ports:
       - "3001:3001"
     depends_on:
