@@ -142,20 +142,25 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
           : "Unlocking…";
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 px-4 py-12">
+    <div className="relative min-h-screen flex flex-col items-center justify-center bg-[#0a0a0a] px-4 py-12 overflow-hidden">
+      {/* Subtle ambient glow */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-blue-600/[0.06] rounded-full blur-3xl" />
+      </div>
+
       {/* Logo */}
-      <div className="flex items-center gap-2.5 mb-8">
-        <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-md shadow-blue-600/20">
-          <svg className="w-4.5 h-4.5 text-white w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+      <div className="relative flex items-center gap-2.5 mb-8">
+        <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-600/30">
+          <svg className="w-[18px] h-[18px] text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
             <rect x="3" y="11" width="18" height="11" rx="2" />
             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
         </div>
-        <span className="font-semibold text-gray-900 dark:text-white tracking-tight">nopass</span>
+        <span className="font-semibold text-white tracking-tight">nopass</span>
       </div>
 
-      <div className="w-full max-w-sm">
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg shadow-gray-200/80 dark:shadow-black/30 border border-gray-200 dark:border-gray-700 p-8">
+      <div className="relative w-full max-w-sm">
+        <div className="bg-white rounded-2xl shadow-2xl shadow-black/50 border border-white/10 p-8">
           <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">
             {mode === "login" ? "Unlock your vault" : "Create account"}
           </h1>
@@ -284,7 +289,7 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
         </div>
 
         {/* Security badge */}
-        <div className="mt-5 flex items-center justify-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
+        <div className="mt-5 flex items-center justify-center gap-1.5 text-xs text-white/30">
           <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           </svg>

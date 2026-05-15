@@ -39,7 +39,7 @@ function BrowserFrame({ children }: { children: React.ReactNode }) {
         <div className="w-3 h-3 rounded-full bg-[#febc2e]" />
         <div className="w-3 h-3 rounded-full bg-[#28c840]" />
         <div className="flex-1 mx-3 bg-white/70 rounded h-5 flex items-center px-2.5">
-          <span className="text-[10px] text-black/30 font-mono">nopwd.dev/vault</span>
+          <span className="text-[10px] text-black/30 font-mono">nopass.app/vault</span>
         </div>
       </div>
       {children}
@@ -246,19 +246,19 @@ function Pricing() {
     "macOS desktop + Touch ID",
     "AES-256-GCM encryption",
     "Argon2id key derivation",
-    "Offline-first CRDT sync",
+    "Team vault sharing",
     "Open source & auditable",
   ];
 
   const pro = [
     "Everything in Free",
-    "Team vault sharing",
     "Encrypted file attachments",
     "Hardware key 2FA",
     "Emergency access",
     "Priority support",
     "REST API access",
     "SSO / SAML",
+    "Audit logs",
   ];
 
   return (
