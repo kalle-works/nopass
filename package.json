@@ -15,7 +15,10 @@
     "turbo": "^2.9.14"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "@tauri-apps/cli"]
+    "onlyBuiltDependencies": ["esbuild", "@tauri-apps/cli"],
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10"
+    }
   },
   "engines": {
     "node": ">=20",
