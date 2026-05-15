@@ -42,20 +42,23 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
   }
 
   async function handleRegister() {
-    const { generateSrpRegistration } = await import("@nopass/crypto");
+    const { generateSrpRegistration, stretchMasterKeyRaw } = await import("@nopass/crypto");
     const kdfParams = DEFAULT_KDF_PARAMS;
 
     // Derive master key (Argon2id, ~2s)
     const masterKey = await deriveMasterKey(password, email, kdfParams);
     const keys = await stretchMasterKey(masterKey, email);
 
+    // Get raw vault key bytes — exportKey would fail because keys are non-extractable CryptoKeys
+    const { encKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
+
     // Generate SRP registration material
     const { srpSalt, srpVerifier } = generateSrpRegistration(email, password);
 
     // Encrypt the vault key with the stretched master key for server storage
     const { encryptBytes } = await import("@nopass/crypto");
-    const vaultKeyBytes = await crypto.subtle.exportKey("raw", keys.vaultEncKey);
-    const protectedKey = await encryptBytes(new Uint8Array(vaultKeyBytes), keys.stretchedMasterKey);
+    const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
+    encKeyBytes.fill(0);
 
     await apiClient.auth.register({
       emailHash: computeEmailHash(email),

@@ -8,7 +8,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@nopass/crypto": "workspace:*",
@@ -19,7 +21,10 @@
   "devDependencies": {
     "@nopass/config": "workspace:*",
     "@types/react": "^19",
-    "typescript": "^5"
+    "@vitest/coverage-v8": "^4.1.6",
+    "happy-dom": "^20.9.0",
+    "typescript": "^5",
+    "vitest": "^4.1.6"
   },
   "peerDependencies": {
     "react": ">=19"

@@ -2,11 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import {
-  useNopassStore,
-  ItemEditor,
-  DecryptedVaultItemCard,
-} from "@nopass/ui";
+import { useNopassStore, ItemEditor } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { api } from "@/lib/api";
@@ -50,6 +46,7 @@ export default function VaultPage() {
     | { mode: "edit"; entry: DecryptedEntry }
     | null
   >(null);
+  const [typePicker, setTypePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -157,8 +154,6 @@ export default function VaultPage() {
   const handleDelete = useCallback(
     async (item: EncryptedVaultItem) => {
       if (!sessionToken || !defaultVaultId) return;
-      if (!confirm("Delete this item? This cannot be undone.")) return;
-
       try {
         await api.vault.delete(defaultVaultId, item.id, sessionToken);
         markDeleted(item.id);
@@ -236,16 +231,34 @@ export default function VaultPage() {
             className="flex-1 max-w-sm px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
 
-          <div className="flex items-center gap-2 ml-auto">
-            {(["login", "note", "card", "identity"] as VaultItemType[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setModal({ mode: "create", itemType: t })}
-                className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
+          <div className="ml-auto relative">
+            <button
+              data-testid="new-item-btn"
+              onClick={() => setTypePicker((v) => !v)}
+              className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
+            >
+              New item
+            </button>
+            {typePicker && (
+              <div
+                data-testid="type-picker"
+                className="absolute right-0 top-full mt-1 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 min-w-[120px]"
               >
-                + {t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
+                {(["Login", "Note", "Card", "Identity"] as const).map((label) => (
+                  <button
+                    key={label}
+                    data-testid={`type-${label.toLowerCase()}`}
+                    onClick={() => {
+                      setModal({ mode: "create", itemType: label.toLowerCase() as VaultItemType });
+                      setTypePicker(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </header>
 
@@ -272,19 +285,26 @@ export default function VaultPage() {
               {filteredItems.map((item) => {
                 const plain = decrypted.get(item.id);
                 return (
-                  <div key={item.id} className="flex items-center group">
+                  <div key={item.id} className="flex items-center gap-1 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
                     <div className="flex-1 min-w-0">
-                      <DecryptedVaultItemCard
-                        item={item}
-                        decryptedName={plain?.name ?? "…"}
-                        onClick={() => {
-                          if (plain) setModal({ mode: "edit", entry: { item, plaintext: plain } });
-                        }}
-                      />
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                        {plain?.name ?? "…"}
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                        {item.itemType}
+                      </p>
                     </div>
                     <button
+                      onClick={() => {
+                        if (plain) setModal({ mode: "edit", entry: { item, plaintext: plain } });
+                      }}
+                      className="px-2 py-1 text-xs text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 border border-gray-200 dark:border-gray-600 rounded"
+                    >
+                      Edit
+                    </button>
+                    <button
                       onClick={() => handleDelete(item)}
-                      className="ml-2 px-2 py-1 text-xs text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="px-2 py-1 text-xs text-red-500 hover:text-red-700 border border-red-200 dark:border-red-800 rounded"
                     >
                       Delete
                     </button>

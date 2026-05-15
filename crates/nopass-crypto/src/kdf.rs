@@ -167,4 +167,36 @@ mod tests {
         let keys2 = stretch_master_key(&master_key, "user@example.com").unwrap();
         assert_eq!(keys1.vault_enc_key, keys2.vault_enc_key);
     }
+
+    /// Cross-platform parity test — must match packages/crypto cross-platform-parity.test.ts.
+    /// password  : "correct horse battery staple"
+    /// email     : "alice@example.com"
+    /// memory_kib: 4096, iterations: 1, parallelism: 1
+    #[test]
+    fn cross_platform_parity() {
+        let params = Argon2Params { memory_kib: 4096, iterations: 1, parallelism: 1 };
+
+        let master_key = derive_master_key(
+            b"correct horse battery staple",
+            "alice@example.com",
+            &params,
+        ).unwrap();
+
+        let expected_master = hex::decode(
+            "5586138d4e49edaee8036d44fd531c31c5af69198dd2670e821d002262a795f1",
+        ).unwrap();
+        assert_eq!(master_key.as_slice(), expected_master.as_slice(), "masterKey mismatch vs TS");
+
+        let keys = stretch_master_key(&master_key, "alice@example.com").unwrap();
+
+        let expected_enc = hex::decode(
+            "aae88de470c73778fcb96f189fa1bf80f869ae9aaff25117355c3e015843ca3c",
+        ).unwrap();
+        let expected_mac = hex::decode(
+            "d35595df72fd49310849020d96bc031443952a689f13004b2fdee9d4b2e7a867",
+        ).unwrap();
+
+        assert_eq!(keys.vault_enc_key.as_slice(), expected_enc.as_slice(), "vaultEncKey mismatch vs TS");
+        assert_eq!(keys.vault_mac_key.as_slice(), expected_mac.as_slice(), "vaultMacKey mismatch vs TS");
+    }
 }

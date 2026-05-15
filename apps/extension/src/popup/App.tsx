@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { deriveMasterKey, stretchMasterKeyRaw, srpStep1, srpStep2, computeEmailHash } from "@nopass/crypto";
 import { createApiClient } from "@nopass/ui";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
+import { bytesToBase64 } from "../lib/base64";
 
 const API_BASE = "http://localhost:3001";
 const api = createApiClient(API_BASE);
@@ -67,12 +68,6 @@ function sendMessage<T>(msg: object): Promise<T> {
       else resolve(resp);
     });
   });
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!);
-  return btoa(s);
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────

@@ -39,7 +39,7 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
-          placeholder="e.g. GitHub"
+          placeholder="Name"
           className={inputClass}
         />
       </Field>
@@ -50,6 +50,7 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoComplete="off"
+          placeholder="Username or email"
           className={inputClass}
         />
       </Field>

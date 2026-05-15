@@ -15,12 +15,15 @@ use crate::{
 };
 use nopass_crypto::srp::{srp_server_init, srp_server_verify};
 
-pub fn router() -> Router<AppState> {
+pub fn public_router() -> Router<AppState> {
     Router::new()
         .route("/register", post(register))
         .route("/srp/init", post(srp_init))
         .route("/srp/verify", post(srp_verify))
-        .route("/logout", post(logout))
+}
+
+pub fn protected_router() -> Router<AppState> {
+    Router::new().route("/logout", post(logout))
 }
 
 async fn register(

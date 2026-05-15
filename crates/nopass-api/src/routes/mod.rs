@@ -8,9 +8,10 @@ use axum::{middleware, routing::get, Router};
 use crate::{middleware::auth::require_auth, state::AppState};
 
 pub fn router(state: AppState) -> Router<AppState> {
-    let public = Router::new().nest("/auth", auth::router());
+    let public = Router::new().nest("/auth", auth::public_router());
 
     let protected = Router::new()
+        .nest("/auth", auth::protected_router())
         .nest("/devices", devices::router())
         .nest("/vaults", vault::router())
         .nest("/sync", sync::router())

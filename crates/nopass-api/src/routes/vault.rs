@@ -22,9 +22,9 @@ use crate::{
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/:vault_id/items", get(list_items).post(create_item))
+        .route("/{vault_id}/items", get(list_items).post(create_item))
         .route(
-            "/:vault_id/items/:item_id",
+            "/{vault_id}/items/{item_id}",
             put(update_item).delete(delete_item),
         )
 }

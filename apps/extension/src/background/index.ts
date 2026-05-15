@@ -10,6 +10,8 @@
 import { decryptItem } from "@nopass/crypto";
 import { createApiClient } from "@nopass/ui";
 import type { EncryptedVaultItem } from "@nopass/types";
+import { base64ToBytes } from "../lib/base64";
+import { urlMatches, nameMatches } from "../lib/url-match";
 
 const API_BASE = "http://localhost:3001";
 const api = createApiClient(API_BASE);
@@ -49,9 +51,7 @@ async function handleMessage(message: Message): Promise<unknown> {
         crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]),
       ]);
 
-      // Fetch items from API
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
-
       vaultState = { sessionToken: message.sessionToken, defaultVaultId: message.defaultVaultId, vaultEncKey, vaultMacKey, items };
       return { ok: true };
     }
@@ -83,18 +83,7 @@ async function handleMessage(message: Message): Promise<unknown> {
               const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
               if (plain.type !== "login") return null;
 
-              const nameMatch = plain.name.toLowerCase().includes(query.toLowerCase());
-              const urlMatch = url
-                ? plain.urls.some((u) => {
-                    try {
-                      return new URL(u).hostname === new URL(url).hostname;
-                    } catch {
-                      return false;
-                    }
-                  })
-                : false;
-
-              if (nameMatch || urlMatch || !query) {
+              if (nameMatches(plain.name, query) || (url ? urlMatches(plain.urls, url) : !query)) {
                 return { id: item.id, name: plain.name, username: plain.username, urls: plain.urls };
               }
               return null;
@@ -138,11 +127,4 @@ async function handleMessage(message: Message): Promise<unknown> {
     default:
       return { error: "unknown message type" };
   }
-}
-
-function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
-  const s = atob(b64);
-  const buf = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) buf[i] = s.charCodeAt(i);
-  return buf;
 }

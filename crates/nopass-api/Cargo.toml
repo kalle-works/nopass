@@ -36,4 +36,8 @@ hex = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-axum-test = "15"
+axum-test = "20"
+srp = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
