@@ -9,7 +9,7 @@ pub mod state;
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use axum::Router;
+use axum::{Router, routing::get};
 use axum::http::{HeaderName, HeaderValue};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceBuilder;
@@ -89,6 +89,7 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     Router::new()
+        .route("/health", get(|| async { "ok" }))
         .nest("/v1", routes::router(state.clone()))
         // 2 MiB max request body — vault item blobs are small AES-GCM ciphertexts
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))

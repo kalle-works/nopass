@@ -31,7 +31,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let auth_rate_limiter = Arc::new(DefaultKeyedRateLimiter::keyed(
-            Quota::per_minute(NonZeroU32::new(20).expect("non-zero")),
+            Quota::per_minute(NonZeroU32::new(20).expect("non-zero"))
+                .allow_burst(NonZeroU32::new(10).expect("non-zero")),
         ));
         Self {
             db,
