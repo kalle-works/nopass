@@ -34,7 +34,7 @@ function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string
 export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [username, setUsername] = useState(initial?.username ?? "");
-  const [password, setPassword] = useState(initial?.password ?? "");
+  const [password, setPassword] = useState(initial?.password ?? (!initial ? generatePassword() : ""));
   const [url, setUrl] = useState(initial?.urls?.[0] ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [showPassword, setShowPassword] = useState(false);

@@ -134,13 +134,13 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
 function SecretField({ value }: { value: string }) {
   const [visible, setVisible] = useState(false);
   return (
-    <div className="flex items-center gap-1 group">
+    <div className="flex items-center gap-1">
       <span className="flex-1 font-mono text-sm text-gray-800 dark:text-gray-200 break-all">
         {visible ? value : "•".repeat(Math.min(value.length, 20))}
       </span>
       <button
         onClick={() => setVisible((v) => !v)}
-        className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded transition-colors opacity-0 group-hover:opacity-100"
+        className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded transition-colors"
         title={visible ? "Hide" : "Reveal"}
       >
         {visible ? (
@@ -365,6 +365,14 @@ function DetailPane({
   );
 }
 
+function Toast({ message }: { message: string }) {
+  return (
+    <div className="fixed bottom-6 left-1/2 z-50 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm rounded-full shadow-lg animate-toast pointer-events-none">
+      {message}
+    </div>
+  );
+}
+
 export default function VaultPage() {
   const router = useRouter();
   const {
@@ -396,6 +404,7 @@ export default function VaultPage() {
   const [typePicker, setTypePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; id: number } | null>(null);
   const typePickerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -406,6 +415,27 @@ export default function VaultPage() {
         return item && plaintext ? { item, plaintext } : null;
       })()
     : null;
+
+  function showToast(message: string) {
+    const id = Date.now();
+    setToast({ message, id });
+    setTimeout(() => setToast((t) => (t?.id === id ? null : t)), 2000);
+  }
+
+  async function copyToClipboard(text: string, successMessage: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(successMessage);
+    } catch {
+      // clipboard unavailable
+    }
+  }
+
+  // Autofocus search on mount
+  useEffect(() => {
+    const timer = setTimeout(() => searchRef.current?.focus(), 50);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Close type picker on outside click
   useEffect(() => {
@@ -445,11 +475,26 @@ export default function VaultPage() {
           setTypePicker(true);
           return;
         }
+        // Quick-copy shortcuts when a login item is selected
+        if (selectedEntry?.plaintext.type === "login") {
+          const login = selectedEntry.plaintext as LoginItem;
+          if (e.key === "c" && login.password) {
+            e.preventDefault();
+            copyToClipboard(login.password, "Password copied");
+            return;
+          }
+          if (e.key === "u" && login.username) {
+            e.preventDefault();
+            copyToClipboard(login.username, "Username copied");
+            return;
+          }
+        }
       }
     }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [modal, selectedId, typePicker]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, selectedId, typePicker, selectedEntry]);
 
   useEffect(() => {
     if (!isUnlocked()) router.replace("/login");
@@ -504,6 +549,7 @@ export default function VaultPage() {
           );
           upsertItem(created);
           setSelectedId(created.id);
+          showToast("Item saved");
         } else if (modal?.mode === "edit") {
           await api.vault.update(
             defaultVaultId,
@@ -519,6 +565,7 @@ export default function VaultPage() {
             version: modal.entry.item.version + 1,
           });
           setSelectedId(modal.entry.item.id);
+          showToast("Changes saved");
         }
         setModal(null);
       } catch (err) {
@@ -527,6 +574,7 @@ export default function VaultPage() {
         setSaving(false);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [modal, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, upsertItem],
   );
 
@@ -537,10 +585,12 @@ export default function VaultPage() {
         await api.vault.delete(defaultVaultId, itemId, sessionToken);
         markDeleted(itemId);
         setSelectedId(null);
+        showToast("Item deleted");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Delete failed");
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessionToken, defaultVaultId, markDeleted],
   );
 
@@ -776,32 +826,74 @@ export default function VaultPage() {
                         ? ((plain as NoteItem).content?.slice(0, 60) ?? "")
                         : "";
                 const isSelected = selectedId === item.id;
+                const loginPlain = item.itemType === "login" && plain ? (plain as LoginItem) : null;
 
                 return (
-                  <button
-                    key={item.id}
-                    onClick={() => setSelectedId(isSelected ? null : item.id)}
-                    className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${
-                      isSelected
-                        ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
-                        : "hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
-                    }`}
-                  >
-                    <ItemAvatar name={name} type={item.itemType} />
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium truncate ${isSelected ? "text-blue-700 dark:text-blue-300" : "text-gray-900 dark:text-white"}`}>
-                        {name}
-                      </p>
-                      {subtitle && (
-                        <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">{subtitle}</p>
-                      )}
-                    </div>
-                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${TYPE_COLORS[item.itemType]}`}>
-                      {TYPE_LABELS[item.itemType].slice(0, -1)}
-                    </span>
-                  </button>
+                  <div key={item.id} className="group relative flex items-center">
+                    <button
+                      onClick={() => setSelectedId(isSelected ? null : item.id)}
+                      className={`flex-1 flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${
+                        isSelected
+                          ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
+                          : "hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
+                      }`}
+                    >
+                      <ItemAvatar name={name} type={item.itemType} />
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium truncate ${isSelected ? "text-blue-700 dark:text-blue-300" : "text-gray-900 dark:text-white"}`}>
+                          {name}
+                        </p>
+                        {subtitle && (
+                          <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">{subtitle}</p>
+                        )}
+                      </div>
+                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 transition-opacity ${TYPE_COLORS[item.itemType]} ${loginPlain ? "group-hover:opacity-0" : ""}`}>
+                        {TYPE_LABELS[item.itemType].slice(0, -1)}
+                      </span>
+                    </button>
+
+                    {/* Quick-copy actions for login items — visible on hover */}
+                    {loginPlain && (
+                      <div className="absolute right-3 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {loginPlain.username && (
+                          <button
+                            onClick={() => copyToClipboard(loginPlain.username!, "Username copied")}
+                            title="Copy username (U)"
+                            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+                              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                              <circle cx="12" cy="7" r="4" />
+                            </svg>
+                          </button>
+                        )}
+                        {loginPlain.password && (
+                          <button
+                            onClick={() => copyToClipboard(loginPlain.password!, "Password copied")}
+                            title="Copy password (C)"
+                            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Keyboard shortcut hint — shown only when a login is selected */}
+          {selectedEntry?.plaintext.type === "login" && (
+            <div className="mt-4 max-w-2xl flex items-center gap-3 text-[11px] text-gray-300 dark:text-gray-600">
+              <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded font-mono text-gray-400">C</kbd>
+              <span>copy password</span>
+              <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded font-mono text-gray-400">U</kbd>
+              <span>copy username</span>
             </div>
           )}
         </main>
@@ -854,6 +946,9 @@ export default function VaultPage() {
           </div>
         </div>
       )}
+
+      {/* Toast notification */}
+      {toast && <Toast message={toast.message} />}
     </div>
   );
 }
