@@ -4,6 +4,7 @@ import { CardEditor } from "./CardEditor";
 import { IdentityEditor } from "./IdentityEditor";
 import { LoginEditor } from "./LoginEditor";
 import { NoteEditor } from "./NoteEditor";
+import { SshKeyEditor } from "./SshKeyEditor";
 import type { VaultItemPlaintext, VaultItemType } from "@nopass/types";
 
 interface ItemEditorProps {
@@ -46,6 +47,13 @@ export function ItemEditor({ itemType, initial, onSave, onCancel, saving }: Item
           {...(initial !== undefined && { initial: initial as Parameters<typeof IdentityEditor>[0]["initial"] })}
         />
       );
+    case "ssh_key":
+      return (
+        <SshKeyEditor
+          {...commonProps}
+          {...(initial !== undefined && { initial: initial as Parameters<typeof SshKeyEditor>[0]["initial"] })}
+        />
+      );
   }
 }
 
@@ -53,3 +61,4 @@ export * from "./LoginEditor";
 export * from "./NoteEditor";
 export * from "./CardEditor";
 export * from "./IdentityEditor";
+export * from "./SshKeyEditor";

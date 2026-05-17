@@ -190,6 +190,7 @@ fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
         "note" => Ok(VaultItemType::Note),
         "card" => Ok(VaultItemType::Card),
         "identity" => Ok(VaultItemType::Identity),
+        "ssh_key" => Ok(VaultItemType::SshKey),
         other => Err(ApiError::BadRequest(format!("unknown item type: {other}"))),
     }
 }
@@ -200,5 +201,6 @@ fn item_type_to_str(t: &VaultItemType) -> &'static str {
         VaultItemType::Note => "note",
         VaultItemType::Card => "card",
         VaultItemType::Identity => "identity",
+        VaultItemType::SshKey => "ssh_key",
     }
 }

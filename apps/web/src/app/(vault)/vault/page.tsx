@@ -12,6 +12,7 @@ import type {
   NoteItem,
   CardItem,
   IdentityItem,
+  SshKeyItem,
 } from "@nopass/types";
 import { api } from "@/lib/api";
 
@@ -23,6 +24,7 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
   note: "Notes",
   card: "Cards",
   identity: "Identities",
+  ssh_key: "SSH Keys",
 };
 
 const TYPE_COLORS: Record<VaultItemType, string> = {
@@ -30,6 +32,7 @@ const TYPE_COLORS: Record<VaultItemType, string> = {
   note: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
   card: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
   identity: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
+  ssh_key: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
 };
 
 const AVATAR_COLORS = [
@@ -83,6 +86,11 @@ function ItemAvatar({ name, type }: { name: string; type: VaultItemType }) {
       <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
         <circle cx="12" cy="7" r="4" />
+      </svg>
+    ),
+    ssh_key: (
+      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
       </svg>
     ),
   };
@@ -275,6 +283,44 @@ function IdentityDetail({ identity }: { identity: IdentityItem }) {
   );
 }
 
+function SshKeyDetail({ sshKey }: { sshKey: SshKeyItem }) {
+  return (
+    <>
+      {sshKey.publicKey && (
+        <DetailField label="Public key">
+          <div className="flex items-start gap-1">
+            <span className="flex-1 font-mono text-xs text-gray-800 dark:text-gray-200 break-all leading-relaxed">
+              {sshKey.publicKey}
+            </span>
+            <CopyButton text={sshKey.publicKey} label="Copy public key" />
+          </div>
+        </DetailField>
+      )}
+      <DetailField label="Private key">
+        <SecretField value={sshKey.privateKey} />
+      </DetailField>
+      {sshKey.passphrase && (
+        <DetailField label="Passphrase">
+          <SecretField value={sshKey.passphrase} />
+        </DetailField>
+      )}
+      {sshKey.comment && (
+        <DetailField label="Comment">
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 font-mono">{sshKey.comment}</span>
+            <CopyButton text={sshKey.comment} label="Copy comment" />
+          </div>
+        </DetailField>
+      )}
+      {sshKey.notes && (
+        <DetailField label="Notes">
+          <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">{sshKey.notes}</p>
+        </DetailField>
+      )}
+    </>
+  );
+}
+
 function DetailPane({
   entry,
   onEdit,
@@ -324,6 +370,7 @@ function DetailPane({
         {plaintext.type === "note" && <NoteDetail note={plaintext as NoteItem} />}
         {plaintext.type === "card" && <CardDetail card={plaintext as CardItem} />}
         {plaintext.type === "identity" && <IdentityDetail identity={plaintext as IdentityItem} />}
+        {plaintext.type === "ssh_key" && <SshKeyDetail sshKey={plaintext as SshKeyItem} />}
 
         <div className="text-[11px] text-gray-300 dark:text-gray-600 pt-2 border-t border-gray-100 dark:border-gray-700">
           <p>ID {item.id.slice(0, 8)}… · v{item.version}</p>
@@ -654,7 +701,7 @@ export default function VaultPage() {
 
         {sidebarTab === "vault" ? (
           <nav className="flex-1 overflow-y-auto p-2">
-            {(["all", "login", "note", "card", "identity"] as Filter[]).map((f) => {
+            {(["all", "login", "note", "card", "identity", "ssh_key"] as Filter[]).map((f) => {
               const count = f === "all" ? activeItems.length : activeItems.filter((i) => i.itemType === f).length;
               const isActive = filter === f;
               return (
@@ -745,12 +792,15 @@ export default function VaultPage() {
                   data-testid="type-picker"
                   className="absolute right-0 top-full mt-1.5 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg py-1.5 min-w-[140px]"
                 >
-                  {(["Login", "Note", "Card", "Identity"] as const).map((label) => (
+                  {(["Login", "Note", "Card", "Identity", "SSH Key"] as const).map((label) => (
                     <button
                       key={label}
                       data-testid={`type-${label.toLowerCase()}`}
                       onClick={() => {
-                        setModal({ mode: "create", itemType: label.toLowerCase() as VaultItemType });
+                        const typeMap: Record<string, VaultItemType> = {
+                          login: "login", note: "note", card: "card", identity: "identity", "ssh key": "ssh_key",
+                        };
+                        setModal({ mode: "create", itemType: typeMap[label.toLowerCase()] ?? "login" as VaultItemType });
                         setTypePicker(false);
                         setSelectedId(null);
                       }}

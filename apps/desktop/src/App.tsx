@@ -8,6 +8,8 @@ import { createApiClient } from "@nopass/ui";
 import { useBiometric } from "./hooks/useBiometric";
 import { keychain, DEVICE_KEY_ACCOUNT } from "./hooks/useKeychain";
 import { loadLocalItems, upsertLocalItem } from "./hooks/useLocalDb";
+import { sshAgent } from "./hooks/useSshAgent";
+import type { SshKeyItem } from "@nopass/types";
 
 const API_BASE = import.meta.env["VITE_API_URL"] ?? "http://localhost:3001";
 const api = createApiClient(API_BASE);
@@ -21,6 +23,7 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
   note: "Notes",
   card: "Cards",
   identity: "Identities",
+  ssh_key: "SSH Keys",
 };
 
 export default function App() {
@@ -274,6 +277,37 @@ function VaultScreen({
     }
   }, [api, sessionToken, defaultVaultId, markDeleted]);
 
+  const [sshStatus, setSshStatus] = useState<{ id: string; message: string } | null>(null);
+
+  const handleSshAgentAdd = useCallback(async (item: EncryptedVaultItem, plain: VaultItemPlaintext) => {
+    if (plain.type !== "ssh_key") return;
+    const key = plain as SshKeyItem;
+    setSshStatus({ id: item.id, message: "Adding…" });
+    try {
+      const msg = await sshAgent.add(key.privateKey, key.passphrase);
+      setSshStatus({ id: item.id, message: msg });
+      setTimeout(() => setSshStatus(null), 3000);
+    } catch (err) {
+      setSshStatus({ id: item.id, message: err instanceof Error ? err.message : String(err) });
+      setTimeout(() => setSshStatus(null), 5000);
+    }
+  }, []);
+
+  const handleSshExport = useCallback(async (item: EncryptedVaultItem, plain: VaultItemPlaintext) => {
+    if (plain.type !== "ssh_key") return;
+    const key = plain as SshKeyItem;
+    const safeName = plain.name.replace(/[^a-z0-9_-]/gi, "_").toLowerCase() || "id_nopass";
+    setSshStatus({ id: item.id, message: "Exporting…" });
+    try {
+      const path = await sshAgent.writeKeyFile(safeName, key.privateKey, key.publicKey);
+      setSshStatus({ id: item.id, message: `Saved to ${path}` });
+      setTimeout(() => setSshStatus(null), 5000);
+    } catch (err) {
+      setSshStatus({ id: item.id, message: err instanceof Error ? err.message : String(err) });
+      setTimeout(() => setSshStatus(null), 5000);
+    }
+  }, []);
+
   const activeItems = items.filter((i) => i.deletedAt === null);
   const filteredItems = activeItems.filter((item) => {
     if (filter !== "all" && item.itemType !== filter) return false;
@@ -305,7 +339,7 @@ function VaultScreen({
           ))}
         </div>
         <nav className="flex-1 overflow-y-auto py-2">
-          {sidebarTab === "vault" && (["all", "login", "note", "card", "identity"] as Filter[]).map((f) => (
+          {sidebarTab === "vault" && (["all", "login", "note", "card", "identity", "ssh_key"] as Filter[]).map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               className={`w-full text-left px-4 py-2 text-sm transition-colors ${
                 filter === f
@@ -340,10 +374,10 @@ function VaultScreen({
           <input type="search" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)}
             className="flex-1 max-w-sm px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
           <div className="flex items-center gap-2 ml-auto">
-            {(["login", "note", "card", "identity"] as VaultItemType[]).map((t) => (
+            {(["login", "note", "card", "identity", "ssh_key"] as VaultItemType[]).map((t) => (
               <button key={t} onClick={() => setModal({ mode: "create", itemType: t })}
                 className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">
-                + {t.charAt(0).toUpperCase() + t.slice(1)}
+                + {t === "ssh_key" ? "SSH Key" : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
           </div>
@@ -366,15 +400,38 @@ function VaultScreen({
               {filteredItems.map((item) => {
                 const plain = decrypted.get(item.id);
                 return (
-                  <div key={item.id} className="flex items-center group">
-                    <div className="flex-1 min-w-0">
-                      <DecryptedVaultItemCard item={item} decryptedName={plain?.name ?? "…"}
-                        onClick={() => { if (plain) setModal({ mode: "edit", entry: { item, plaintext: plain } }); }} />
+                  <div key={item.id} className="flex flex-col">
+                    <div className="flex items-center group">
+                      <div className="flex-1 min-w-0">
+                        <DecryptedVaultItemCard item={item} decryptedName={plain?.name ?? "…"}
+                          onClick={() => { if (plain) setModal({ mode: "edit", entry: { item, plaintext: plain } }); }} />
+                      </div>
+                      {item.itemType === "ssh_key" && plain && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                          <button
+                            onClick={() => handleSshAgentAdd(item, plain)}
+                            className="px-2 py-1 text-xs text-teal-600 hover:text-teal-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 rounded transition-colors"
+                            title="Add key to ssh-agent"
+                          >
+                            + agent
+                          </button>
+                          <button
+                            onClick={() => handleSshExport(item, plain)}
+                            className="px-2 py-1 text-xs text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                            title="Export to ~/.ssh/"
+                          >
+                            export
+                          </button>
+                        </div>
+                      )}
+                      <button onClick={() => handleDelete(item)}
+                        className="ml-1 px-2 py-1 text-xs text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                        Delete
+                      </button>
                     </div>
-                    <button onClick={() => handleDelete(item)}
-                      className="ml-2 px-2 py-1 text-xs text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                      Delete
-                    </button>
+                    {sshStatus?.id === item.id && (
+                      <p className="ml-2 mt-0.5 text-xs text-teal-600 dark:text-teal-400">{sshStatus.message}</p>
+                    )}
                   </div>
                 );
               })}

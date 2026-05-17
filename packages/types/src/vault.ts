@@ -1,4 +1,4 @@
-export type VaultItemType = "login" | "note" | "card" | "identity";
+export type VaultItemType = "login" | "note" | "card" | "identity" | "ssh_key";
 
 // ─── Plaintext types — exist ONLY in memory on-device, NEVER written to disk or network ──────────
 
@@ -49,7 +49,17 @@ export interface IdentityItem {
   notes?: string;
 }
 
-export type VaultItemPlaintext = LoginItem | NoteItem | CardItem | IdentityItem;
+export interface SshKeyItem {
+  type: "ssh_key";
+  name: string;
+  privateKey: string;
+  publicKey?: string;
+  passphrase?: string;
+  comment?: string;
+  notes?: string;
+}
+
+export type VaultItemPlaintext = LoginItem | NoteItem | CardItem | IdentityItem | SshKeyItem;
 
 // ─── Encrypted form — what the server stores and what travels over the network ──────────────────
 

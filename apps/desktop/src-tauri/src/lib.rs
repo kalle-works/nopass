@@ -9,6 +9,11 @@ pub fn run() {
             commands::keychain_delete,
             commands::touch_id_available,
             commands::touch_id_authenticate,
+            commands::ssh_agent_add,
+            commands::ssh_agent_remove,
+            commands::ssh_agent_list,
+            commands::ssh_write_key_file,
+            commands::ssh_delete_key_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running nopass");
