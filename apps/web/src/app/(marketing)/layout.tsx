@@ -19,5 +19,5 @@ export const metadata: Metadata = {
 };
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
-  return <div className="bg-[#080c14] text-white min-h-screen">{children}</div>;
+  return <div className="bg-[#070706] text-[#F4F1E8] min-h-screen">{children}</div>;
 }

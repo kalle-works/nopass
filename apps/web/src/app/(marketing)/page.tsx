@@ -2,164 +2,154 @@ import Link from "next/link";
 
 function Nav() {
   return (
-    <header className="fixed top-0 inset-x-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-sm border-b border-white/[0.06]">
-      <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between">
-        <Link href="/" className="text-white font-semibold tracking-tight text-sm">
+    <header className="fixed top-0 inset-x-0 z-50 bg-[#11110F] border-b border-[#2B2923]">
+      <div className="mx-auto max-w-6xl px-6 h-12 flex items-center justify-between">
+        <Link href="/" className="font-mono text-sm font-semibold text-[#F4F1E8] tracking-tight">
           nopwd
         </Link>
-        <div className="flex items-center gap-6">
+        <nav className="flex items-center gap-6">
           <a
             href="https://github.com/kalle-works/nopass"
             target="_blank"
             rel="noreferrer"
-            className="text-sm text-white/40 hover:text-white/70 transition-colors"
+            className="text-sm text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
           >
             GitHub
           </a>
-          <Link href="/login" className="text-sm text-white/40 hover:text-white/70 transition-colors">
+          <Link href="#how-it-works" className="text-sm text-[#9C988D] hover:text-[#F4F1E8] transition-colors">
+            Docs
+          </Link>
+          <Link href="/login" className="text-sm text-[#9C988D] hover:text-[#F4F1E8] transition-colors">
             Sign in
           </Link>
           <Link
             href="/register"
-            className="text-sm font-medium px-3.5 py-1.5 rounded-md bg-white text-black hover:bg-white/90 transition-colors"
+            className="font-mono text-sm font-medium px-3 py-1.5 bg-[#D6FF3F] text-[#070706] hover:bg-[#c8ef3a] transition-colors"
           >
             Get started
           </Link>
-        </div>
+        </nav>
       </div>
     </header>
   );
 }
 
-function BrowserFrame({ children }: { children: React.ReactNode }) {
+function Node({ label, tag }: { label: string; tag?: string }) {
   return (
-    <div className="rounded-xl overflow-hidden border border-white/10 shadow-2xl shadow-black/60 bg-white">
-      <div className="flex items-center gap-1.5 px-3 py-2.5 bg-[#f0f0f0] border-b border-black/8">
-        <div className="w-3 h-3 rounded-full bg-[#ff5f57]" />
-        <div className="w-3 h-3 rounded-full bg-[#febc2e]" />
-        <div className="w-3 h-3 rounded-full bg-[#28c840]" />
-        <div className="flex-1 mx-3 bg-white/70 rounded h-5 flex items-center px-2.5">
-          <span className="text-[10px] text-black/30 font-mono">nopwd.dev/vault</span>
-        </div>
-      </div>
-      {children}
+    <div className="flex items-center gap-3 py-2.5">
+      <span className="w-1.5 h-1.5 bg-[#9C988D] shrink-0" />
+      <span className="font-mono text-sm text-[#F4F1E8]">{label}</span>
+      {tag && <span className="font-mono text-[11px] text-[#9C988D] ml-1">{tag}</span>}
     </div>
   );
 }
 
-function VaultPreview() {
-  const items = [
-    { name: "Netflix", sub: "sarah@example.com", type: "Login" },
-    { name: "ProtonMail", sub: "sarah@example.com", type: "Login" },
-    { name: "AWS Console", sub: "sarah@example.com", type: "Login" },
-    { name: "Visa •••• 4242", sub: "", type: "Card" },
-  ];
-
+function AlgoStep({ label, notes }: { label: string; notes: string[] }) {
   return (
-    <BrowserFrame>
-      <div className="flex h-[340px] text-sm">
-        {/* Sidebar */}
-        <div className="w-44 border-r border-black/8 bg-[#f9f9f9] flex flex-col shrink-0">
-          <div className="px-4 pt-4 pb-2">
-            <p className="text-[11px] font-semibold text-black/30 uppercase tracking-wider mb-2">nopwd</p>
-          </div>
-          {[
-            { label: "All items", count: 4, active: true },
-            { label: "Logins", count: 3, active: false },
-            { label: "Notes", count: 0, active: false },
-            { label: "Cards", count: 1, active: false },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className={`mx-2 mb-0.5 px-2 py-1.5 rounded-md text-[12px] flex items-center justify-between ${
-                item.active
-                  ? "bg-[#3b82f6] text-white font-medium"
-                  : "text-black/50 hover:bg-black/5"
-              }`}
-            >
-              <span>{item.label}</span>
-              <span className={item.active ? "text-white/70" : "text-black/30"}>{item.count}</span>
-            </div>
-          ))}
-          <div className="mt-auto px-4 pb-4">
-            <button className="text-[11px] text-black/30 hover:text-black/50 transition-colors">
-              Lock vault
-            </button>
-          </div>
+    <div className="ml-[11px] pl-4 border-l border-[#2B2923] py-3">
+      <div className="font-mono text-sm text-[#D6FF3F] mb-1.5">↓&nbsp;&nbsp;{label}</div>
+      {notes.map((note) => (
+        <div key={note} className="font-mono text-[11px] text-[#9C988D] leading-relaxed">{note}</div>
+      ))}
+    </div>
+  );
+}
+
+function VerifiedLine({ text, link }: { text: string; link?: string }) {
+  const inner = (
+    <span className="font-mono text-[11px] text-[#7CFF6B]">
+      {text}{link ? " ↗" : ""}
+    </span>
+  );
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-mono text-[11px] text-[#7CFF6B] shrink-0">✓</span>
+      {link ? (
+        <a href={link} target="_blank" rel="noreferrer" className="hover:underline underline-offset-2">
+          {inner}
+        </a>
+      ) : inner}
+    </div>
+  );
+}
+
+function CryptoFlow() {
+  return (
+    <div className="border border-[#2B2923]">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#2B2923] bg-[#11110F]">
+        <div className="flex gap-1.5">
+          <div className="w-2 h-2 rounded-full bg-[#2B2923]" />
+          <div className="w-2 h-2 rounded-full bg-[#2B2923]" />
+          <div className="w-2 h-2 rounded-full bg-[#2B2923]" />
         </div>
+        <span className="font-mono text-[11px] text-[#9C988D] ml-1.5">nopwd / crypto-model</span>
+      </div>
 
-        {/* Main */}
-        <div className="flex-1 flex flex-col">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-black/8">
-            <div className="flex-1 h-7 rounded-md border border-black/10 bg-white flex items-center px-2.5 gap-1.5">
-              <svg className="w-3 h-3 text-black/25" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-              </svg>
-              <span className="text-[11px] text-black/25">Search…</span>
-            </div>
-            <div className="h-7 px-3 rounded-md bg-[#3b82f6] text-white text-[11px] font-medium flex items-center">
-              New item
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-hidden divide-y divide-black/[0.06]">
-            {items.map((item) => (
-              <div key={item.name} className="flex items-center justify-between px-4 py-2.5 hover:bg-black/[0.02] transition-colors">
-                <div>
-                  <p className="text-[13px] font-medium text-black/80">{item.name}</p>
-                  {item.sub && <p className="text-[11px] text-black/35 mt-0.5">{item.sub}</p>}
-                </div>
-                <span className="text-[10px] text-black/25 bg-black/[0.04] px-2 py-0.5 rounded">{item.type}</span>
-              </div>
-            ))}
-          </div>
+      <div className="p-6 bg-[#070706]">
+        <Node label="master password" />
+        <AlgoStep
+          label="Argon2id"
+          notes={["64 MB · 3 iterations", "runs only on your device, never transmitted"]}
+        />
+        <Node label="client key" tag="never leaves device" />
+        <AlgoStep
+          label="AES-256-GCM"
+          notes={["each vault item encrypted individually", "unique nonce per item"]}
+        />
+        <Node label="encrypted vault" tag="ciphertext only" />
+        <AlgoStep
+          label="SRP-6a"
+          notes={["server verifies you know the password", "without ever seeing or receiving it"]}
+        />
+        <div className="pt-3 space-y-1.5">
+          <VerifiedLine text="server holds zero plaintext" />
+          <VerifiedLine text="cryptographically verified, not promised" />
+          <VerifiedLine
+            text="open source — read it yourself"
+            link="https://github.com/kalle-works/nopass"
+          />
         </div>
       </div>
-    </BrowserFrame>
+    </div>
   );
 }
 
 function Hero() {
   return (
-    <section className="pt-28 pb-12 md:pt-36 md:pb-16">
+    <section className="pt-24 pb-16 md:pt-32 md:pb-20">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
-          {/* Left */}
-          <div>
-            <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-5">
-              Open source · Zero-knowledge
+        <div className="grid lg:grid-cols-2 gap-16 items-start">
+          <div className="lg:pt-2">
+            <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-6">
+              Zero-knowledge · Open source · Auditable
             </p>
-            <h1 className="text-5xl md:text-[3.75rem] font-bold tracking-tight leading-[1.08] text-white mb-6">
+            <h1 className="font-mono text-4xl md:text-5xl font-bold leading-[1.1] text-[#F4F1E8] mb-6">
               The password manager that can&apos;t read your passwords.
             </h1>
-            <p className="text-white/45 text-lg leading-relaxed mb-8 max-w-md">
-              Every item is encrypted on your device before it leaves.
-              We store ciphertext — not your secrets.
+            <p className="text-[#9C988D] text-base leading-relaxed mb-8 max-w-xs">
+              Zero-knowledge by construction.<br />
+              Open source by default.
             </p>
-            <div className="flex items-center gap-3">
-              <Link
-                href="/register"
-                className="px-5 py-2.5 rounded-lg bg-white text-black font-semibold text-sm hover:bg-white/90 transition-colors"
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <a
+                href="#how-it-works"
+                className="px-5 py-2.5 bg-[#D6FF3F] text-[#070706] font-mono font-semibold text-sm hover:bg-[#c8ef3a] transition-colors"
               >
-                Get started free
-              </Link>
+                Read the model
+              </a>
               <a
                 href="https://github.com/kalle-works/nopass"
                 target="_blank"
                 rel="noreferrer"
-                className="px-5 py-2.5 rounded-lg border border-white/10 text-white/60 font-medium text-sm hover:text-white hover:border-white/20 transition-colors"
+                className="px-5 py-2.5 border border-[#2B2923] text-[#9C988D] font-mono text-sm hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors"
               >
                 View source ↗
               </a>
             </div>
           </div>
 
-          {/* Right — vault mockup */}
-          <div className="relative">
-            <div className="absolute -inset-8 bg-white/[0.02] rounded-3xl blur-3xl" />
-            <div className="relative">
-              <VaultPreview />
-            </div>
+          <div>
+            <CryptoFlow />
           </div>
         </div>
       </div>
@@ -169,23 +159,25 @@ function Hero() {
 
 function ProofBar() {
   const items = [
-    "AES-256-GCM",
-    "Argon2id",
-    "SRP-6a",
-    "Open source",
-    "No telemetry",
-    "Free forever",
+    { label: "AES-256-GCM", accent: true },
+    { label: "Argon2id", accent: true },
+    { label: "SRP-6a", accent: true },
+    { label: "Open source", accent: false },
+    { label: "No telemetry", accent: false },
+    { label: "Free forever", accent: false },
   ];
 
   return (
-    <section className="border-y border-white/[0.06] py-5">
+    <section className="border-y border-[#2B2923] py-4">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           {items.map((item, i) => (
-            <span key={item} className="flex items-center gap-8">
-              <span className="text-sm text-white/30">{item}</span>
+            <span key={item.label} className="flex items-center gap-6">
+              <span className={`font-mono text-xs ${item.accent ? "text-[#D6FF3F]" : "text-[#9C988D]"}`}>
+                {item.label}
+              </span>
               {i < items.length - 1 && (
-                <span className="text-white/10 hidden sm:inline">·</span>
+                <span className="text-[#2B2923] hidden sm:inline select-none">·</span>
               )}
             </span>
           ))}
@@ -215,23 +207,136 @@ function HowItWorks() {
   ];
 
   return (
-    <section className="py-16 md:py-24">
+    <section id="how-it-works" className="py-16 md:py-24 border-t border-[#2B2923]">
       <div className="mx-auto max-w-6xl px-6">
         <div className="mb-12">
-          <p className="text-xs font-medium text-white/25 uppercase tracking-widest mb-3">How it works</p>
-          <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
+          <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-3">How it works</p>
+          <h2 className="font-mono text-3xl md:text-4xl font-bold text-[#F4F1E8] tracking-tight">
             Math, not promises.
           </h2>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-4">
-          {steps.map((step) => (
-            <div key={step.n} className="p-6 rounded-2xl border border-white/[0.06] bg-white/[0.02]">
-              <p className="text-xs font-mono text-white/20 mb-5">{step.n}</p>
-              <h3 className="text-base font-semibold text-white mb-2">{step.title}</h3>
-              <p className="text-sm text-white/40 leading-relaxed">{step.body}</p>
+        <div className="grid md:grid-cols-3 border border-[#2B2923]">
+          {steps.map((step, i) => (
+            <div
+              key={step.n}
+              className={`p-6 bg-[#11110F] ${i < steps.length - 1 ? "border-b md:border-b-0 md:border-r border-[#2B2923]" : ""}`}
+            >
+              <p className="font-mono text-xs text-[#9C988D] mb-5">{step.n}</p>
+              <h3 className="font-mono text-sm font-semibold text-[#F4F1E8] mb-3">{step.title}</h3>
+              <p className="text-sm text-[#9C988D] leading-relaxed">{step.body}</p>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ThreatModel() {
+  const protects = [
+    {
+      claim: "Compromised server",
+      detail: "Attacker gets only ciphertext. No key, no readable data.",
+    },
+    {
+      claim: "Database breach",
+      detail: "Each user has a unique derived key. A breach reveals no plaintext.",
+    },
+    {
+      claim: "Network interception",
+      detail: "SRP-6a: your password never crosses the wire, not even as a hash.",
+    },
+  ];
+
+  const doesNotProtect = [
+    {
+      claim: "Compromised device",
+      detail: "If an attacker controls your device, they can observe decryption.",
+    },
+    {
+      claim: "Forgotten master password",
+      detail: "Zero-knowledge means zero recovery. By design, not negligence.",
+    },
+    {
+      claim: "Weak master password",
+      detail: "Security is proportional to entropy. A weak key is a weak vault.",
+    },
+  ];
+
+  const assumes = [
+    "The client code you run matches the open-source repository (verify with reproducible builds).",
+    "Your device is not compromised at the moment you unlock your vault.",
+    "Your master password is unique and not reused on other services.",
+  ];
+
+  return (
+    <section className="py-16 md:py-24 border-t border-[#2B2923]">
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="mb-12">
+          <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-3">Threat model</p>
+          <h2 className="font-mono text-3xl md:text-4xl font-bold text-[#F4F1E8] tracking-tight">
+            What nopwd cannot do.
+          </h2>
+          <p className="text-[#9C988D] text-sm mt-3 max-w-lg leading-relaxed">
+            We state limits before features. If you want reassurance without verification, use a different product.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 mb-4">
+          <div className="border border-[#2B2923]">
+            <div className="px-5 py-3 border-b border-[#2B2923] bg-[#11110F]">
+              <span className="font-mono text-xs text-[#7CFF6B] uppercase tracking-widest">
+                Protects you from
+              </span>
+            </div>
+            <div className="divide-y divide-[#2B2923]">
+              {protects.map((item) => (
+                <div key={item.claim} className="px-5 py-4">
+                  <div className="flex items-start gap-3">
+                    <span className="font-mono text-sm text-[#7CFF6B] mt-0.5 shrink-0">✓</span>
+                    <div>
+                      <p className="text-sm text-[#F4F1E8] font-medium mb-1">{item.claim}</p>
+                      <p className="text-xs text-[#9C988D] leading-relaxed">{item.detail}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="border border-[#2B2923] md:border-l-0 border-t-0 md:border-t">
+            <div className="px-5 py-3 border-b border-[#2B2923] bg-[#11110F]">
+              <span className="font-mono text-xs text-[#FF5C39] uppercase tracking-widest">
+                Does not protect against
+              </span>
+            </div>
+            <div className="divide-y divide-[#2B2923]">
+              {doesNotProtect.map((item) => (
+                <div key={item.claim} className="px-5 py-4">
+                  <div className="flex items-start gap-3">
+                    <span className="font-mono text-sm text-[#FF5C39] mt-0.5 shrink-0">✗</span>
+                    <div>
+                      <p className="text-sm text-[#F4F1E8] font-medium mb-1">{item.claim}</p>
+                      <p className="text-xs text-[#9C988D] leading-relaxed">{item.detail}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="border border-[#2B2923] p-5">
+          <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-4">Assumes</p>
+          <ul className="space-y-3">
+            {assumes.map((assumption, i) => (
+              <li key={i} className="flex items-start gap-3 text-sm text-[#9C988D] leading-relaxed">
+                <span className="font-mono text-[#2B2923] mt-0.5 shrink-0 select-none">—</span>
+                {assumption}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </section>
@@ -268,88 +373,79 @@ function Pricing() {
   ];
 
   return (
-    <section id="pricing" className="py-16 md:py-24 border-t border-white/[0.06]">
+    <section id="pricing" className="py-16 md:py-24 border-t border-[#2B2923]">
       <div className="mx-auto max-w-6xl px-6">
         <div className="mb-12">
-          <p className="text-xs font-medium text-white/25 uppercase tracking-widest mb-3">Pricing</p>
-          <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
+          <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-3">Pricing</p>
+          <h2 className="font-mono text-3xl md:text-4xl font-bold text-[#F4F1E8] tracking-tight">
             Simple. No catch.
           </h2>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-4 max-w-4xl">
-          {/* Free */}
-          <div className="p-8 rounded-2xl border border-white/[0.08] bg-white/[0.02]">
-            <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-4">Free</p>
-            <p className="text-5xl font-bold text-white mb-1">€0</p>
-            <p className="text-sm text-white/25 mb-6">forever</p>
+        <div className="grid md:grid-cols-3 max-w-4xl border border-[#2B2923]">
+          <div className="p-6 border-b md:border-b-0 md:border-r border-[#2B2923]">
+            <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-4">Free</p>
+            <p className="font-mono text-5xl font-bold text-[#F4F1E8] mb-1">€0</p>
+            <p className="text-xs text-[#9C988D] mb-6">forever</p>
             <Link
               href="/register"
-              className="block text-center py-2.5 rounded-lg bg-white text-black text-sm font-semibold hover:bg-white/90 transition-colors mb-8"
+              className="block text-center py-2.5 border border-[#2B2923] text-[#9C988D] font-mono text-sm hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors mb-8"
             >
               Get started free
             </Link>
-            <ul className="space-y-3">
+            <ul className="space-y-2.5">
               {free.map((item) => (
-                <li key={item} className="text-sm text-white/45 flex items-start gap-2.5">
-                  <svg className="w-4 h-4 text-white/30 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+                <li key={item} className="text-sm text-[#9C988D] flex items-start gap-2.5">
+                  <span className="font-mono text-[#9C988D] mt-0.5 shrink-0 text-xs select-none">—</span>
                   {item}
                 </li>
               ))}
             </ul>
           </div>
 
-          {/* Pro */}
-          <div className="p-8 rounded-2xl border border-blue-500/30 bg-blue-500/[0.04] relative">
-            <span className="absolute -top-px left-1/2 -translate-x-1/2 text-[10px] font-medium px-3 py-1 rounded-b-md bg-blue-500 text-white">
+          <div className="p-6 border-b md:border-b-0 md:border-r border-[#2B2923] relative bg-[#11110F]">
+            <span className="absolute -top-px left-1/2 -translate-x-1/2 font-mono text-[10px] px-3 py-1 bg-[#D6FF3F] text-[#070706] font-semibold uppercase tracking-widest whitespace-nowrap">
               Most popular
             </span>
-            <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-4 mt-3">Pro</p>
+            <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-4 mt-3">Pro</p>
             <div className="mb-1">
-              <span className="text-5xl font-bold text-white">€4</span>
-              <span className="text-sm text-white/25 ml-1">/ month</span>
+              <span className="font-mono text-5xl font-bold text-[#F4F1E8]">€4</span>
+              <span className="text-sm text-[#9C988D] ml-1">/ month</span>
             </div>
-            <p className="text-xs text-white/25 mb-6">or €36/year · save 25%</p>
+            <p className="font-mono text-xs text-[#9C988D] mb-6">or €36/year · save 25%</p>
             <Link
               href="/vault/billing"
-              className="block text-center py-2.5 rounded-lg bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors mb-8"
+              className="block text-center py-2.5 bg-[#D6FF3F] text-[#070706] font-mono text-sm font-semibold hover:bg-[#c8ef3a] transition-colors mb-8"
             >
               Upgrade to Pro
             </Link>
-            <ul className="space-y-3">
+            <ul className="space-y-2.5">
               {pro.map((item) => (
-                <li key={item} className="text-sm text-white/45 flex items-start gap-2.5">
-                  <svg className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+                <li key={item} className="text-sm text-[#9C988D] flex items-start gap-2.5">
+                  <span className="font-mono text-[#D6FF3F] mt-0.5 shrink-0 text-xs">✓</span>
                   {item}
                 </li>
               ))}
             </ul>
           </div>
 
-          {/* Teams */}
-          <div className="p-8 rounded-2xl border border-white/[0.08] bg-white/[0.02]">
-            <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-4">Teams</p>
+          <div className="p-6">
+            <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-4">Teams</p>
             <div className="mb-1">
-              <span className="text-5xl font-bold text-white">€5</span>
-              <span className="text-sm text-white/25 ml-1">/ seat</span>
+              <span className="font-mono text-5xl font-bold text-[#F4F1E8]">€5</span>
+              <span className="text-sm text-[#9C988D] ml-1">/ seat</span>
             </div>
-            <p className="text-xs text-white/25 mb-6">per month · min 3 seats · annual</p>
+            <p className="font-mono text-xs text-[#9C988D] mb-6">per month · min 3 seats · annual</p>
             <Link
               href="/vault/billing"
-              className="block text-center py-2.5 rounded-lg border border-white/10 text-white/60 text-sm font-semibold hover:text-white hover:border-white/20 transition-colors mb-8"
+              className="block text-center py-2.5 border border-[#2B2923] text-[#9C988D] font-mono text-sm hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors mb-8"
             >
               Start Teams trial
             </Link>
-            <ul className="space-y-3">
+            <ul className="space-y-2.5">
               {teams.map((item) => (
-                <li key={item} className="text-sm text-white/45 flex items-start gap-2.5">
-                  <svg className="w-4 h-4 text-white/30 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+                <li key={item} className="text-sm text-[#9C988D] flex items-start gap-2.5">
+                  <span className="font-mono text-[#9C988D] mt-0.5 shrink-0 text-xs select-none">—</span>
                   {item}
                 </li>
               ))}
@@ -363,26 +459,41 @@ function Pricing() {
 
 function Footer() {
   return (
-    <footer className="border-t border-white/[0.06] py-10">
-      <div className="mx-auto max-w-6xl px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <p className="text-sm text-white/20">
-          &copy; {new Date().getFullYear()} nopwd — MIT license
-        </p>
-        <div className="flex items-center gap-6">
-          <a
-            href="https://github.com/kalle-works/nopass"
-            target="_blank"
-            rel="noreferrer"
-            className="text-sm text-white/20 hover:text-white/40 transition-colors"
-          >
-            GitHub
-          </a>
-          <Link href="/login" className="text-sm text-white/20 hover:text-white/40 transition-colors">
-            Sign in
-          </Link>
-          <Link href="/register" className="text-sm text-white/20 hover:text-white/40 transition-colors">
-            Register
-          </Link>
+    <footer className="border-t border-[#2B2923] py-12">
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="flex flex-col md:flex-row items-start justify-between gap-8 mb-10">
+          <div>
+            <p className="font-mono text-sm font-semibold text-[#F4F1E8] mb-4">nopwd</p>
+            <div className="flex items-center gap-3 border border-[#2B2923] bg-[#11110F] px-4 py-2.5">
+              <span className="font-mono text-xs text-[#9C988D] select-none">$</span>
+              <span className="font-mono text-xs text-[#D6FF3F]">brew install nopwd</span>
+            </div>
+          </div>
+          <nav className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-8">
+            <a
+              href="https://github.com/kalle-works/nopass"
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
+            >
+              GitHub
+            </a>
+            <Link href="#how-it-works" className="text-sm text-[#9C988D] hover:text-[#F4F1E8] transition-colors">
+              Security model
+            </Link>
+            <Link href="#pricing" className="text-sm text-[#9C988D] hover:text-[#F4F1E8] transition-colors">
+              Pricing
+            </Link>
+            <Link href="/login" className="text-sm text-[#9C988D] hover:text-[#F4F1E8] transition-colors">
+              Sign in
+            </Link>
+          </nav>
+        </div>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-8 border-t border-[#2B2923]">
+          <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest">
+            MIT license · Zero-knowledge by construction · Open source by default
+          </p>
+          <p className="text-xs text-[#9C988D]">&copy; {new Date().getFullYear()} nopwd</p>
         </div>
       </div>
     </footer>
@@ -397,6 +508,7 @@ export default function LandingPage() {
         <Hero />
         <ProofBar />
         <HowItWorks />
+        <ThreatModel />
         <Pricing />
       </main>
       <Footer />
