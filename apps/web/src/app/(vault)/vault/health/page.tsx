@@ -64,10 +64,10 @@ function ScoreCard({ label, count, color, description }: { label: string; count:
   );
 }
 
-function EntryRow({ entry, router }: { entry: HealthEntry; router: ReturnType<typeof useRouter> }) {
+function EntryRow({ entry, onClick }: { entry: HealthEntry; onClick: () => void }) {
   return (
     <button
-      onClick={() => router.push("/vault")}
+      onClick={onClick}
       className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors text-left"
     >
       <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center shrink-0">
@@ -104,32 +104,37 @@ export default function HealthPage() {
   useEffect(() => {
     if (!vaultEncKey || !vaultMacKey) return;
     let cancelled = false;
-    async function decrypt() {
-      const result: HealthEntry[] = [];
-      for (const item of items) {
-        if (item.itemType !== "login" || item.deletedAt) continue;
+    const enc = vaultEncKey;
+    const mac = vaultMacKey;
+    const loginItems = items.filter((i) => i.itemType === "login" && !i.deletedAt);
+
+    Promise.all(
+      loginItems.map(async (item) => {
         try {
-          const plaintext = await decryptItem(item, vaultEncKey!, vaultMacKey!) as VaultItemPlaintext;
-          if (plaintext.type === "login") {
-            result.push({ item, plaintext });
-          }
+          const plaintext = await decryptItem(item, enc, mac) as VaultItemPlaintext;
+          if (plaintext.type === "login") return { item, plaintext } as HealthEntry;
         } catch {
           // skip items that fail to decrypt
         }
-      }
-      if (!cancelled) {
-        setEntries(result);
-        setLoading(false);
-      }
-    }
-    decrypt();
+        return null;
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setEntries(results.filter((r): r is HealthEntry => r !== null));
+      setLoading(false);
+    });
+
     return () => { cancelled = true; };
   }, [items, vaultEncKey, vaultMacKey]);
 
   const report = useMemo(() => buildReport(entries), [entries]);
 
-  const totalIssues = report.weak.length + report.reused.reduce((sum, g) => sum + g.entries.length, 0) + report.noPassword.length;
-  const score = entries.length === 0 ? 100 : Math.max(0, Math.round(100 - (totalIssues / entries.length) * 100));
+  const problematicIds = new Set([
+    ...report.weak.map((e) => e.item.id),
+    ...report.reused.flatMap((g) => g.entries.map((e) => e.item.id)),
+    ...report.noPassword.map((e) => e.item.id),
+  ]);
+  const score = entries.length === 0 ? 100 : Math.max(0, Math.round(100 - (problematicIds.size / entries.length) * 100));
 
   const scoreColor =
     score >= 90 ? "text-green-600 dark:text-green-400" :
@@ -171,9 +176,9 @@ export default function HealthPage() {
               <div className="flex-1">
                 <p className="text-sm text-gray-600 dark:text-gray-400">
                   Analysed <strong className="text-gray-900 dark:text-white">{entries.length}</strong> login items.
-                  {totalIssues === 0
+                  {problematicIds.size === 0
                     ? " Everything looks great — no issues found."
-                    : ` Found ${totalIssues} issue${totalIssues !== 1 ? "s" : ""} to review.`}
+                    : ` Found ${problematicIds.size} issue${problematicIds.size !== 1 ? "s" : ""} to review.`}
                 </p>
               </div>
             </div>
@@ -210,7 +215,7 @@ export default function HealthPage() {
                 </div>
                 <div className="divide-y divide-gray-100 dark:divide-gray-700">
                   {report.weak.map((entry) => (
-                    <EntryRow key={entry.item.id} entry={entry} router={router} />
+                    <EntryRow key={entry.item.id} entry={entry} onClick={() => router.push(`/vault?item=${entry.item.id}`)} />
                   ))}
                 </div>
               </section>
@@ -233,7 +238,7 @@ export default function HealthPage() {
                         </span>
                       </div>
                       {group.map((entry) => (
-                        <EntryRow key={entry.item.id} entry={entry} router={router} />
+                        <EntryRow key={entry.item.id} entry={entry} onClick={() => router.push(`/vault?item=${entry.item.id}`)} />
                       ))}
                     </div>
                   ))}
@@ -251,13 +256,13 @@ export default function HealthPage() {
                 </div>
                 <div className="divide-y divide-gray-100 dark:divide-gray-700">
                   {report.noPassword.map((entry) => (
-                    <EntryRow key={entry.item.id} entry={entry} router={router} />
+                    <EntryRow key={entry.item.id} entry={entry} onClick={() => router.push(`/vault?item=${entry.item.id}`)} />
                   ))}
                 </div>
               </section>
             )}
 
-            {totalIssues === 0 && (
+            {problematicIds.size === 0 && (
               <div className="text-center py-12">
                 <div className="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-4">
                   <svg className="w-7 h-7 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">

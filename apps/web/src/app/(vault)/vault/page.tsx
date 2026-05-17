@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useNopassStore, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
 import { computeTotp } from "@nopass/ui";
@@ -180,26 +180,35 @@ function DetailField({ label, children }: { label: string; children: React.React
 }
 
 function TotpCode({ uri }: { uri: string }) {
-  const [result, setResult] = useState<{ code: string; remainingSeconds: number } | null>(null);
+  const [result, setResult] = useState<{ code: string; remainingSeconds: number; period: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     async function tick() {
       const r = await computeTotp(uri);
       if (!cancelled) setResult(r);
     }
+
     tick();
-    const interval = setInterval(tick, 1000);
+    // Align subsequent ticks to wall-clock second boundaries to avoid drift
+    const delay = 1000 - (Date.now() % 1000);
+    const timeoutId = setTimeout(() => {
+      tick();
+      intervalId = setInterval(tick, 1000);
+    }, delay);
+
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      clearTimeout(timeoutId);
+      if (intervalId !== null) clearInterval(intervalId);
     };
   }, [uri]);
 
   if (!result) return null;
 
-  const { code, remainingSeconds } = result;
-  const period = 30;
+  const { code, remainingSeconds, period } = result;
   const fraction = remainingSeconds / period;
   const urgent = remainingSeconds <= 5;
   const radius = 9;
@@ -484,6 +493,7 @@ function Toast({ message }: { message: string }) {
 
 export default function VaultPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     isUnlocked,
     sessionToken,
@@ -539,6 +549,16 @@ export default function VaultPage() {
       // clipboard unavailable
     }
   }
+
+  // Deep-link: /vault?item=ID (e.g. from health page)
+  useEffect(() => {
+    const itemId = searchParams.get("item");
+    if (itemId) {
+      setSelectedId(itemId);
+      router.replace("/vault");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Autofocus search on mount
   useEffect(() => {

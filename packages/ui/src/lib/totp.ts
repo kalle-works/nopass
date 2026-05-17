@@ -41,6 +41,7 @@ function counterToBytes(counter: number): Uint8Array {
 export interface TotpResult {
   code: string;
   remainingSeconds: number;
+  period: number;
 }
 
 export async function computeTotp(uri: string): Promise<TotpResult | null> {
@@ -71,6 +72,7 @@ export async function computeTotp(uri: string): Promise<TotpResult | null> {
     return {
       code: code.toString().padStart(digits, "0"),
       remainingSeconds,
+      period,
     };
   } catch {
     return null;
