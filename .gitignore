@@ -56,3 +56,4 @@ lcov.info
 # Test results and screenshots
 apps/web/test-results/
 *.png
+.gstack/

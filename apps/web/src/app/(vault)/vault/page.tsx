@@ -971,8 +971,8 @@ export default function VaultPage() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
               <h2 className="text-base font-semibold text-gray-900 dark:text-white">
                 {modal.mode === "create"
-                  ? `New ${modal.itemType}`
-                  : `Edit ${modal.entry.plaintext.type}`}
+                  ? `New ${TYPE_LABELS[modal.itemType].slice(0, -1)}`
+                  : `Edit ${TYPE_LABELS[modal.entry.plaintext.type as VaultItemType].slice(0, -1)}`}
               </h2>
               <button
                 onClick={() => setModal(null)}
