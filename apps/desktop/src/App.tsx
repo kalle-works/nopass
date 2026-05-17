@@ -95,6 +95,7 @@ export default function App() {
   }
 
   function handleLock() {
+    sshAgent.clearVaultKeys().catch(() => {});
     lock();
     setScreen("unlock-mode-select");
   }
@@ -236,6 +237,16 @@ function VaultScreen({
       const map = new Map<string, VaultItemPlaintext>();
       for (const r of results) if (r) map.set(r[0], r[1]);
       setDecrypted(map);
+
+      // Sync SSH keys into the in-process agent whenever vault contents change.
+      const sshKeys = [...map.values()]
+        .filter((p): p is SshKeyItem => p.type === "ssh_key")
+        .map((k) => ({
+          privateKey: k.privateKey,
+          passphrase: k.passphrase ?? undefined,
+          comment: k.comment ?? k.name,
+        }));
+      sshAgent.loadVaultKeys(sshKeys).catch(() => {/* agent not running */});
     });
   }, [items, vaultEncKey, vaultMacKey]);
 
@@ -361,7 +372,8 @@ function VaultScreen({
             />
           )}
         </nav>
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="p-3 border-t border-gray-200 dark:border-gray-700 space-y-1">
+          <SshAgentStatus decrypted={decrypted} />
           <button onClick={onLock}
             className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
             Lock vault
@@ -444,7 +456,9 @@ function VaultScreen({
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">
-              {modal.mode === "create" ? `New ${modal.itemType}` : `Edit ${modal.entry.plaintext.type}`}
+              {modal.mode === "create"
+                ? `New ${TYPE_LABELS[modal.itemType as VaultItemType]?.slice(0, -1) ?? modal.itemType}`
+                : `Edit ${TYPE_LABELS[modal.entry.plaintext.type as VaultItemType]?.slice(0, -1) ?? modal.entry.plaintext.type}`}
             </h2>
             <ItemEditor
               itemType={modal.mode === "create" ? modal.itemType : modal.entry.plaintext.type}
@@ -456,6 +470,45 @@ function VaultScreen({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SshAgentStatus({ decrypted }: { decrypted: boolean }) {
+  const [socketPath, setSocketPath] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (decrypted) {
+      sshAgent.socketPath().then(setSocketPath).catch(() => {});
+    } else {
+      setSocketPath(null);
+    }
+  }, [decrypted]);
+
+  if (!decrypted || !socketPath) return null;
+
+  async function copyConfig() {
+    try {
+      const snippet = await sshAgent.shellConfig();
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  }
+
+  return (
+    <div className="px-3 py-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-xs text-teal-700 dark:text-teal-300">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">SSH agent active</span>
+        <button
+          onClick={copyConfig}
+          className="shrink-0 underline underline-offset-2 hover:no-underline"
+        >
+          {copied ? "Copied!" : "Copy shell setup"}
+        </button>
+      </div>
+      <p className="mt-0.5 text-teal-600 dark:text-teal-400 font-mono truncate">{socketPath}</p>
     </div>
   );
 }

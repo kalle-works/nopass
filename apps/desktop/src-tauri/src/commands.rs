@@ -1,6 +1,15 @@
 use keyring::Entry;
+use serde::Deserialize;
 use std::io::Write;
 use std::process::{Command, Stdio};
+
+/// Payload for loading SSH keys into the in-process agent.
+#[derive(Deserialize)]
+pub struct SshKeyPayload {
+    pub private_key: String,
+    pub passphrase: Option<String>,
+    pub comment: Option<String>,
+}
 
 // ─── Keychain ────────────────────────────────────────────────────────────────
 
