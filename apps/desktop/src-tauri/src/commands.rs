@@ -164,10 +164,12 @@ fn dirs_path() -> Result<std::path::PathBuf, String> {
 
 fn uuid_str() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
+    let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos().to_string())
-        .unwrap_or_else(|_| "0".to_string())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id() as u128;
+    format!("{:016x}", nanos ^ (pid.wrapping_shl(32)))
 }
 
 fn write_tmp_key(private_key: &str) -> Result<std::path::PathBuf, String> {
