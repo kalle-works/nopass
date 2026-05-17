@@ -94,7 +94,7 @@ export default function HealthPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    document.title = "Security audit — nopass";
+    document.title = "Security audit — nopwd";
     if (!isUnlocked()) {
       router.replace("/login");
       return;

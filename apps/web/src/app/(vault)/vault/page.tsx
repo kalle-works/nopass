@@ -740,7 +740,7 @@ export default function VaultPage() {
   });
 
   useEffect(() => {
-    document.title = "Vault — nopass";
+    document.title = "Vault — nopwd";
   }, []);
 
   if (!isUnlocked()) return null;
@@ -760,7 +760,7 @@ export default function VaultPage() {
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
             </div>
-            <span className="font-semibold text-sm text-gray-900 dark:text-white tracking-tight">nopass</span>
+            <span className="font-semibold text-sm text-gray-900 dark:text-white tracking-tight">nopwd</span>
           </div>
         </div>
 

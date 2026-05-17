@@ -40,7 +40,7 @@ export default function ImportPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    document.title = "Import — nopass";
+    document.title = "Import — nopwd";
     if (!isUnlocked()) router.replace("/login");
   }, [isUnlocked, router]);
 

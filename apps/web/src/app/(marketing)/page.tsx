@@ -5,7 +5,7 @@ function Nav() {
     <header className="fixed top-0 inset-x-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-sm border-b border-white/[0.06]">
       <div className="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between">
         <Link href="/" className="text-white font-semibold tracking-tight text-sm">
-          nopass
+          nopwd
         </Link>
         <div className="flex items-center gap-6">
           <a
@@ -39,7 +39,7 @@ function BrowserFrame({ children }: { children: React.ReactNode }) {
         <div className="w-3 h-3 rounded-full bg-[#febc2e]" />
         <div className="w-3 h-3 rounded-full bg-[#28c840]" />
         <div className="flex-1 mx-3 bg-white/70 rounded h-5 flex items-center px-2.5">
-          <span className="text-[10px] text-black/30 font-mono">nopass.app/vault</span>
+          <span className="text-[10px] text-black/30 font-mono">nopwd.dev/vault</span>
         </div>
       </div>
       {children}
@@ -61,7 +61,7 @@ function VaultPreview() {
         {/* Sidebar */}
         <div className="w-44 border-r border-black/8 bg-[#f9f9f9] flex flex-col shrink-0">
           <div className="px-4 pt-4 pb-2">
-            <p className="text-[11px] font-semibold text-black/30 uppercase tracking-wider mb-2">nopass</p>
+            <p className="text-[11px] font-semibold text-black/30 uppercase tracking-wider mb-2">nopwd</p>
           </div>
           {[
             { label: "All items", count: 4, active: true },
@@ -333,7 +333,7 @@ function Footer() {
     <footer className="border-t border-white/[0.06] py-10">
       <div className="mx-auto max-w-6xl px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
         <p className="text-sm text-white/20">
-          &copy; {new Date().getFullYear()} nopass — MIT license
+          &copy; {new Date().getFullYear()} nopwd — MIT license
         </p>
         <div className="flex items-center gap-6">
           <a

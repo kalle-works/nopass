@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: {
-    template: "%s — nopass",
-    default: "nopass",
+    template: "%s — nopwd",
+    default: "nopwd",
   },
 };
 
