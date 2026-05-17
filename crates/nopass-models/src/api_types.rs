@@ -38,6 +38,14 @@ pub struct RegisterRequest {
     /// AES-256-GCM encrypted vault key (encrypted with stretchedMasterKey)
     pub protected_symmetric_key: String,
     pub protected_symmetric_key_iv: String,
+    /// RSA-OAEP-4096 SPKI public key, base64 (for org-key sharing)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    /// AES-256-GCM encrypted PKCS8 private key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key_iv: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +90,11 @@ pub struct SrpVerifyResponse {
     pub default_vault_id: Uuid,
     pub protected_symmetric_key: String,
     pub protected_symmetric_key_iv: String,
+    /// RSA-OAEP key pair — only present if the user has one registered
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key_iv: Option<String>,
 }
 
 // ─── Devices ─────────────────────────────────────────────────────────────────

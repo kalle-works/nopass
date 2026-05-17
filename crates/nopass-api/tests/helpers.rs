@@ -13,7 +13,8 @@ pub fn test_config() -> Config {
         database_url: String::new(), // pool is injected directly in sqlx::test
         host: "127.0.0.1".into(),
         port: 3001,
-        session_secret: *b"test_secret_32_bytes_for_testing",
+        allowed_origins: vec!["http://localhost:3000".into()],
+        trusted_proxies: vec![],
     }
 }
 
@@ -35,6 +36,9 @@ pub async fn register_user(server: &TestServer, email: &str, password: &str) {
         kdf_params: KdfParams::default(),
         protected_symmetric_key: B64.encode(&[0u8; 32]), // placeholder for tests
         protected_symmetric_key_iv: B64.encode(&[0u8; 12]),
+        public_key: None,
+        protected_private_key: None,
+        protected_private_key_iv: None,
     };
 
     server

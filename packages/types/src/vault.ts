@@ -1,4 +1,4 @@
-export type VaultItemType = "login" | "note" | "card" | "identity";
+export type VaultItemType = "login" | "note" | "card" | "identity" | "ssh_key";
 
 // ─── Plaintext types — exist ONLY in memory on-device, NEVER written to disk or network ──────────
 
@@ -49,7 +49,19 @@ export interface IdentityItem {
   notes?: string;
 }
 
-export type VaultItemPlaintext = LoginItem | NoteItem | CardItem | IdentityItem;
+export interface SshKeyItem {
+  type: "ssh_key";
+  name: string;
+  privateKey: string;
+  publicKey?: string;
+  passphrase?: string;
+  comment?: string;
+  notes?: string;
+  /** Whether to expose this key through the nopass SSH agent socket. Default false for existing keys. */
+  useInAgent?: boolean;
+}
+
+export type VaultItemPlaintext = LoginItem | NoteItem | CardItem | IdentityItem | SshKeyItem;
 
 // ─── Encrypted form — what the server stores and what travels over the network ──────────────────
 
@@ -57,6 +69,8 @@ export interface EncryptedVaultItem {
   id: string;
   vaultId: string;
   userId: string;
+  /** null = personal item; UUID = org-shared item */
+  orgId?: string | null;
   itemType: VaultItemType;
   /** base64(AES-256-GCM ciphertext of JSON-serialized VaultItemPlaintext) */
   blob: string;

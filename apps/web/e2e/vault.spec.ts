@@ -103,4 +103,52 @@ test.describe("Vault CRUD", () => {
     await page.click('button:has-text("Lock")');
     await expect(page).toHaveURL(/\/login/);
   });
+
+  test("new login item has a pre-generated password", async ({ page }) => {
+    await openNewItemModal(page, "Login");
+    // Password field should already have a value (pre-generated, hidden)
+    const passwordField = page.locator('input[type="password"]');
+    await expect(passwordField).not.toHaveValue("");
+    // Strength bar should be visible (green)
+    await expect(page.locator(".bg-green-500, .bg-blue-500")).toBeVisible({ timeout: 3_000 });
+  });
+
+  test("save shows toast notification", async ({ page }) => {
+    await openNewItemModal(page, "Login");
+    await page.fill('input[placeholder="Name"]', "ToastTest");
+    await page.click('button[type="submit"]');
+    await expect(page.locator("text=Item saved")).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("quick-copy password button appears on list item hover", async ({ page }) => {
+    await openNewItemModal(page, "Login");
+    await page.fill('input[placeholder="Name"]', "HoverTest");
+    await page.fill('input[placeholder="Username or email"]', "alice@example.com");
+    await page.fill('input[type="password"]', "mysecret123");
+    await page.click('button[type="submit"]');
+    await expect(page.locator("text=HoverTest")).toBeVisible({ timeout: 10_000 });
+
+    // Hover over the item row to reveal quick-copy buttons
+    const itemRow = page.locator("text=HoverTest").first();
+    await itemRow.hover();
+    // Copy password button should become visible
+    await expect(page.locator('button[title*="Copy password"]')).toBeVisible({ timeout: 3_000 });
+  });
+
+  test("keyboard shortcut C copies password of selected login item", async ({ page }) => {
+    await openNewItemModal(page, "Login");
+    await page.fill('input[placeholder="Name"]', "KeyTest");
+    await page.fill('input[placeholder="Username or email"]', "keyuser");
+    await page.fill('input[type="password"]', "keypw123");
+    await page.click('button[type="submit"]');
+    await expect(page.locator("text=KeyTest")).toBeVisible({ timeout: 10_000 });
+
+    // Click item to select it (opens detail pane)
+    await page.click("text=KeyTest");
+    await expect(page.locator('aside:has-text("KeyTest")')).toBeVisible({ timeout: 5_000 });
+
+    // Press C to copy password — toast should appear
+    await page.keyboard.press("c");
+    await expect(page.locator("text=Password copied")).toBeVisible({ timeout: 3_000 });
+  });
 });

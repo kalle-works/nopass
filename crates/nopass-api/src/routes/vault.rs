@@ -86,6 +86,17 @@ async fn create_item(
     let blob_mac = B64.decode(&req.blob_mac)
         .map_err(|_| ApiError::BadRequest("invalid blob_mac".into()))?;
 
+    // AES-256-GCM requires exactly 12-byte IV; HMAC-SHA256 output is 32 bytes.
+    if blob_iv.len() != 12 {
+        return Err(ApiError::BadRequest("blob_iv must be 12 bytes".into()));
+    }
+    if blob_mac.len() != 32 {
+        return Err(ApiError::BadRequest("blob_mac must be 32 bytes".into()));
+    }
+    if blob.is_empty() {
+        return Err(ApiError::BadRequest("blob must not be empty".into()));
+    }
+
     let item_type_str = item_type_to_str(&req.item_type);
     let item =
         db_vaults::create_item(&state.db, vault_id, auth.user_id, item_type_str, &blob, &blob_iv, &blob_mac)
@@ -123,6 +134,16 @@ async fn update_item(
         .map_err(|_| ApiError::BadRequest("invalid blob_iv".into()))?;
     let blob_mac = B64.decode(&req.blob_mac)
         .map_err(|_| ApiError::BadRequest("invalid blob_mac".into()))?;
+
+    if blob_iv.len() != 12 {
+        return Err(ApiError::BadRequest("blob_iv must be 12 bytes".into()));
+    }
+    if blob_mac.len() != 32 {
+        return Err(ApiError::BadRequest("blob_mac must be 32 bytes".into()));
+    }
+    if blob.is_empty() {
+        return Err(ApiError::BadRequest("blob must not be empty".into()));
+    }
 
     let updated =
         db_vaults::update_item(&state.db, item_id, auth.user_id, &blob, &blob_iv, &blob_mac, req.version)
@@ -169,6 +190,7 @@ fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
         "note" => Ok(VaultItemType::Note),
         "card" => Ok(VaultItemType::Card),
         "identity" => Ok(VaultItemType::Identity),
+        "ssh_key" => Ok(VaultItemType::SshKey),
         other => Err(ApiError::BadRequest(format!("unknown item type: {other}"))),
     }
 }
@@ -179,5 +201,6 @@ fn item_type_to_str(t: &VaultItemType) -> &'static str {
         VaultItemType::Note => "note",
         VaultItemType::Card => "card",
         VaultItemType::Identity => "identity",
+        VaultItemType::SshKey => "ssh_key",
     }
 }

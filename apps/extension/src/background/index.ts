@@ -2,9 +2,11 @@
  * MV3 Service Worker — background script for nopass extension.
  *
  * Security model:
- * - Vault key (CryptoKey) lives in memory only; never persisted to storage
- * - Service workers are ephemeral — vault auto-locks when SW terminates
- * - Session token stored in session storage (cleared on browser close)
+ * - Vault keys (CryptoKey) live in memory only; never written to storage
+ * - Service workers are ephemeral — vault auto-locks when the SW terminates
+ * - Only extension pages (popup) may trigger UNLOCK/LOCK/AUTOFILL.
+ *   Content scripts (running in web pages) are rejected for these operations.
+ * - Raw key bytes are zeroed immediately after CryptoKey import.
  */
 
 import { decryptItem } from "@nopass/crypto";
@@ -13,10 +15,13 @@ import type { EncryptedVaultItem } from "@nopass/types";
 import { base64ToBytes } from "../lib/base64";
 import { urlMatches, nameMatches } from "../lib/url-match";
 
-const API_BASE = "http://localhost:3001";
+// Configurable at build time via Vite define; falls back to dev server.
+const API_BASE: string =
+  typeof __API_BASE__ !== "undefined" ? __API_BASE__ : "http://localhost:3001";
+
 const api = createApiClient(API_BASE);
 
-// In-memory vault state (lost when SW terminates = auto-lock)
+// In-memory vault state — null means locked.
 let vaultState: {
   sessionToken: string;
   defaultVaultId: string;
@@ -34,22 +39,34 @@ type Message =
   | { type: "GET_CREDENTIALS"; itemId: string }
   | { type: "AUTOFILL"; itemId: string; tabId: number };
 
-chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) => {
-  handleMessage(message).then(sendResponse).catch((err) => {
+chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
+  handleMessage(message, sender).then(sendResponse).catch((err) => {
     sendResponse({ error: err instanceof Error ? err.message : "Unknown error" });
   });
-  return true; // async response
+  return true; // keep the message channel open for the async response
 });
 
-async function handleMessage(message: Message): Promise<unknown> {
+/** Returns true if the sender is an extension page (popup/options), not a content script. */
+function isExtensionPage(sender: chrome.runtime.MessageSender): boolean {
+  return sender.id === chrome.runtime.id && sender.tab === undefined;
+}
+
+async function handleMessage(message: Message, sender: chrome.runtime.MessageSender): Promise<unknown> {
   switch (message.type) {
     case "UNLOCK": {
+      if (!isExtensionPage(sender)) return { error: "unauthorized" };
+
       const encKeyBytes = base64ToBytes(message.vaultEncKeyB64);
       const macKeyBytes = base64ToBytes(message.vaultMacKeyB64);
+
       const [vaultEncKey, vaultMacKey] = await Promise.all([
         crypto.subtle.importKey("raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
         crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]),
       ]);
+
+      // Zero raw key bytes immediately after import — they must not linger in memory.
+      encKeyBytes.fill(0);
+      macKeyBytes.fill(0);
 
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
       vaultState = { sessionToken: message.sessionToken, defaultVaultId: message.defaultVaultId, vaultEncKey, vaultMacKey, items };
@@ -57,6 +74,7 @@ async function handleMessage(message: Message): Promise<unknown> {
     }
 
     case "LOCK": {
+      if (!isExtensionPage(sender)) return { error: "unauthorized" };
       vaultState = null;
       return { ok: true };
     }
@@ -82,7 +100,6 @@ async function handleMessage(message: Message): Promise<unknown> {
             try {
               const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
               if (plain.type !== "login") return null;
-
               if (nameMatches(plain.name, query) || (url ? urlMatches(plain.urls, url) : !query)) {
                 return { id: item.id, name: plain.name, username: plain.username, urls: plain.urls };
               }
@@ -108,7 +125,11 @@ async function handleMessage(message: Message): Promise<unknown> {
     }
 
     case "AUTOFILL": {
+      // Only the popup (an extension page) may trigger autofill.
+      // Content scripts running in web pages must not be able to initiate credential fills.
+      if (!isExtensionPage(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
+
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
 

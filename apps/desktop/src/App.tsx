@@ -1,18 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor } from "@nopass/ui";
+import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { createApiClient } from "@nopass/ui";
 import { useBiometric } from "./hooks/useBiometric";
 import { keychain, DEVICE_KEY_ACCOUNT } from "./hooks/useKeychain";
 import { loadLocalItems, upsertLocalItem } from "./hooks/useLocalDb";
+import { sshAgent } from "./hooks/useSshAgent";
+import type { SshKeyItem } from "@nopass/types";
 
 const API_BASE = import.meta.env["VITE_API_URL"] ?? "http://localhost:3001";
 const api = createApiClient(API_BASE);
 
 type Screen = "unlock-mode-select" | "unlock-srp" | "unlock-register" | "vault";
+type SidebarTab = "vault" | "orgs";
 type Filter = "all" | VaultItemType;
 
 const TYPE_LABELS: Record<VaultItemType, string> = {
@@ -20,6 +23,7 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
   note: "Notes",
   card: "Cards",
   identity: "Identities",
+  ssh_key: "SSH Keys",
 };
 
 export default function App() {
@@ -91,6 +95,7 @@ export default function App() {
   }
 
   function handleLock() {
+    sshAgent.clearVaultKeys().catch(() => {});
     lock();
     setScreen("unlock-mode-select");
   }
@@ -206,6 +211,7 @@ function VaultScreen({
   api, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey,
   items, isLoading, upsertItem, markDeleted, onLock,
 }: VaultScreenProps) {
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
@@ -216,6 +222,9 @@ function VaultScreen({
   >(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const agentKeyCount = [...decrypted.values()].filter(
+    (p): p is SshKeyItem => p.type === "ssh_key" && p.useInAgent === true,
+  ).length;
 
   useEffect(() => {
     const active = items.filter((i) => i.deletedAt === null);
@@ -231,6 +240,16 @@ function VaultScreen({
       const map = new Map<string, VaultItemPlaintext>();
       for (const r of results) if (r) map.set(r[0], r[1]);
       setDecrypted(map);
+
+      // Sync SSH keys into the in-process agent whenever vault contents change.
+      const sshKeys = [...map.values()]
+        .filter((p): p is SshKeyItem => p.type === "ssh_key" && p.useInAgent === true)
+        .map((k) => ({
+          privateKey: k.privateKey,
+          passphrase: k.passphrase ?? undefined,
+          comment: k.comment ?? k.name,
+        }));
+      sshAgent.loadVaultKeys(sshKeys).catch(() => {/* agent not running */});
     });
   }, [items, vaultEncKey, vaultMacKey]);
 
@@ -272,6 +291,69 @@ function VaultScreen({
     }
   }, [api, sessionToken, defaultVaultId, markDeleted]);
 
+  const [sshStatus, setSshStatus] = useState<{ id: string; message: string } | null>(null);
+
+  const handleSshAgentAdd = useCallback(async (item: EncryptedVaultItem, plain: VaultItemPlaintext) => {
+    if (plain.type !== "ssh_key") return;
+    const key = plain as SshKeyItem;
+    setSshStatus({ id: item.id, message: "Adding…" });
+    try {
+      const msg = await sshAgent.add(key.privateKey, key.passphrase);
+      setSshStatus({ id: item.id, message: msg });
+      setTimeout(() => setSshStatus(null), 3000);
+    } catch (err) {
+      setSshStatus({ id: item.id, message: err instanceof Error ? err.message : String(err) });
+      setTimeout(() => setSshStatus(null), 5000);
+    }
+  }, []);
+
+  const handleSshExport = useCallback(async (item: EncryptedVaultItem, plain: VaultItemPlaintext) => {
+    if (plain.type !== "ssh_key") return;
+    const key = plain as SshKeyItem;
+    const safeName = plain.name.replace(/[^a-z0-9_-]/gi, "_").toLowerCase() || "id_nopass";
+    setSshStatus({ id: item.id, message: "Exporting…" });
+    try {
+      const path = await sshAgent.writeKeyFile(safeName, key.privateKey, key.publicKey);
+      setSshStatus({ id: item.id, message: `Saved to ${path}` });
+      setTimeout(() => setSshStatus(null), 5000);
+    } catch (err) {
+      setSshStatus({ id: item.id, message: err instanceof Error ? err.message : String(err) });
+      setTimeout(() => setSshStatus(null), 5000);
+    }
+  }, []);
+
+  const handleSshCopyConfig = useCallback(async (item: EncryptedVaultItem, plain: VaultItemPlaintext) => {
+    if (plain.type !== "ssh_key") return;
+    const key = plain as SshKeyItem;
+    if (!key.publicKey) {
+      setSshStatus({ id: item.id, message: "No public key stored — add it in the editor first" });
+      setTimeout(() => setSshStatus(null), 5000);
+      return;
+    }
+    const safeName = plain.name.replace(/[^a-z0-9_-]/gi, "_").toLowerCase() || "nopass";
+    const pubFilename = `${safeName}.pub`;
+    setSshStatus({ id: item.id, message: "Writing public key…" });
+    try {
+      // Write public key content to ~/.ssh/<name>.pub so IdentityFile can reference it.
+      // ssh_write_key_file with only the pub key content as "private_key" writes one file with 0600 perms.
+      await sshAgent.writeKeyFile(pubFilename, key.publicKey);
+      const socketPath = await sshAgent.socketPath();
+      const snippet = [
+        `# Add to ~/.ssh/config — replace <hostname> with your target host`,
+        `Host <hostname>`,
+        `  IdentityAgent "${socketPath}"`,
+        `  IdentitiesOnly yes`,
+        `  IdentityFile ~/.ssh/${pubFilename}`,
+      ].join("\n");
+      await navigator.clipboard.writeText(snippet);
+      setSshStatus({ id: item.id, message: `~/.ssh/${pubFilename} written — SSH config snippet copied` });
+      setTimeout(() => setSshStatus(null), 6000);
+    } catch (err) {
+      setSshStatus({ id: item.id, message: err instanceof Error ? err.message : String(err) });
+      setTimeout(() => setSshStatus(null), 5000);
+    }
+  }, []);
+
   const activeItems = items.filter((i) => i.deletedAt === null);
   const filteredItems = activeItems.filter((item) => {
     if (filter !== "all" && item.itemType !== filter) return false;
@@ -288,8 +370,22 @@ function VaultScreen({
         <div className="px-4 py-5 border-b border-gray-200 dark:border-gray-700">
           <h1 className="text-base font-semibold text-gray-900 dark:text-white">nopass</h1>
         </div>
+        {/* Sidebar tab switcher */}
+        <div className="flex border-b border-gray-200 dark:border-gray-700">
+          {(["vault", "orgs"] as SidebarTab[]).map((t) => (
+            <button key={t} onClick={() => setSidebarTab(t)}
+              className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                sidebarTab === t
+                  ? "border-b-2 border-blue-600 text-blue-700 dark:text-blue-300"
+                  : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+              }`}
+            >
+              {t === "vault" ? "Vault" : "Teams"}
+            </button>
+          ))}
+        </div>
         <nav className="flex-1 overflow-y-auto py-2">
-          {(["all", "login", "note", "card", "identity"] as Filter[]).map((f) => (
+          {sidebarTab === "vault" && (["all", "login", "note", "card", "identity", "ssh_key"] as Filter[]).map((f) => (
             <button key={f} onClick={() => setFilter(f)}
               className={`w-full text-left px-4 py-2 text-sm transition-colors ${
                 filter === f
@@ -303,8 +399,16 @@ function VaultScreen({
               </span>
             </button>
           ))}
+          {sidebarTab === "orgs" && (
+            <OrgPanel
+              apiClient={api}
+              sessionToken={sessionToken}
+              onOrgVaultKeyChange={() => {}}
+            />
+          )}
         </nav>
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="p-3 border-t border-gray-200 dark:border-gray-700 space-y-1">
+          <SshAgentStatus keyCount={agentKeyCount} />
           <button onClick={onLock}
             className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
             Lock vault
@@ -317,10 +421,10 @@ function VaultScreen({
           <input type="search" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)}
             className="flex-1 max-w-sm px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
           <div className="flex items-center gap-2 ml-auto">
-            {(["login", "note", "card", "identity"] as VaultItemType[]).map((t) => (
+            {(["login", "note", "card", "identity", "ssh_key"] as VaultItemType[]).map((t) => (
               <button key={t} onClick={() => setModal({ mode: "create", itemType: t })}
                 className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">
-                + {t.charAt(0).toUpperCase() + t.slice(1)}
+                + {t === "ssh_key" ? "SSH Key" : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
           </div>
@@ -343,15 +447,47 @@ function VaultScreen({
               {filteredItems.map((item) => {
                 const plain = decrypted.get(item.id);
                 return (
-                  <div key={item.id} className="flex items-center group">
-                    <div className="flex-1 min-w-0">
-                      <DecryptedVaultItemCard item={item} decryptedName={plain?.name ?? "…"}
-                        onClick={() => { if (plain) setModal({ mode: "edit", entry: { item, plaintext: plain } }); }} />
+                  <div key={item.id} className="flex flex-col">
+                    <div className="flex items-center group">
+                      <div className="flex-1 min-w-0">
+                        <DecryptedVaultItemCard item={item} decryptedName={plain?.name ?? "…"}
+                          onClick={() => { if (plain) setModal({ mode: "edit", entry: { item, plaintext: plain } }); }} />
+                      </div>
+                      {item.itemType === "ssh_key" && plain && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                          <button
+                            onClick={() => handleSshAgentAdd(item, plain)}
+                            className="px-2 py-1 text-xs text-teal-600 hover:text-teal-800 hover:bg-teal-50 dark:hover:bg-teal-900/20 rounded transition-colors"
+                            title="Add key to ssh-agent"
+                          >
+                            + agent
+                          </button>
+                          {(plain as SshKeyItem).publicKey && (
+                            <button
+                              onClick={() => handleSshCopyConfig(item, plain)}
+                              className="px-2 py-1 text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"
+                              title="Copy ~/.ssh/config snippet for this key"
+                            >
+                              ssh config
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleSshExport(item, plain)}
+                            className="px-2 py-1 text-xs text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+                            title="Export to ~/.ssh/"
+                          >
+                            export
+                          </button>
+                        </div>
+                      )}
+                      <button onClick={() => handleDelete(item)}
+                        className="ml-1 px-2 py-1 text-xs text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                        Delete
+                      </button>
                     </div>
-                    <button onClick={() => handleDelete(item)}
-                      className="ml-2 px-2 py-1 text-xs text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                      Delete
-                    </button>
+                    {sshStatus?.id === item.id && (
+                      <p className="ml-2 mt-0.5 text-xs text-teal-600 dark:text-teal-400">{sshStatus.message}</p>
+                    )}
                   </div>
                 );
               })}
@@ -364,7 +500,9 @@ function VaultScreen({
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">
-              {modal.mode === "create" ? `New ${modal.itemType}` : `Edit ${modal.entry.plaintext.type}`}
+              {modal.mode === "create"
+                ? `New ${TYPE_LABELS[modal.itemType as VaultItemType]?.slice(0, -1) ?? modal.itemType}`
+                : `Edit ${TYPE_LABELS[modal.entry.plaintext.type as VaultItemType]?.slice(0, -1) ?? modal.entry.plaintext.type}`}
             </h2>
             <ItemEditor
               itemType={modal.mode === "create" ? modal.itemType : modal.entry.plaintext.type}
@@ -376,6 +514,41 @@ function VaultScreen({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SshAgentStatus({ keyCount }: { keyCount: number }) {
+  const [socketPath, setSocketPath] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    sshAgent.socketPath().then(setSocketPath).catch(() => {});
+  }, []);
+
+  if (!socketPath || keyCount === 0) return null;
+
+  async function copyConfig() {
+    try {
+      const snippet = await sshAgent.shellConfig();
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  }
+
+  return (
+    <div className="px-3 py-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-xs text-teal-700 dark:text-teal-300">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">SSH agent — {keyCount} {keyCount === 1 ? "key" : "keys"}</span>
+        <button
+          onClick={copyConfig}
+          className="shrink-0 underline underline-offset-2 hover:no-underline"
+        >
+          {copied ? "Copied!" : "Copy shell setup"}
+        </button>
+      </div>
+      <p className="mt-0.5 text-teal-600 dark:text-teal-400 font-mono truncate">{socketPath}</p>
     </div>
   );
 }

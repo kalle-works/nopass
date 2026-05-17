@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod devices;
+pub mod orgs;
 pub mod sync;
 pub mod vault;
 
@@ -30,6 +31,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let protected = Router::new()
         .nest("/auth", auth::protected_router())
         .nest("/devices", devices::router())
+        .nest("/organizations", orgs::router())
         .nest("/vaults", vault::router())
         .nest("/sync", sync::router())
         .route_layer(middleware::from_fn_with_state(state, require_auth));
@@ -37,13 +39,13 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new().merge(public).merge(protected)
 }
 
-/// Per-IP rate limiter middleware for auth endpoints (20 req/min).
+/// Per-IP rate limiter middleware for auth endpoints (20 req/min, burst 10).
 async fn auth_rate_limit(
     State(state): State<AppState>,
     req: Request,
     next: Next,
 ) -> impl IntoResponse {
-    let ip = extract_client_ip(&req);
+    let ip = extract_client_ip(&req, &state.config.trusted_proxies);
 
     if state.auth_rate_limiter.check_key(&ip).is_err() {
         return (
@@ -56,21 +58,31 @@ async fn auth_rate_limit(
     next.run(req).await
 }
 
-fn extract_client_ip(req: &Request) -> IpAddr {
-    if let Some(forwarded) = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .and_then(|s| s.trim().parse::<IpAddr>().ok())
-    {
-        return forwarded;
-    }
-
-    req.extensions()
+/// Extract the real client IP.
+///
+/// X-Forwarded-For is only trusted if the direct TCP peer is in `trusted_proxies`.
+/// Without this check, any client can spoof arbitrary IPs and bypass rate limiting.
+fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> IpAddr {
+    let peer_ip = req
+        .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|ci| ci.0.ip())
-        .unwrap_or(IpAddr::from([127, 0, 0, 1]))
+        .unwrap_or(IpAddr::from([127, 0, 0, 1]));
+
+    // Only honour X-Forwarded-For when the direct connection comes from a trusted proxy.
+    if trusted_proxies.contains(&peer_ip) {
+        if let Some(forwarded) = req
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .and_then(|s| s.trim().parse::<IpAddr>().ok())
+        {
+            return forwarded;
+        }
+    }
+
+    peer_ip
 }
 
 async fn health() -> &'static str {

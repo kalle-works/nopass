@@ -25,6 +25,11 @@ export interface RegisterRequest {
   /** base64 AES-GCM encrypted vault key */
   protectedSymmetricKey: string;
   protectedSymmetricKeyIv: string;
+  /** base64 RSA-OAEP SPKI public key */
+  publicKey?: string;
+  /** AES-256-GCM encrypted RSA private key */
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
 }
 
 export interface RegisterResponse {
@@ -60,6 +65,8 @@ export interface SrpVerifyResponse {
   defaultVaultId: string;
   protectedSymmetricKey: string;
   protectedSymmetricKeyIv: string;
+  protectedPrivateKey?: string | null;
+  protectedPrivateKeyIv?: string | null;
 }
 
 // ─── Devices ─────────────────────────────────────────────────────────────────
@@ -82,6 +89,60 @@ export interface DeviceInfo {
   deviceType: DeviceType;
   lastSeenAt: string | null;
   createdAt: string;
+}
+
+// ─── Organizations ───────────────────────────────────────────────────────────
+
+export type OrgRole = "owner" | "admin" | "member";
+export type OrgMemberStatus = "pending" | "active";
+
+export interface CreateOrgRequest {
+  name: string;
+  /** base64 RSA-OAEP SPKI public key */
+  publicKey: string;
+  /** AES-256-GCM encrypted RSA private key */
+  protectedPrivateKey: string;
+  protectedPrivateKeyIv: string;
+  /** Org AES-256-GCM key encrypted with the owner's RSA public key */
+  encryptedOrgKey: string;
+}
+
+export interface OrgSummary {
+  id: string;
+  name: string;
+  role: OrgRole;
+  memberCount: number;
+  createdAt: string;
+}
+
+export interface OrgMember {
+  userId: string;
+  role: OrgRole;
+  status: OrgMemberStatus;
+  joinedAt: string | null;
+}
+
+export interface OrgDetails extends OrgSummary {
+  members: OrgMember[];
+  /** Org AES key encrypted with the caller's RSA public key */
+  encryptedOrgKey: string;
+}
+
+export interface InviteMemberRequest {
+  /** SHA-256("nopass-v1-email:" + lowercase(email)) — server never receives plaintext */
+  emailHash: string;
+  role: Exclude<OrgRole, "owner">;
+  /** Org AES key pre-encrypted with the invitee's RSA public key */
+  encryptedOrgKey: string;
+}
+
+export interface AcceptInviteRequest {
+  orgId: string;
+}
+
+export interface PublicKeyResponse {
+  userId: string;
+  publicKey: string;
 }
 
 // ─── Generic ─────────────────────────────────────────────────────────────────

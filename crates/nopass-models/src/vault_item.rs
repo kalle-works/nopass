@@ -9,6 +9,7 @@ pub enum VaultItemType {
     Note,
     Card,
     Identity,
+    SshKey,
 }
 
 /// The encrypted form stored on-server. No plaintext data ever leaves the client.

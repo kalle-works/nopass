@@ -31,6 +31,11 @@ interface CryptoState {
   /** The user's email (needed to re-derive keys after biometric unlock) */
   email: string | null;
   kdfParams: KdfParams | null;
+  /** stretchedMasterKey is kept in memory to decrypt org private keys on demand */
+  stretchedMasterKey: CryptoKey | null;
+  /** RSA private key (encrypted) — needed to decrypt org vault keys */
+  protectedPrivateKey: string | null;
+  protectedPrivateKeyIv: string | null;
 }
 
 interface VaultState {
@@ -43,6 +48,7 @@ interface NopassStore extends AuthState, CryptoState, VaultState {
   // Auth actions
   setSession: (auth: SrpVerifyResponse, email: string, keys: DerivedKeys) => void;
   lock: () => void;
+  setKeyPair: (protectedPrivateKey: string, protectedPrivateKeyIv: string) => void;
 
   // Vault actions
   setItems: (items: EncryptedVaultItem[]) => void;
@@ -69,6 +75,9 @@ export const useNopassStore = create<NopassStore>((set, get) => ({
   vaultMacKey: null,
   email: null,
   kdfParams: null,
+  stretchedMasterKey: null,
+  protectedPrivateKey: null,
+  protectedPrivateKeyIv: null,
 
   // Vault
   items: [],
@@ -83,16 +92,25 @@ export const useNopassStore = create<NopassStore>((set, get) => ({
       email,
       vaultEncKey: keys.vaultEncKey,
       vaultMacKey: keys.vaultMacKey,
-      kdfParams: null, // cleared after use — not needed in memory post-login
+      stretchedMasterKey: keys.stretchedMasterKey,
+      kdfParams: null,
+      protectedPrivateKey: auth.protectedPrivateKey ?? null,
+      protectedPrivateKeyIv: auth.protectedPrivateKeyIv ?? null,
     }),
 
   lock: () =>
     set({
       vaultEncKey: null,
       vaultMacKey: null,
+      stretchedMasterKey: null,
+      protectedPrivateKey: null,
+      protectedPrivateKeyIv: null,
       items: [],
       lastSyncAt: null,
     }),
+
+  setKeyPair: (protectedPrivateKey, protectedPrivateKeyIv) =>
+    set({ protectedPrivateKey, protectedPrivateKeyIv }),
 
   setItems: (items) => set({ items }),
   upsertItem: (item) =>

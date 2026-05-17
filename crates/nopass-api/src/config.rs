@@ -5,10 +5,11 @@ pub struct Config {
     pub database_url: String,
     pub host: String,
     pub port: u16,
-    /// 32-byte secret for signing session tokens
-    pub session_secret: [u8; 32],
-    /// Allowed CORS origins, e.g. ["https://nopwd.dev", "http://localhost:4020"]
+    /// Allowed CORS origins, e.g. ["https://nopass.app", "http://localhost:4020"]
     pub allowed_origins: Vec<String>,
+    /// Trusted proxy CIDRs — only trust X-Forwarded-For from these IPs.
+    /// Leave empty to always use the direct TCP connection IP (safe default).
+    pub trusted_proxies: Vec<std::net::IpAddr>,
 }
 
 impl Config {
@@ -22,19 +23,8 @@ impl Config {
             .parse::<u16>()
             .context("NOPASS_PORT must be a valid port number")?;
 
-        let secret_str =
-            std::env::var("NOPASS_SESSION_SECRET").context("NOPASS_SESSION_SECRET must be set")?;
-
-        anyhow::ensure!(
-            secret_str.len() >= 32,
-            "NOPASS_SESSION_SECRET must be at least 32 characters"
-        );
-
-        let mut session_secret = [0u8; 32];
-        session_secret.copy_from_slice(&secret_str.as_bytes()[..32]);
-
         // NOPASS_ALLOWED_ORIGINS: comma-separated list of allowed CORS origins.
-        // Default to localhost dev origin; in production set to https://nopwd.dev
+        // Default to localhost dev origin; in production set to https://nopass.app
         let allowed_origins = std::env::var("NOPASS_ALLOWED_ORIGINS")
             .unwrap_or_else(|_| "http://localhost:4020".into())
             .split(',')
@@ -42,12 +32,22 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
+        // NOPASS_TRUSTED_PROXIES: comma-separated list of proxy IP addresses that are
+        // allowed to set X-Forwarded-For. Leave unset (default) when not behind a proxy.
+        let trusted_proxies = std::env::var("NOPASS_TRUSTED_PROXIES")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<std::net::IpAddr>().ok())
+            .collect();
+
         Ok(Config {
             database_url,
             host,
             port,
-            session_secret,
             allowed_origins,
+            trusted_proxies,
         })
     }
 

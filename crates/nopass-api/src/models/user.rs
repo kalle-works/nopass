@@ -12,6 +12,10 @@ pub struct User {
     pub kdf_params: Value,
     pub protected_symmetric_key: Vec<u8>,
     pub protected_symmetric_key_iv: Vec<u8>,
+    /// SPKI DER, base64 — RSA-OAEP public key for org-key wrapping
+    pub public_key: Option<String>,
+    pub protected_private_key: Option<String>,
+    pub protected_private_key_iv: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

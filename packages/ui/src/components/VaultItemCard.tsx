@@ -12,6 +12,7 @@ const TYPE_ICONS: Record<VaultItemType, string> = {
   note: "📝",
   card: "💳",
   identity: "🪪",
+  ssh_key: "🗝",
 };
 
 const TYPE_LABELS: Record<VaultItemType, string> = {
@@ -19,6 +20,7 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
   note: "Secure note",
   card: "Credit card",
   identity: "Identity",
+  ssh_key: "SSH Key",
 };
 
 export function VaultItemCard({ item, onClick }: VaultItemCardProps) {
