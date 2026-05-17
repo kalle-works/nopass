@@ -17,6 +17,7 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
   const [passphrase, setPassphrase] = useState(initial?.passphrase ?? "");
   const [comment, setComment] = useState(initial?.comment ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [useInAgent, setUseInAgent] = useState(initial?.useInAgent ?? true);
   const [showPassphrase, setShowPassphrase] = useState(false);
 
   function handleSubmit(e: React.FormEvent) {
@@ -29,6 +30,7 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
       ...(passphrase && { passphrase }),
       ...(comment && { comment }),
       ...(notes && { notes }),
+      useInAgent,
     });
   }
 
@@ -117,6 +119,26 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
           className={`${inputClass} resize-none`}
         />
       </Field>
+
+      <label className="flex items-center justify-between gap-3 py-1 cursor-pointer select-none">
+        <div>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Use in SSH agent</span>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Expose this key via the nopass agent socket
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={useInAgent}
+          onClick={() => setUseInAgent((v) => !v)}
+          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${useInAgent ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-600"}`}
+        >
+          <span
+            className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${useInAgent ? "translate-x-4" : "translate-x-0"}`}
+          />
+        </button>
+      </label>
 
       <FormActions onCancel={onCancel} {...(saving !== undefined && { saving })} />
     </form>

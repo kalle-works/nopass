@@ -222,6 +222,9 @@ function VaultScreen({
   >(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const agentKeyCount = [...decrypted.values()].filter(
+    (p): p is SshKeyItem => p.type === "ssh_key" && p.useInAgent === true,
+  ).length;
 
   useEffect(() => {
     const active = items.filter((i) => i.deletedAt === null);
@@ -240,7 +243,7 @@ function VaultScreen({
 
       // Sync SSH keys into the in-process agent whenever vault contents change.
       const sshKeys = [...map.values()]
-        .filter((p): p is SshKeyItem => p.type === "ssh_key")
+        .filter((p): p is SshKeyItem => p.type === "ssh_key" && p.useInAgent === true)
         .map((k) => ({
           privateKey: k.privateKey,
           passphrase: k.passphrase ?? undefined,
@@ -373,7 +376,7 @@ function VaultScreen({
           )}
         </nav>
         <div className="p-3 border-t border-gray-200 dark:border-gray-700 space-y-1">
-          <SshAgentStatus decrypted={decrypted} />
+          <SshAgentStatus keyCount={agentKeyCount} />
           <button onClick={onLock}
             className="w-full text-left px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
             Lock vault
@@ -474,19 +477,15 @@ function VaultScreen({
   );
 }
 
-function SshAgentStatus({ decrypted }: { decrypted: boolean }) {
+function SshAgentStatus({ keyCount }: { keyCount: number }) {
   const [socketPath, setSocketPath] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (decrypted) {
-      sshAgent.socketPath().then(setSocketPath).catch(() => {});
-    } else {
-      setSocketPath(null);
-    }
-  }, [decrypted]);
+    sshAgent.socketPath().then(setSocketPath).catch(() => {});
+  }, []);
 
-  if (!decrypted || !socketPath) return null;
+  if (!socketPath || keyCount === 0) return null;
 
   async function copyConfig() {
     try {
@@ -500,7 +499,7 @@ function SshAgentStatus({ decrypted }: { decrypted: boolean }) {
   return (
     <div className="px-3 py-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 text-xs text-teal-700 dark:text-teal-300">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium">SSH agent active</span>
+        <span className="font-medium">SSH agent — {keyCount} {keyCount === 1 ? "key" : "keys"}</span>
         <button
           onClick={copyConfig}
           className="shrink-0 underline underline-offset-2 hover:no-underline"

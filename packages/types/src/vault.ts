@@ -57,6 +57,8 @@ export interface SshKeyItem {
   passphrase?: string;
   comment?: string;
   notes?: string;
+  /** Whether to expose this key through the nopass SSH agent socket. Default false for existing keys. */
+  useInAgent?: boolean;
 }
 
 export type VaultItemPlaintext = LoginItem | NoteItem | CardItem | IdentityItem | SshKeyItem;
