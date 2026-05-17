@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { LoginItem } from "@nopass/types";
 
 interface LoginEditorProps {
@@ -10,9 +10,26 @@ interface LoginEditorProps {
   saving?: boolean | undefined;
 }
 
-function generatePassword(length = 20): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*";
-  const array = new Uint8Array(length);
+interface GeneratorOptions {
+  length: number;
+  uppercase: boolean;
+  lowercase: boolean;
+  numbers: boolean;
+  symbols: boolean;
+}
+
+function buildCharset(opts: GeneratorOptions): string {
+  let chars = "";
+  if (opts.uppercase) chars += "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  if (opts.lowercase) chars += "abcdefghjkmnpqrstuvwxyz";
+  if (opts.numbers) chars += "23456789";
+  if (opts.symbols) chars += "!@#$%^&*-_+=?";
+  return chars || "abcdefghjkmnpqrstuvwxyz";
+}
+
+function generatePassword(opts: GeneratorOptions): string {
+  const chars = buildCharset(opts);
+  const array = new Uint8Array(opts.length);
   crypto.getRandomValues(array);
   return Array.from(array)
     .map((b) => chars[b % chars.length])
@@ -31,14 +48,106 @@ function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string
   return { score: score as 0 | 1 | 2 | 3 | 4, label: labels[score]!, color: colors[score]! };
 }
 
+const DEFAULT_OPTS: GeneratorOptions = {
+  length: 20,
+  uppercase: true,
+  lowercase: true,
+  numbers: true,
+  symbols: true,
+};
+
+function GeneratorPopover({ onUse, onClose }: { onUse: (pw: string) => void; onClose: () => void }) {
+  const [opts, setOpts] = useState<GeneratorOptions>(DEFAULT_OPTS);
+  const [preview, setPreview] = useState(() => generatePassword(DEFAULT_OPTS));
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [onClose]);
+
+  function update(next: Partial<GeneratorOptions>) {
+    const merged = { ...opts, ...next };
+    setOpts(merged);
+    setPreview(generatePassword(merged));
+  }
+
+  function regenerate() {
+    setPreview(generatePassword(opts));
+  }
+
+  const toggle = (key: keyof Pick<GeneratorOptions, "uppercase" | "lowercase" | "numbers" | "symbols">) => {
+    const next = { ...opts, [key]: !opts[key] };
+    const anyOn = next.uppercase || next.lowercase || next.numbers || next.symbols;
+    if (!anyOn) return;
+    update(next);
+  };
+
+  return (
+    <div ref={ref} className="absolute right-0 top-full mt-1 z-50 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="flex-1 font-mono text-sm text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700 rounded-lg px-3 py-1.5 break-all">{preview}</span>
+        <button type="button" onClick={regenerate} title="Regenerate" className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+            <path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
+          </svg>
+        </button>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Length: {opts.length}</span>
+        </div>
+        <input
+          type="range"
+          min={8}
+          max={64}
+          value={opts.length}
+          onChange={(e) => update({ length: Number(e.target.value) })}
+          className="w-full accent-blue-600"
+        />
+        <div className="flex justify-between text-[10px] text-gray-400 -mt-0.5">
+          <span>8</span><span>64</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {(["uppercase", "lowercase", "numbers", "symbols"] as const).map((key) => (
+          <label key={key} className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={opts[key]}
+              onChange={() => toggle(key)}
+              className="accent-blue-600 w-3.5 h-3.5"
+            />
+            <span className="text-xs text-gray-700 dark:text-gray-300 capitalize">{key}</span>
+          </label>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => { onUse(preview); onClose(); }}
+        className="w-full py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+      >
+        Use this password
+      </button>
+    </div>
+  );
+}
+
 export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [username, setUsername] = useState(initial?.username ?? "");
-  const [password, setPassword] = useState(initial?.password ?? (!initial ? generatePassword() : ""));
+  const [password, setPassword] = useState(initial?.password ?? (!initial ? generatePassword(DEFAULT_OPTS) : ""));
   const [url, setUrl] = useState(initial?.urls?.[0] ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
 
   const strength = passwordStrength(password);
 
@@ -89,13 +198,21 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
-          <button
-            type="button"
-            onClick={() => setPassword(generatePassword())}
-            className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium"
-          >
-            Generate
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowGenerator((s) => !s)}
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium"
+            >
+              Generate
+            </button>
+            {showGenerator && (
+              <GeneratorPopover
+                onUse={(pw) => { setPassword(pw); setShowPassword(true); }}
+                onClose={() => setShowGenerator(false)}
+              />
+            )}
+          </div>
         </div>
         <div className="flex gap-2">
           <div className="relative flex-1">
