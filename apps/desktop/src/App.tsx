@@ -322,6 +322,38 @@ function VaultScreen({
     }
   }, []);
 
+  const handleSshCopyConfig = useCallback(async (item: EncryptedVaultItem, plain: VaultItemPlaintext) => {
+    if (plain.type !== "ssh_key") return;
+    const key = plain as SshKeyItem;
+    if (!key.publicKey) {
+      setSshStatus({ id: item.id, message: "No public key stored — add it in the editor first" });
+      setTimeout(() => setSshStatus(null), 5000);
+      return;
+    }
+    const safeName = plain.name.replace(/[^a-z0-9_-]/gi, "_").toLowerCase() || "nopass";
+    const pubFilename = `${safeName}.pub`;
+    setSshStatus({ id: item.id, message: "Writing public key…" });
+    try {
+      // Write public key content to ~/.ssh/<name>.pub so IdentityFile can reference it.
+      // ssh_write_key_file with only the pub key content as "private_key" writes one file with 0600 perms.
+      await sshAgent.writeKeyFile(pubFilename, key.publicKey);
+      const socketPath = await sshAgent.socketPath();
+      const snippet = [
+        `# Add to ~/.ssh/config — replace <hostname> with your target host`,
+        `Host <hostname>`,
+        `  IdentityAgent "${socketPath}"`,
+        `  IdentitiesOnly yes`,
+        `  IdentityFile ~/.ssh/${pubFilename}`,
+      ].join("\n");
+      await navigator.clipboard.writeText(snippet);
+      setSshStatus({ id: item.id, message: `~/.ssh/${pubFilename} written — SSH config snippet copied` });
+      setTimeout(() => setSshStatus(null), 6000);
+    } catch (err) {
+      setSshStatus({ id: item.id, message: err instanceof Error ? err.message : String(err) });
+      setTimeout(() => setSshStatus(null), 5000);
+    }
+  }, []);
+
   const activeItems = items.filter((i) => i.deletedAt === null);
   const filteredItems = activeItems.filter((item) => {
     if (filter !== "all" && item.itemType !== filter) return false;
@@ -430,6 +462,15 @@ function VaultScreen({
                           >
                             + agent
                           </button>
+                          {(plain as SshKeyItem).publicKey && (
+                            <button
+                              onClick={() => handleSshCopyConfig(item, plain)}
+                              className="px-2 py-1 text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"
+                              title="Copy ~/.ssh/config snippet for this key"
+                            >
+                              ssh config
+                            </button>
+                          )}
                           <button
                             onClick={() => handleSshExport(item, plain)}
                             className="px-2 py-1 text-xs text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"

@@ -52,7 +52,11 @@ fn ssh_agent_socket_path() -> String {
 fn ssh_agent_shell_config() -> String {
     let path = agent_socket_path();
     format!(
-        "# nopass SSH agent\nexport SSH_AUTH_SOCK=\"{}\"",
+        "# nopass SSH agent\nexport SSH_AUTH_SOCK=\"{}\"\n\n\
+         # To avoid 'Too many authentication failures', add per-host config to ~/.ssh/config:\n\
+         # Host example.com\n\
+         #   IdentitiesOnly yes\n\
+         #   IdentityFile ~/.ssh/<keyname>.pub  # use 'ssh config' button per key",
         path.to_string_lossy()
     )
 }
