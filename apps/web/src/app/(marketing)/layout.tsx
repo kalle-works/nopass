@@ -8,6 +8,13 @@ export const metadata: Metadata = {
     title: "nopwd — Zero-knowledge password manager",
     description: "Your passwords. Yours alone. End-to-end encrypted, open source, cross-platform.",
     type: "website",
+    images: [{ url: "/og.png", width: 1200, height: 630 }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "nopwd — Zero-knowledge password manager",
+    description: "Your passwords. Yours alone. End-to-end encrypted, open source, cross-platform.",
+    images: ["/og.png"],
   },
 };
 

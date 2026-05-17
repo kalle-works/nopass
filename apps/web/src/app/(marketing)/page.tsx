@@ -49,10 +49,10 @@ function BrowserFrame({ children }: { children: React.ReactNode }) {
 
 function VaultPreview() {
   const items = [
-    { name: "GitHub", sub: "kalle@kalle.works", type: "Login" },
-    { name: "Figma", sub: "kalle@kalle.works", type: "Login" },
-    { name: "Vercel", sub: "kalle@kalle.works", type: "Login" },
-    { name: "SSH key passphrase", sub: "", type: "Note" },
+    { name: "Netflix", sub: "sarah@example.com", type: "Login" },
+    { name: "ProtonMail", sub: "sarah@example.com", type: "Login" },
+    { name: "AWS Console", sub: "sarah@example.com", type: "Login" },
+    { name: "Visa •••• 4242", sub: "", type: "Card" },
   ];
 
   return (
@@ -66,8 +66,8 @@ function VaultPreview() {
           {[
             { label: "All items", count: 4, active: true },
             { label: "Logins", count: 3, active: false },
-            { label: "Notes", count: 1, active: false },
-            { label: "Cards", count: 0, active: false },
+            { label: "Notes", count: 0, active: false },
+            { label: "Cards", count: 1, active: false },
           ].map((item) => (
             <div
               key={item.label}
@@ -121,7 +121,7 @@ function VaultPreview() {
 
 function Hero() {
   return (
-    <section className="pt-28 pb-20 md:pt-36 md:pb-28">
+    <section className="pt-28 pb-12 md:pt-36 md:pb-16">
       <div className="mx-auto max-w-6xl px-6">
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           {/* Left */}
@@ -154,7 +154,7 @@ function Hero() {
             </div>
           </div>
 
-          {/* Right — vault screenshot */}
+          {/* Right — vault mockup */}
           <div className="relative">
             <div className="absolute -inset-8 bg-white/[0.02] rounded-3xl blur-3xl" />
             <div className="relative">
@@ -215,20 +215,20 @@ function HowItWorks() {
   ];
 
   return (
-    <section className="py-24 md:py-32">
+    <section className="py-16 md:py-24">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="mb-16">
+        <div className="mb-12">
           <p className="text-xs font-medium text-white/25 uppercase tracking-widest mb-3">How it works</p>
           <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
             Math, not promises.
           </h2>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-12 md:gap-8">
+        <div className="grid md:grid-cols-3 gap-4">
           {steps.map((step) => (
-            <div key={step.n}>
-              <p className="text-4xl font-bold text-white/[0.08] tabular-nums mb-5">{step.n}</p>
-              <h3 className="text-base font-semibold text-white mb-3">{step.title}</h3>
+            <div key={step.n} className="p-6 rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+              <p className="text-xs font-mono text-white/20 mb-5">{step.n}</p>
+              <h3 className="text-base font-semibold text-white mb-2">{step.title}</h3>
               <p className="text-sm text-white/40 leading-relaxed">{step.body}</p>
             </div>
           ))}
@@ -262,9 +262,9 @@ function Pricing() {
   ];
 
   return (
-    <section id="pricing" className="py-24 md:py-32 border-t border-white/[0.06]">
+    <section id="pricing" className="py-16 md:py-24 border-t border-white/[0.06]">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="mb-16">
+        <div className="mb-12">
           <p className="text-xs font-medium text-white/25 uppercase tracking-widest mb-3">Pricing</p>
           <h2 className="text-3xl md:text-4xl font-bold text-white tracking-tight">
             Simple. No catch.
@@ -279,14 +279,14 @@ function Pricing() {
             <p className="text-sm text-white/25 mb-6">forever</p>
             <Link
               href="/register"
-              className="block text-center py-2.5 rounded-lg border border-white/10 text-sm font-medium text-white/70 hover:text-white hover:border-white/20 transition-colors mb-8"
+              className="block text-center py-2.5 rounded-lg bg-white text-black text-sm font-semibold hover:bg-white/90 transition-colors mb-8"
             >
-              Get started
+              Get started free
             </Link>
             <ul className="space-y-3">
               {free.map((item) => (
                 <li key={item} className="text-sm text-white/45 flex items-start gap-2.5">
-                  <svg className="w-4 h-4 text-white/20 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <svg className="w-4 h-4 text-white/30 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                   {item}
