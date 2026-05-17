@@ -249,6 +249,164 @@ describe("parseOnePux", () => {
     expect(result.vaultNames).toEqual(["Personal", "Work"]);
   });
 
+  it("maps Password (cat 005) to login with empty username", async () => {
+    const file = makeOnePuxFile(
+      baseExport([
+        {
+          uuid: "pw-1",
+          favIndex: 0,
+          createdAt: 0,
+          updatedAt: 0,
+          trashed: "N",
+          categoryUuid: "005",
+          overview: { title: "Server Root", url: "https://srv.example.com" },
+          details: {
+            loginFields: [],
+            password: "r00t!P@ss",
+            sections: [],
+          },
+        },
+      ]),
+    );
+    const result = await parseOnePux(file);
+    expect(result.items).toHaveLength(1);
+    const item = result.items[0];
+    expect(item!.type).toBe("login");
+    if (item!.type === "login") {
+      expect(item.name).toBe("Server Root");
+      expect(item.username).toBe("");
+      expect(item.password).toBe("r00t!P@ss");
+      expect(item.urls).toEqual(["https://srv.example.com"]);
+    }
+  });
+
+  it("maps SSH Key (old cat 114) using value.sshKey structure", async () => {
+    const file = makeOnePuxFile(
+      baseExport([
+        {
+          uuid: "ssh-old-1",
+          favIndex: 0,
+          createdAt: 0,
+          updatedAt: 0,
+          trashed: "N",
+          categoryUuid: "114",
+          overview: { title: "Old Format SSH Key" },
+          details: {
+            loginFields: [],
+            sections: [
+              {
+                title: "",
+                fields: [
+                  {
+                    title: "Private Key",
+                    id: "private_key",
+                    kind: undefined,
+                    value: {
+                      sshKey: {
+                        privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nAAA==\n-----END OPENSSH PRIVATE KEY-----",
+                        publicKey: "ssh-rsa AAAAB3Nz...",
+                        fingerprint: "SHA256:xyz",
+                        keyType: "rsa",
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    const result = await parseOnePux(file);
+    expect(result.items).toHaveLength(1);
+    const item = result.items[0];
+    expect(item!.type).toBe("ssh_key");
+    if (item!.type === "ssh_key") {
+      expect(item.name).toBe("Old Format SSH Key");
+      expect(item.privateKey).toContain("BEGIN OPENSSH");
+      expect(item.publicKey).toContain("ssh-rsa");
+    }
+  });
+
+  it("maps Database (cat 102) to login with connection details", async () => {
+    const file = makeOnePuxFile(
+      baseExport([
+        {
+          uuid: "db-1",
+          favIndex: 0,
+          createdAt: 0,
+          updatedAt: 0,
+          trashed: "N",
+          categoryUuid: "102",
+          overview: { title: "Production DB" },
+          details: {
+            loginFields: [],
+            sections: [
+              {
+                title: "",
+                fields: [
+                  { title: "Type", id: "database_type", kind: "menu", value: { menu: "PostgreSQL" } },
+                  { title: "Server", id: "hostname", kind: "string", value: { string: "db.example.com" } },
+                  { title: "Port", id: "port", kind: "string", value: { string: "5432" } },
+                  { title: "Database", id: "database", kind: "string", value: { string: "appdb" } },
+                  { title: "Username", id: "username", kind: "string", value: { string: "appuser" } },
+                  { title: "Password", id: "password", kind: "concealed", value: { concealed: "dbpass123" } },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    const result = await parseOnePux(file);
+    expect(result.items).toHaveLength(1);
+    const item = result.items[0];
+    expect(item!.type).toBe("login");
+    if (item!.type === "login") {
+      expect(item.name).toBe("Production DB");
+      expect(item.username).toBe("appuser");
+      expect(item.password).toBe("dbpass123");
+      expect(item.urls[0]).toContain("db.example.com");
+      expect(item.notes).toContain("PostgreSQL");
+    }
+  });
+
+  it("parses {string: ...} and {date: ...} field value formats", async () => {
+    const file = makeOnePuxFile(
+      baseExport([
+        {
+          uuid: "generic-1",
+          favIndex: 0,
+          createdAt: 0,
+          updatedAt: 0,
+          trashed: "N",
+          categoryUuid: "999",
+          overview: { title: "Test Generic" },
+          details: {
+            sections: [
+              {
+                title: "Details",
+                fields: [
+                  { title: "Text field", id: "f1", kind: "string", value: { string: "hello world" } },
+                  { title: "Date field", id: "f2", kind: "date", value: { date: 1748390400 } },
+                  { title: "Null date", id: "f3", kind: "date", value: { date: null } },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+    );
+    const result = await parseOnePux(file);
+    const item = result.items[0];
+    expect(item!.type).toBe("note");
+    if (item!.type === "note") {
+      expect(item.content).toContain("hello world");
+      expect(item.content).toContain("2025-");
+      expect(item.content).not.toContain("Null date");
+    }
+  });
+
   it("extracts multiple URLs from overview.urls array", async () => {
     const file = makeOnePuxFile(
       baseExport([

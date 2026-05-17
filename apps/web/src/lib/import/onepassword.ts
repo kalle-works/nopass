@@ -117,6 +117,12 @@ const CATEGORY_LOGIN = "001";
 const CATEGORY_CREDIT_CARD = "002";
 const CATEGORY_SECURE_NOTE = "003";
 const CATEGORY_IDENTITY = "004";
+/** Standalone password (no username) — present in many older 1Password vaults */
+const CATEGORY_PASSWORD = "005";
+/** Database connection credentials */
+const CATEGORY_DATABASE = "102";
+/** SSH Key (newer format uses 115; older 1Password versions used 114) */
+const CATEGORY_SSH_KEY_OLD = "114";
 const CATEGORY_SSH_KEY = "115";
 
 // ─── Field value extraction ───────────────────────────────────────────────────
@@ -124,17 +130,24 @@ const CATEGORY_SSH_KEY = "115";
 function stringValue(raw: OnePuxSectionField["value"]): string {
   if (typeof raw === "string") return raw;
   if (raw && typeof raw === "object") {
-    if ("concealed" in raw) return (raw as { concealed: string }).concealed;
-    if ("email" in raw) return (raw as { email: string }).email;
-    if ("url" in raw) return (raw as { url: string }).url;
-    if ("phone" in raw) return (raw as { phone: string }).phone;
-    if ("menu" in raw) return (raw as { menu: string }).menu;
-    if ("cctype" in raw) return (raw as { cctype: string }).cctype;
+    if ("concealed" in raw) return (raw as { concealed: string }).concealed ?? "";
+    if ("string" in raw) return String((raw as { string: string }).string ?? "");
+    if ("email" in raw) return (raw as { email: string }).email ?? "";
+    if ("url" in raw) return (raw as { url: string }).url ?? "";
+    if ("phone" in raw) return (raw as { phone: string }).phone ?? "";
+    if ("menu" in raw) return (raw as { menu: string }).menu ?? "";
+    if ("cctype" in raw) return (raw as { cctype: string }).cctype ?? "";
     if ("monthYear" in raw) {
       const my = (raw as { monthYear: number }).monthYear;
+      if (my == null) return "";
       const month = String(my % 100).padStart(2, "0");
       const year = String(Math.floor(my / 100));
       return `${month}/${year}`;
+    }
+    if ("date" in raw) {
+      const ts = (raw as { date: number | null }).date;
+      if (ts == null) return "";
+      return new Date(ts * 1000).toISOString().split("T")[0]!;
     }
   }
   return "";
@@ -299,10 +312,12 @@ function mapSshKey(item: OnePuxItem): SshKeyItem {
   let publicKey = "";
   for (const section of item.details.sections ?? []) {
     for (const field of section.fields ?? []) {
-      if (field.kind === "sshKey" && field.value && typeof field.value === "object" && "sshKey" in field.value) {
+      // Check value structure regardless of kind — older 1Password versions (cat 114)
+      // export SSH keys with kind:undefined but the same sshKey value shape.
+      if (field.value && typeof field.value === "object" && "sshKey" in field.value) {
         const sk = (field.value as { sshKey: { privateKey: string; publicKey: string } }).sshKey;
-        privateKey = sk.privateKey;
-        publicKey = sk.publicKey;
+        privateKey = sk.privateKey ?? "";
+        publicKey = sk.publicKey ?? "";
       }
     }
   }
@@ -315,6 +330,85 @@ function mapSshKey(item: OnePuxItem): SshKeyItem {
     publicKey: publicKey || undefined,
     passphrase: passphrase || undefined,
     notes: item.details.notesPlain || undefined,
+  };
+}
+
+function mapPassword(item: OnePuxItem): LoginItem {
+  const urls: string[] = [];
+  if (item.overview.urls?.length) {
+    urls.push(...item.overview.urls.map((u) => u.url).filter(Boolean));
+  } else if (item.overview.url) {
+    urls.push(item.overview.url);
+  }
+
+  const customFields: CustomField[] = [];
+  for (const section of item.details.sections ?? []) {
+    for (const field of section.fields ?? []) {
+      const val = stringValue(field.value);
+      if (!val) continue;
+      customFields.push({
+        name: field.title || field.id,
+        value: val,
+        fieldType:
+          field.kind === "concealed" ||
+          (field.value && typeof field.value === "object" && "concealed" in field.value)
+            ? "hidden"
+            : "text",
+      });
+    }
+  }
+
+  return {
+    type: "login",
+    name: item.overview.title || "Unnamed",
+    username: "",
+    password: item.details.password ?? "",
+    urls,
+    notes: item.details.notesPlain || undefined,
+    customFields,
+  };
+}
+
+function mapDatabase(item: OnePuxItem): LoginItem {
+  const sections = item.details.sections;
+  const hostname = findFieldById(sections, "hostname");
+  const port = findFieldById(sections, "port");
+  const database = findFieldById(sections, "database");
+  const username = findFieldById(sections, "username");
+  const password = findFieldById(sections, "password");
+  const dbType = findFieldById(sections, "database_type");
+
+  const urlParts = [hostname, port ? `:${port}` : "", database ? `/${database}` : ""].join("");
+  const urls = urlParts ? [urlParts] : [];
+
+  const noteParts: string[] = [];
+  if (dbType) noteParts.push(`Type: ${dbType}`);
+  if (database) noteParts.push(`Database: ${database}`);
+  if (item.details.notesPlain) noteParts.push(item.details.notesPlain);
+
+  const customFields: CustomField[] = [];
+  for (const section of sections ?? []) {
+    for (const field of section.fields ?? []) {
+      if (["hostname", "port", "database", "username", "password", "database_type"].includes(field.id)) continue;
+      const val = stringValue(field.value);
+      if (!val) continue;
+      customFields.push({
+        name: field.title || field.id,
+        value: val,
+        fieldType:
+          field.value && typeof field.value === "object" && "concealed" in field.value ? "hidden" : "text",
+      });
+    }
+  }
+
+  return {
+    type: "login",
+    name: item.overview.title || "Unnamed",
+    username,
+    password,
+    urls,
+    notes: noteParts.join("\n") || undefined,
+    customFields,
   };
 }
 
@@ -342,12 +436,17 @@ function mapItem(item: OnePuxItem): VaultItemPlaintext | null {
   switch (item.categoryUuid) {
     case CATEGORY_LOGIN:
       return mapLogin(item);
+    case CATEGORY_PASSWORD:
+      return mapPassword(item);
     case CATEGORY_CREDIT_CARD:
       return mapCreditCard(item);
     case CATEGORY_SECURE_NOTE:
       return mapSecureNote(item);
     case CATEGORY_IDENTITY:
       return mapIdentity(item);
+    case CATEGORY_DATABASE:
+      return mapDatabase(item);
+    case CATEGORY_SSH_KEY_OLD:
     case CATEGORY_SSH_KEY:
       return mapSshKey(item);
     default:
