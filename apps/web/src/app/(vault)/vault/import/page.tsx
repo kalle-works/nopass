@@ -36,7 +36,7 @@ export default function ImportPage() {
   const [parsed, setParsed] = useState<ImportResult | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [progress, setProgress] = useState({ done: 0, failed: 0, total: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -82,9 +82,10 @@ export default function ImportPage() {
     if (!parsed || !sessionToken || !defaultVaultId || !vaultEncKey || !vaultMacKey) return;
 
     setPhase("importing");
-    setProgress({ done: 0, total: parsed.items.length });
+    setProgress({ done: 0, failed: 0, total: parsed.items.length });
 
     let done = 0;
+    let failed = 0;
     for (const plaintext of parsed.items) {
       try {
         const encrypted = await encryptItem(plaintext, vaultEncKey, vaultMacKey);
@@ -94,11 +95,11 @@ export default function ImportPage() {
           sessionToken,
         );
         upsertItem(created);
+        done++;
       } catch {
-        // Skip items that fail to import
+        failed++;
       }
-      done++;
-      setProgress({ done, total: parsed.items.length });
+      setProgress({ done, failed, total: parsed.items.length });
     }
 
     setPhase("done");
@@ -246,6 +247,9 @@ export default function ImportPage() {
               <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-1">Import complete</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
                 {progress.done} items imported and encrypted in your vault.
+                {progress.failed > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400"> {progress.failed} items could not be imported.</span>
+                )}
               </p>
               <button
                 onClick={() => router.push("/vault")}
