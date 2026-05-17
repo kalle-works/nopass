@@ -9,3 +9,6 @@ export * from "./store/vault-store";
 
 // API client
 export * from "./lib/api-client";
+
+// TOTP
+export * from "./lib/totp";

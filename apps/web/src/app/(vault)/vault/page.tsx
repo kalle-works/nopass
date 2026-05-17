@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useNopassStore, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
+import { computeTotp } from "@nopass/ui";
 import type {
   EncryptedVaultItem,
   VaultItemPlaintext,
@@ -178,6 +179,71 @@ function DetailField({ label, children }: { label: string; children: React.React
   );
 }
 
+function TotpCode({ uri }: { uri: string }) {
+  const [result, setResult] = useState<{ code: string; remainingSeconds: number; period: number } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    async function tick() {
+      const r = await computeTotp(uri);
+      if (!cancelled) setResult(r);
+    }
+
+    tick();
+    // Align subsequent ticks to wall-clock second boundaries to avoid drift
+    const delay = 1000 - (Date.now() % 1000);
+    const timeoutId = setTimeout(() => {
+      tick();
+      intervalId = setInterval(tick, 1000);
+    }, delay);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+      if (intervalId !== null) clearInterval(intervalId);
+    };
+  }, [uri]);
+
+  if (!result) return null;
+
+  const { code, remainingSeconds, period } = result;
+  const fraction = remainingSeconds / period;
+  const urgent = remainingSeconds <= 5;
+  const radius = 9;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - fraction);
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`font-mono text-xl font-bold tracking-widest ${urgent ? "text-red-500 dark:text-red-400" : "text-gray-900 dark:text-white"}`}>
+        {code.slice(0, 3)} {code.slice(3)}
+      </span>
+      <svg width="24" height="24" viewBox="0 0 24 24" className="shrink-0">
+        <circle cx="12" cy="12" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-200 dark:text-gray-700" />
+        <circle
+          cx="12"
+          cy="12"
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+          strokeLinecap="round"
+          transform="rotate(-90 12 12)"
+          className={`transition-[stroke-dashoffset] ${urgent ? "text-red-500 dark:text-red-400" : "text-blue-500 dark:text-blue-400"}`}
+        />
+        <text x="12" y="16" textAnchor="middle" className="fill-current text-gray-500 dark:text-gray-400" style={{ fontSize: "7px" }}>
+          {remainingSeconds}s
+        </text>
+      </svg>
+      <CopyButton text={code} label="Copy code" />
+    </div>
+  );
+}
+
 function LoginDetail({ login }: { login: LoginItem }) {
   return (
     <>
@@ -192,6 +258,11 @@ function LoginDetail({ login }: { login: LoginItem }) {
       {login.password && (
         <DetailField label="Password">
           <SecretField value={login.password} />
+        </DetailField>
+      )}
+      {login.totp && (
+        <DetailField label="One-Time Password">
+          <TotpCode uri={login.totp} />
         </DetailField>
       )}
       {login.urls && login.urls.length > 0 && (
@@ -422,6 +493,7 @@ function Toast({ message }: { message: string }) {
 
 export default function VaultPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     isUnlocked,
     sessionToken,
@@ -477,6 +549,16 @@ export default function VaultPage() {
       // clipboard unavailable
     }
   }
+
+  // Deep-link: /vault?item=ID (e.g. from health page)
+  useEffect(() => {
+    const itemId = searchParams.get("item");
+    if (itemId) {
+      setSelectedId(itemId);
+      router.replace("/vault");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Autofocus search on mount
   useEffect(() => {
@@ -775,6 +857,15 @@ export default function VaultPage() {
             <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:block">
               <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-gray-400 dark:text-gray-500 font-mono">⌘K</kbd>
             </span>
+            <button
+              onClick={() => router.push("/vault/health")}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg font-medium transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              Security
+            </button>
             <button
               onClick={() => router.push("/vault/import")}
               className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg font-medium transition-colors"
