@@ -145,6 +145,36 @@ export interface PublicKeyResponse {
   publicKey: string;
 }
 
+// ─── Billing ─────────────────────────────────────────────────────────────────
+
+export type SubscriptionPlan = "free" | "pro" | "teams" | "enterprise";
+export type SubscriptionStatus = "active" | "past_due" | "canceled" | "trialing";
+
+export interface BillingStatus {
+  plan: SubscriptionPlan;
+  status: SubscriptionStatus;
+  currentPeriodEnd: string | null;
+  stripeCustomerId: string | null;
+}
+
+export interface CreateCheckoutRequest {
+  priceId: string;
+  successUrl: string;
+  cancelUrl: string;
+}
+
+export interface CheckoutSessionResponse {
+  url: string;
+}
+
+export interface CreatePortalRequest {
+  returnUrl: string;
+}
+
+export interface PortalSessionResponse {
+  url: string;
+}
+
 // ─── Generic ─────────────────────────────────────────────────────────────────
 
 export interface ApiError {

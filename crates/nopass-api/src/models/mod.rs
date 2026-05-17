@@ -1,3 +1,4 @@
+pub mod billing;
 pub mod device;
 pub mod org;
 pub mod session;

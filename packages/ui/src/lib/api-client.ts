@@ -5,14 +5,19 @@
  */
 import type {
   AcceptInviteRequest,
+  BillingStatus,
+  CheckoutSessionResponse,
   ConflictResponse,
+  CreateCheckoutRequest,
   CreateOrgRequest,
+  CreatePortalRequest,
   CreateVaultItemRequest,
   DeviceInfo,
   EncryptedVaultItem,
   InviteMemberRequest,
   OrgDetails,
   OrgSummary,
+  PortalSessionResponse,
   PublicKeyResponse,
   RegisterDeviceRequest,
   RegisterRequest,
@@ -124,6 +129,13 @@ export function createApiClient(baseUrl: string) {
         del<void>(`/organizations/${orgId}/members/${userId}`, token),
       getPublicKey: (emailHash: string, token: string) =>
         get<PublicKeyResponse>(`/organizations/public-key/${emailHash}`, token),
+    },
+    billing: {
+      status: (token: string) => get<BillingStatus>("/billing/status", token),
+      checkout: (req: CreateCheckoutRequest, token: string) =>
+        post<CheckoutSessionResponse>("/billing/checkout", req, token),
+      portal: (req: CreatePortalRequest, token: string) =>
+        post<PortalSessionResponse>("/billing/portal", req, token),
     },
   };
 }

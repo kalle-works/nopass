@@ -3,5 +3,6 @@ pub mod auth;
 pub mod devices;
 pub mod orgs;
 pub mod sessions;
+pub mod subscriptions;
 pub mod sync;
 pub mod vaults;

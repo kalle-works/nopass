@@ -5,6 +5,7 @@ pub mod middleware;
 pub mod models;
 pub mod routes;
 pub mod state;
+pub mod stripe;
 
 use std::{net::SocketAddr, sync::Arc};
 

@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::config::Config;
+use crate::{config::Config, stripe::StripeClient};
 
 /// In-memory pending SRP sessions (step 1 → step 2).
 /// Entries are removed on successful verify or after expiry.
@@ -28,6 +28,8 @@ pub struct AppState {
     pub srp_sessions: Arc<Mutex<HashMap<Uuid, SrpPendingSession>>>,
     /// Per-IP rate limiter for auth endpoints (20 req/min, burst 10).
     pub auth_rate_limiter: Arc<DefaultKeyedRateLimiter<IpAddr>>,
+    /// Stripe client — `None` when STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are not set.
+    pub stripe: Option<StripeClient>,
 }
 
 impl AppState {
@@ -36,11 +38,25 @@ impl AppState {
             Quota::per_minute(NonZeroU32::new(20).expect("non-zero"))
                 .allow_burst(NonZeroU32::new(10).expect("non-zero")),
         ));
+
+        let stripe = match (&config.stripe_secret_key, &config.stripe_webhook_secret) {
+            (Some(key), Some(secret)) => {
+                StripeClient::new(key.clone(), secret.clone())
+                    .map_err(|e| tracing::warn!("Stripe client init failed: {e}"))
+                    .ok()
+            }
+            _ => {
+                tracing::info!("Stripe keys not set — billing routes will return 503");
+                None
+            }
+        };
+
         Self {
             db,
             config,
             srp_sessions: Arc::new(Mutex::new(HashMap::new())),
             auth_rate_limiter,
+            stripe,
         }
     }
 

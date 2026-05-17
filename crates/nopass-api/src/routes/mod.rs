@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod billing;
 pub mod devices;
 pub mod orgs;
 pub mod sync;
@@ -20,6 +21,7 @@ use crate::{middleware::auth::require_auth, state::AppState};
 pub fn router(state: AppState) -> Router<AppState> {
     let public = Router::new()
         .route("/health", get(health))
+        .merge(billing::webhook_router())
         .nest(
             "/auth",
             auth::public_router().route_layer(middleware::from_fn_with_state(
@@ -30,6 +32,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 
     let protected = Router::new()
         .nest("/auth", auth::protected_router())
+        .nest("/billing", billing::router())
         .nest("/devices", devices::router())
         .nest("/organizations", orgs::router())
         .nest("/vaults", vault::router())

@@ -10,6 +10,14 @@ pub struct Config {
     /// Trusted proxy CIDRs — only trust X-Forwarded-For from these IPs.
     /// Leave empty to always use the direct TCP connection IP (safe default).
     pub trusted_proxies: Vec<std::net::IpAddr>,
+
+    // ─── Stripe (optional — billing routes return 503 when unset) ────────────
+    pub stripe_secret_key: Option<String>,
+    pub stripe_webhook_secret: Option<String>,
+    /// Price IDs from the Stripe dashboard.
+    pub stripe_pro_monthly_price_id: Option<String>,
+    pub stripe_pro_annual_price_id: Option<String>,
+    pub stripe_teams_price_id: Option<String>,
 }
 
 impl Config {
@@ -42,12 +50,23 @@ impl Config {
             .filter_map(|s| s.parse::<std::net::IpAddr>().ok())
             .collect();
 
+        let stripe_secret_key = std::env::var("STRIPE_SECRET_KEY").ok();
+        let stripe_webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").ok();
+        let stripe_pro_monthly_price_id = std::env::var("STRIPE_PRO_MONTHLY_PRICE_ID").ok();
+        let stripe_pro_annual_price_id = std::env::var("STRIPE_PRO_ANNUAL_PRICE_ID").ok();
+        let stripe_teams_price_id = std::env::var("STRIPE_TEAMS_PRICE_ID").ok();
+
         Ok(Config {
             database_url,
             host,
             port,
             allowed_origins,
             trusted_proxies,
+            stripe_secret_key,
+            stripe_webhook_secret,
+            stripe_pro_monthly_price_id,
+            stripe_pro_annual_price_id,
+            stripe_teams_price_id,
         })
     }
 

@@ -246,7 +246,7 @@ function Pricing() {
     "macOS desktop + Touch ID",
     "AES-256-GCM encryption",
     "Argon2id key derivation",
-    "Team vault sharing",
+    "Team vault (up to 3 members)",
     "Open source & auditable",
   ];
 
@@ -255,10 +255,16 @@ function Pricing() {
     "Encrypted file attachments",
     "Hardware key 2FA",
     "Emergency access",
-    "Priority support",
     "REST API access",
+    "Priority support",
+  ];
+
+  const teams = [
+    "Everything in Pro",
+    "Unlimited org members",
     "SSO / SAML",
     "Audit logs",
+    "Dedicated support",
   ];
 
   return (
@@ -271,7 +277,7 @@ function Pricing() {
           </h2>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 max-w-3xl">
+        <div className="grid md:grid-cols-3 gap-4 max-w-4xl">
           {/* Free */}
           <div className="p-8 rounded-2xl border border-white/[0.08] bg-white/[0.02]">
             <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-4">Free</p>
@@ -296,25 +302,52 @@ function Pricing() {
           </div>
 
           {/* Pro */}
-          <div className="p-8 rounded-2xl border border-white/[0.08] bg-white/[0.02]">
-            <div className="flex items-center gap-2.5 mb-4">
-              <p className="text-xs font-medium text-white/30 uppercase tracking-widest">Pro</p>
-              <span className="text-[10px] px-2 py-0.5 rounded border border-white/10 text-white/25">
-                Coming soon
-              </span>
+          <div className="p-8 rounded-2xl border border-blue-500/30 bg-blue-500/[0.04] relative">
+            <span className="absolute -top-px left-1/2 -translate-x-1/2 text-[10px] font-medium px-3 py-1 rounded-b-md bg-blue-500 text-white">
+              Most popular
+            </span>
+            <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-4 mt-3">Pro</p>
+            <div className="mb-1">
+              <span className="text-5xl font-bold text-white">€4</span>
+              <span className="text-sm text-white/25 ml-1">/ month</span>
             </div>
-            <p className="text-5xl font-bold text-white mb-1">€4</p>
-            <p className="text-sm text-white/25 mb-6">per month</p>
-            <button
-              disabled
-              className="w-full py-2.5 rounded-lg text-sm font-medium text-white/20 border border-white/[0.06] cursor-not-allowed mb-8"
+            <p className="text-xs text-white/25 mb-6">or €36/year · save 25%</p>
+            <Link
+              href="/vault/billing"
+              className="block text-center py-2.5 rounded-lg bg-blue-500 text-white text-sm font-semibold hover:bg-blue-400 transition-colors mb-8"
             >
-              Join waitlist
-            </button>
+              Upgrade to Pro
+            </Link>
             <ul className="space-y-3">
               {pro.map((item) => (
                 <li key={item} className="text-sm text-white/45 flex items-start gap-2.5">
-                  <svg className="w-4 h-4 text-white/20 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                  <svg className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Teams */}
+          <div className="p-8 rounded-2xl border border-white/[0.08] bg-white/[0.02]">
+            <p className="text-xs font-medium text-white/30 uppercase tracking-widest mb-4">Teams</p>
+            <div className="mb-1">
+              <span className="text-5xl font-bold text-white">€5</span>
+              <span className="text-sm text-white/25 ml-1">/ seat</span>
+            </div>
+            <p className="text-xs text-white/25 mb-6">per month · min 3 seats · annual</p>
+            <Link
+              href="/vault/billing"
+              className="block text-center py-2.5 rounded-lg border border-white/10 text-white/60 text-sm font-semibold hover:text-white hover:border-white/20 transition-colors mb-8"
+            >
+              Start Teams trial
+            </Link>
+            <ul className="space-y-3">
+              {teams.map((item) => (
+                <li key={item} className="text-sm text-white/45 flex items-start gap-2.5">
+                  <svg className="w-4 h-4 text-white/30 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                   {item}

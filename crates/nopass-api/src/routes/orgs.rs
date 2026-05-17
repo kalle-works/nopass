@@ -7,7 +7,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, orgs as db_orgs},
+    db::{auth as db_auth, orgs as db_orgs, subscriptions as db_subs},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     models::org::{
@@ -132,6 +132,18 @@ async fn invite_member(
 
     if body.role == "owner" {
         return Err(ApiError::BadRequest("cannot invite as owner".into()));
+    }
+
+    // Enforce org member limit based on the inviting user's subscription plan.
+    let plan = db_subs::effective_plan(&state.db, auth.user_id).await?;
+    if let Some(limit) = plan.org_member_limit() {
+        let members = db_orgs::list_members(&state.db, org_id).await?;
+        let active = members.iter().filter(|m| m.status == "active").count();
+        if active >= limit {
+            return Err(ApiError::Forbidden(format!(
+                "org member limit of {limit} reached on your current plan — upgrade to Pro to add more"
+            )));
+        }
     }
 
     // Compute email hash client-side and pass it; server looks up user by it.

@@ -19,6 +19,8 @@ governor = { workspace = true }
 
 sqlx = { workspace = true }
 
+reqwest = { workspace = true }
+
 serde = { workspace = true }
 serde_json = { workspace = true }
 

@@ -42,6 +42,9 @@ base64 = "0.22"
 # SRP (Secure Remote Password)
 srp = "0.6"
 
+# HTTP client (used by Stripe integration)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
