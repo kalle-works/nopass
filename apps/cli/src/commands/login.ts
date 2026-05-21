@@ -38,7 +38,7 @@ function prompt(question: string, hidden = false): Promise<string> {
 }
 
 export const loginCommand = new Command("login")
-  .description("authenticate with the nopass vault")
+  .description("authenticate with the nopwd vault")
   .option("-e, --email <email>", "email address (or set NOPASS_EMAIL)")
   .option("-u, --api-url <url>", "API base URL (or set NOPASS_API_URL)")
   .action(async (opts: { email?: string; apiUrl?: string }) => {
