@@ -22,9 +22,29 @@ function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string
   if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
   if (/[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw)) score++;
   const labels = ["", "Weak", "Fair", "Strong", "Very strong"];
-  const colors = ["", "text-red-600", "text-amber-600", "text-blue-600", "text-green-600"];
-  const bgs = ["", "bg-red-500", "bg-amber-400", "bg-blue-500", "bg-green-500"];
+  const colors = ["", "text-[#FF5C39]", "text-amber-400", "text-[#D6FF3F]", "text-[#7CFF6B]"];
+  const bgs = ["", "bg-[#FF5C39]", "bg-amber-400", "bg-[#D6FF3F]", "bg-[#7CFF6B]"];
   return { score: score as 0 | 1 | 2 | 3 | 4, label: labels[score]!, color: colors[score]!, bg: bgs[score]! };
+}
+
+function humanizeError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg === "Failed to fetch" || msg.includes("NetworkError") || msg.includes("ERR_FAILED")) {
+    return "Could not reach the nopwd server. Check your connection and try again.";
+  }
+  if (msg.includes("CORS") || msg.includes("access control")) {
+    return "Could not reach the nopwd server. Check your connection and try again.";
+  }
+  if (msg.toLowerCase().includes("unauthorized") || msg.includes("401")) {
+    return "Incorrect email or master password.";
+  }
+  if (msg.toLowerCase().includes("conflict") || msg.includes("409")) {
+    return "An account with this email already exists.";
+  }
+  if (msg.toLowerCase().includes("rate limit") || msg.includes("429")) {
+    return "Too many attempts. Wait a moment and try again.";
+  }
+  return msg || "Something went wrong. Please try again.";
 }
 
 export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: UnlockScreenProps) {
@@ -38,7 +58,7 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
   const { setSession } = useNopassStore();
 
   useEffect(() => {
-    document.title = mode === "login" ? "Sign in — nopass" : "Create account — nopass";
+    document.title = mode === "login" ? "Sign in — nopwd" : "Create account — nopwd";
   }, [mode]);
 
   const strength = mode === "register" ? passwordStrength(password) : null;
@@ -56,7 +76,7 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
       }
       onSuccess?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(humanizeError(err));
     } finally {
       setLoading(false);
       setLoadingStep(null);
@@ -78,7 +98,6 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
     const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
     encKeyBytes.fill(0);
 
-    // Generate RSA-OAEP key pair so the user can join/create orgs immediately
     const { generateUserKeyPair } = await import("@nopass/crypto");
     const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
@@ -142,29 +161,18 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
           : "Unlocking…";
 
   return (
-    <div className="relative min-h-screen flex flex-col items-center justify-center bg-[#0a0a0a] px-4 py-12 overflow-hidden">
-      {/* Subtle ambient glow */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-blue-600/[0.06] rounded-full blur-3xl" />
-      </div>
-
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#070706] px-4 py-12">
       {/* Logo */}
-      <div className="relative flex items-center gap-2.5 mb-8">
-        <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-600/30">
-          <svg className="w-[18px] h-[18px] text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-            <rect x="3" y="11" width="18" height="11" rx="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        </div>
-        <span className="font-semibold text-white tracking-tight">nopass</span>
+      <div className="mb-8">
+        <span className="font-mono text-sm font-semibold text-[#F4F1E8] tracking-tight">nopwd</span>
       </div>
 
-      <div className="relative w-full max-w-sm">
-        <div className="bg-white rounded-2xl shadow-2xl shadow-black/50 border border-white/10 p-8">
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">
+      <div className="w-full max-w-sm">
+        <div className="bg-[#11110F] border border-[#2B2923] p-8">
+          <h1 className="font-mono text-xl font-semibold text-[#F4F1E8] mb-1">
             {mode === "login" ? "Unlock your vault" : "Create account"}
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+          <p className="text-sm text-[#9C988D] mb-6">
             {mode === "login"
               ? "Your master password never leaves this device."
               : "Pick a strong master password — it encrypts your entire vault."}
@@ -172,7 +180,7 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+              <label htmlFor="email" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
                 Email
               </label>
               <input
@@ -183,12 +191,12 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
                 required
                 autoComplete="email"
                 placeholder="you@example.com"
-                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                className="w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D] focus:outline-none focus:border-[#D6FF3F] transition-colors"
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+              <label htmlFor="password" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
                 Master password
               </label>
               <div className="relative">
@@ -199,12 +207,12 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   autoComplete={mode === "register" ? "new-password" : "current-password"}
-                  className="w-full px-3 py-2.5 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                  className="w-full px-3 py-2.5 pr-10 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm focus:outline-none focus:border-[#D6FF3F] transition-colors"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((s) => !s)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
                   tabIndex={-1}
                 >
                   {showPassword ? (
@@ -228,44 +236,44 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
                     {[1, 2, 3, 4].map((i) => (
                       <div
                         key={i}
-                        className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                          i <= strength.score ? strength.bg : "bg-gray-200 dark:bg-gray-700"
+                        className={`h-0.5 flex-1 transition-all duration-300 ${
+                          i <= strength.score ? strength.bg : "bg-[#2B2923]"
                         }`}
                       />
                     ))}
                   </div>
-                  <p className={`text-xs font-medium ${strength.color}`}>{strength.label}</p>
+                  <p className={`font-mono text-xs ${strength.color}`}>{strength.label}</p>
                 </div>
               )}
             </div>
 
             {/* Recovery warning — register only */}
             {mode === "register" && (
-              <div className="flex items-start gap-2.5 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg">
-                <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <div className="flex items-start gap-2.5 p-3 border border-amber-500/20 bg-amber-500/5">
+                <svg className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
                   <line x1="12" y1="9" x2="12" y2="13" />
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
-                <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                <p className="text-xs text-amber-400 leading-relaxed">
                   <strong className="font-semibold">Write this password down.</strong> It encrypts your vault and cannot be reset — not even by us.
                 </p>
               </div>
             )}
 
             {error && (
-              <div className="flex items-start gap-2.5 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <svg className="w-4 h-4 text-red-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <div className="flex items-start gap-2.5 p-3 border border-[#FF5C39]/30 bg-[#FF5C39]/5">
+                <svg className="w-4 h-4 text-[#FF5C39] mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
-                <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+                <p className="text-sm text-[#FF5C39]">{error}</p>
               </div>
             )}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-70 text-white font-medium rounded-lg transition-colors text-sm flex items-center justify-center gap-2"
+              className="w-full py-2.5 px-4 bg-[#D6FF3F] hover:bg-[#c8ef3a] disabled:opacity-50 text-[#070706] font-mono font-semibold transition-colors text-sm flex items-center justify-center gap-2"
             >
               {loading && (
                 <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
@@ -277,11 +285,11 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
             </button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-gray-500 dark:text-gray-400">
-            {mode === "login" ? "New to nopass? " : "Already have an account? "}
+          <p className="mt-5 text-center text-sm text-[#9C988D]">
+            {mode === "login" ? "New to nopwd? " : "Already have an account? "}
             <button
               onClick={onSwitchMode}
-              className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+              className="text-[#D6FF3F] hover:underline underline-offset-2 font-medium"
             >
               {mode === "login" ? "Create account" : "Sign in"}
             </button>
@@ -289,11 +297,8 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
         </div>
 
         {/* Security badge */}
-        <div className="mt-5 flex items-center justify-center gap-1.5 text-xs text-white/30">
-          <svg className="w-3.5 h-3.5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-          </svg>
-          AES-256-GCM · Argon2id · SRP-6a · Zero-knowledge
+        <div className="mt-4 flex items-center justify-center gap-1.5 text-xs text-[#9C988D]">
+          <span className="font-mono">AES-256-GCM · Argon2id · SRP-6a · Zero-knowledge</span>
         </div>
       </div>
     </div>
