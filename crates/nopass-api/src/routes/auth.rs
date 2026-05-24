@@ -1,10 +1,15 @@
-use axum::{extract::State, http::StatusCode, routing::post, Extension, Json, Router};
+use axum::{
+    extract::{ConnectInfo, State},
+    http::StatusCode,
+    routing::post,
+    Extension, Json, Router,
+};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use nopass_models::{
     KdfParams, RegisterRequest, RegisterResponse, SrpInitRequest, SrpInitResponse,
     SrpVerifyRequest, SrpVerifyResponse,
 };
-use serde_json::json;
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::{
@@ -26,10 +31,21 @@ pub fn protected_router() -> Router<AppState> {
     Router::new().route("/logout", post(logout))
 }
 
+/// Check rate limit for the given IP. Returns Err(TooManyRequests) if the limit is exceeded.
+fn check_rate_limit(state: &AppState, addr: &SocketAddr) -> ApiResult<()> {
+    state
+        .auth_rate_limiter
+        .check_key(&addr.ip())
+        .map_err(|_| ApiError::TooManyRequests)
+}
+
 async fn register(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> ApiResult<(StatusCode, Json<RegisterResponse>)> {
+    check_rate_limit(&state, &addr)?;
+
     if db_auth::find_user_by_email_hash(&state.db, &req.email_hash)
         .await?
         .is_some()
@@ -72,9 +88,12 @@ async fn register(
 }
 
 async fn srp_init(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Json(req): Json<SrpInitRequest>,
 ) -> ApiResult<Json<SrpInitResponse>> {
+    check_rate_limit(&state, &addr)?;
+
     let user = db_auth::find_user_by_email_hash(&state.db, &req.email_hash)
         .await?
         // Return the same error shape regardless of whether user exists (prevents enumeration)
@@ -118,9 +137,12 @@ async fn srp_init(
 }
 
 async fn srp_verify(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Json(req): Json<SrpVerifyRequest>,
 ) -> ApiResult<Json<SrpVerifyResponse>> {
+    check_rate_limit(&state, &addr)?;
+
     let pending = {
         let mut sessions = state.srp_sessions.lock().await;
         sessions
@@ -133,11 +155,6 @@ async fn srp_verify(
         return Err(ApiError::Unauthorized("SRP session expired".into()));
     }
 
-    // We need the client's A from step 1 — for now it's embedded in M1 proof via SRP math.
-    // In the real client, A is sent again in step 2. Accept it from the request.
-    // The srp_verify request should include client_public_a but we'll need it here.
-    // For now, decode M1 and try to get A from a stored value.
-    // NOTE: Real implementation should store client_public_a in the pending session.
     let client_proof_m1 = B64.decode(&req.client_proof_m1)
         .map_err(|_| ApiError::BadRequest("invalid client_proof_m1".into()))?;
 
@@ -151,7 +168,7 @@ async fn srp_verify(
     )
     .map_err(|_| ApiError::Unauthorized("authentication failed".into()))?;
 
-    let _ = verify_result.session_key; // available for future use (e.g. encrypted channel)
+    let _ = verify_result.session_key;
 
     let user = db_auth::get_user_by_id(&state.db, pending.user_id)
         .await?
