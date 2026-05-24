@@ -3,6 +3,7 @@ import { loginCommand } from "./commands/login.js";
 import { lockCommand } from "./commands/lock.js";
 import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
+import { runCommand } from "./commands/run.js";
 
 const program = new Command();
 
@@ -15,5 +16,6 @@ program.addCommand(loginCommand);
 program.addCommand(getCommand);
 program.addCommand(listCommand);
 program.addCommand(lockCommand);
+program.addCommand(runCommand);
 
 await program.parseAsync(process.argv);
