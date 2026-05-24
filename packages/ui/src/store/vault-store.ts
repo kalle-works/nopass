@@ -85,6 +85,10 @@ interface NopassStore extends AuthState, CryptoState, VaultState {
   toggleFavorite: (itemId: string) => void;
   isFavorite: (itemId: string) => boolean;
 
+  // Security helpers
+  /** Copy text to clipboard and clear it after timeoutMs (default 30 s). */
+  copyWithAutoClear: (text: string, timeoutMs?: number) => Promise<boolean>;
+
   // Derived helpers
   isUnlocked: () => boolean;
   activeItems: () => EncryptedVaultItem[];
@@ -170,6 +174,25 @@ export const useNopassStore = create<NopassStore>((set, get) => ({
     }),
 
   isFavorite: (itemId) => get().favorites.has(itemId),
+
+  copyWithAutoClear: async (text, timeoutMs = 30_000) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setTimeout(async () => {
+        try {
+          const current = await navigator.clipboard.readText();
+          if (current === text) {
+            await navigator.clipboard.writeText("");
+          }
+        } catch {
+          // clipboard read may be denied — that's fine, just skip the clear
+        }
+      }, timeoutMs);
+      return true;
+    } catch {
+      return false;
+    }
+  },
 
   isUnlocked: () => get().vaultEncKey !== null,
   activeItems: () => get().items.filter((i) => i.deletedAt === null),

@@ -547,6 +547,7 @@ function VaultPageInner() {
     lock,
     toggleFavorite,
     favorites,
+    copyWithAutoClear,
   } = useNopassStore();
 
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
@@ -581,12 +582,8 @@ function VaultPageInner() {
   }
 
   async function copyToClipboard(text: string, successMessage: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      showToast(successMessage);
-    } catch {
-      // clipboard unavailable
-    }
+    const ok = await copyWithAutoClear(text);
+    if (ok) showToast(successMessage);
   }
 
   // Deep-link: /vault?item=ID (e.g. from health page)
@@ -667,6 +664,31 @@ function VaultPageInner() {
   useEffect(() => {
     if (!isUnlocked()) router.replace("/login");
   }, [isUnlocked, router]);
+
+  // Idle auto-lock: lock vault after 15 minutes of no user activity
+  useEffect(() => {
+    if (!isUnlocked()) return;
+    const IDLE_MS = 15 * 60 * 1000;
+    let timer: ReturnType<typeof setTimeout>;
+
+    function resetTimer() {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        lock();
+        router.replace("/login");
+      }, IDLE_MS);
+    }
+
+    const events = ["mousedown", "mousemove", "keydown", "touchstart", "scroll", "click"] as const;
+    for (const ev of events) window.addEventListener(ev, resetTimer, { passive: true });
+    resetTimer();
+
+    return () => {
+      clearTimeout(timer);
+      for (const ev of events) window.removeEventListener(ev, resetTimer);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUnlocked]);
 
   useEffect(() => {
     if (!isUnlocked() || !sessionToken || !defaultVaultId) return;
