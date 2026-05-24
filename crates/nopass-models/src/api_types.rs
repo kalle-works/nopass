@@ -78,6 +78,10 @@ pub struct SrpVerifyRequest {
     pub session_id: Uuid,
     /// Base64-encoded client proof M1
     pub client_proof_m1: String,
+    /// Optional device UUID — if provided, links the new session to this trusted device
+    /// and updates device.last_seen_at. Silently ignored if the device doesn't belong to the user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

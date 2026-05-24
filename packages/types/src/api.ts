@@ -55,6 +55,8 @@ export interface SrpVerifyRequest {
   sessionId: string;
   /** base64 SRP client proof M1 */
   clientProofM1: string;
+  /** Optional: link this session to an existing trusted device. */
+  deviceId?: string;
 }
 
 export interface SrpVerifyResponse {

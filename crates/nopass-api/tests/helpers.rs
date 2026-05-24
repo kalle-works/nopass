@@ -88,6 +88,7 @@ pub async fn login(server: &TestServer, email: &str, password: &str) -> SrpVerif
         .json(&SrpVerifyRequest {
             session_id: init_resp.session_id,
             client_proof_m1: B64.encode(client_proof),
+            device_id: None,
         })
         .await
         .json();

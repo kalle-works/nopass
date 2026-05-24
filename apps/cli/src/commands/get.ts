@@ -44,6 +44,15 @@ function extractField(item: VaultItemPlaintext, field: string | undefined): stri
       if (f === "notes") return id.notes ?? "";
       throw new Error(`Unknown field "${field}" for identity item. Valid: email, phone, name, address, notes`);
     }
+    case "ssh_key": {
+      const ssh = item as import("@nopass/types").SshKeyItem;
+      const f = field ?? "private";
+      if (f === "private") return ssh.privateKey;
+      if (f === "public") return ssh.publicKey ?? "";
+      if (f === "passphrase") return ssh.passphrase ?? "";
+      if (f === "notes") return ssh.notes ?? "";
+      throw new Error(`Unknown field "${field}" for ssh_key item. Valid: private, public, passphrase, notes`);
+    }
   }
 }
 

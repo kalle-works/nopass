@@ -1,19 +1,13 @@
-use axum::{
-    extract::{ConnectInfo, State},
-    http::StatusCode,
-    routing::post,
-    Extension, Json, Router,
-};
+use axum::{extract::State, http::StatusCode, routing::post, Extension, Json, Router};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use nopass_models::{
     KdfParams, RegisterRequest, RegisterResponse, SrpInitRequest, SrpInitResponse,
     SrpVerifyRequest, SrpVerifyResponse,
 };
-use std::net::SocketAddr;
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, sessions, vaults as db_vaults},
+    db::{auth as db_auth, devices as db_devices, sessions, vaults as db_vaults},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     state::{AppState, SrpPendingSession},
@@ -31,21 +25,10 @@ pub fn protected_router() -> Router<AppState> {
     Router::new().route("/logout", post(logout))
 }
 
-/// Check rate limit for the given IP. Returns Err(TooManyRequests) if the limit is exceeded.
-fn check_rate_limit(state: &AppState, addr: &SocketAddr) -> ApiResult<()> {
-    state
-        .auth_rate_limiter
-        .check_key(&addr.ip())
-        .map_err(|_| ApiError::TooManyRequests)
-}
-
 async fn register(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> ApiResult<(StatusCode, Json<RegisterResponse>)> {
-    check_rate_limit(&state, &addr)?;
-
     if db_auth::find_user_by_email_hash(&state.db, &req.email_hash)
         .await?
         .is_some()
@@ -79,7 +62,6 @@ async fn register(
     )
     .await?;
 
-    // Create the user's default vault automatically on registration
     db_vaults::create_vault(&state.db, user.id)
         .await
         .map_err(|e| ApiError::Internal(e))?;
@@ -88,21 +70,16 @@ async fn register(
 }
 
 async fn srp_init(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Json(req): Json<SrpInitRequest>,
 ) -> ApiResult<Json<SrpInitResponse>> {
-    check_rate_limit(&state, &addr)?;
-
     let user = db_auth::find_user_by_email_hash(&state.db, &req.email_hash)
         .await?
-        // Return the same error shape regardless of whether user exists (prevents enumeration)
         .ok_or_else(|| ApiError::Unauthorized("invalid credentials".into()))?;
 
     let client_public_a = B64.decode(&req.client_public_a)
         .map_err(|_| ApiError::BadRequest("invalid client_public_a".into()))?;
 
-    // Reject trivially weak or empty ephemeral A
     if client_public_a.is_empty() {
         return Err(ApiError::BadRequest("client_public_a must not be empty".into()));
     }
@@ -137,12 +114,9 @@ async fn srp_init(
 }
 
 async fn srp_verify(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Json(req): Json<SrpVerifyRequest>,
 ) -> ApiResult<Json<SrpVerifyResponse>> {
-    check_rate_limit(&state, &addr)?;
-
     let pending = {
         let mut sessions = state.srp_sessions.lock().await;
         sessions
@@ -150,7 +124,6 @@ async fn srp_verify(
             .ok_or_else(|| ApiError::Unauthorized("SRP session not found or expired".into()))?
     };
 
-    // Reject sessions older than 5 minutes
     if pending.created_at.elapsed().as_secs() > 300 {
         return Err(ApiError::Unauthorized("SRP session expired".into()));
     }
@@ -158,8 +131,6 @@ async fn srp_verify(
     let client_proof_m1 = B64.decode(&req.client_proof_m1)
         .map_err(|_| ApiError::BadRequest("invalid client_proof_m1".into()))?;
 
-    // Use client_public_a stored in the pending session from step 1 — do not accept it again
-    // from the request to prevent A-substitution attacks.
     let verify_result = srp_server_verify(
         &pending.verifier,
         &pending.server_ephemeral_b,
@@ -174,6 +145,20 @@ async fn srp_verify(
         .await?
         .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("user vanished during SRP")))?;
 
+    // If the client supplied a device_id, validate it belongs to this user and link the session.
+    let device_id = if let Some(did) = req.device_id {
+        let devices = db_devices::list_devices_for_user(&state.db, user.id).await?;
+        if devices.iter().any(|d| d.id == did) {
+            db_devices::touch_device(&state.db, did).await?;
+            Some(did)
+        } else {
+            // Unknown device_id — ignore silently (don't reveal enumeration info)
+            None
+        }
+    } else {
+        None
+    };
+
     let vaults = db_vaults::list_vaults_for_user(&state.db, user.id)
         .await
         .map_err(|e| ApiError::Internal(e))?;
@@ -182,7 +167,7 @@ async fn srp_verify(
         .map(|v| v.id)
         .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("no vault found for user")))?;
 
-    let session_token = sessions::create_session(&state.db, user.id, None).await?;
+    let session_token = sessions::create_session(&state.db, user.id, device_id).await?;
 
     Ok(Json(SrpVerifyResponse {
         server_proof_m2: B64.encode(&verify_result.server_proof_m2),
