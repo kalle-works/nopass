@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNopassStore, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
@@ -17,7 +17,7 @@ import type {
 } from "@nopass/types";
 import { api } from "@/lib/api";
 
-type Filter = "all" | VaultItemType;
+type Filter = "all" | "favorites" | VaultItemType;
 type SidebarTab = "vault" | "teams";
 
 const TYPE_LABELS: Record<VaultItemType, string> = {
@@ -280,6 +280,22 @@ function LoginDetail({ login }: { login: LoginItem }) {
           ))}
         </DetailField>
       )}
+      {login.customFields && login.customFields.length > 0 && (
+        <>
+          {login.customFields.map((field, i) => (
+            <DetailField key={i} label={field.name || `Field ${i + 1}`}>
+              {field.fieldType === "hidden" ? (
+                <SecretField value={field.value} />
+              ) : (
+                <div className="flex items-center gap-1">
+                  <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 break-all">{field.value}</span>
+                  <CopyButton text={field.value} label={`Copy ${field.name}`} />
+                </div>
+              )}
+            </DetailField>
+          ))}
+        </>
+      )}
       {login.notes && (
         <DetailField label="Notes">
           <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">{login.notes}</p>
@@ -397,11 +413,15 @@ function DetailPane({
   onEdit,
   onDelete,
   onClose,
+  isFavorite,
+  onToggleFavorite,
 }: {
   entry: DecryptedEntry;
   onEdit: () => void;
   onDelete: () => void;
   onClose: () => void;
+  isFavorite: boolean;
+  onToggleFavorite: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { plaintext, item } = entry;
@@ -416,6 +436,15 @@ function DetailPane({
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{TYPE_LABELS[item.itemType].slice(0, -1)}</p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={onToggleFavorite}
+            title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+            className={`p-1.5 rounded-lg transition-colors ${isFavorite ? "text-amber-500 hover:text-amber-600" : "text-gray-300 dark:text-gray-600 hover:text-amber-400"}`}
+          >
+            <svg className="w-4 h-4" fill={isFavorite ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+          </button>
           <button
             onClick={onEdit}
             className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
@@ -492,6 +521,14 @@ function Toast({ message }: { message: string }) {
 }
 
 export default function VaultPage() {
+  return (
+    <Suspense>
+      <VaultPageInner />
+    </Suspense>
+  );
+}
+
+function VaultPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const {
@@ -508,6 +545,8 @@ export default function VaultPage() {
     markDeleted,
     setLoading,
     lock,
+    toggleFavorite,
+    favorites,
   } = useNopassStore();
 
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
@@ -730,7 +769,8 @@ export default function VaultPage() {
 
   const activeItems = items.filter((i) => i.deletedAt === null);
   const filteredItems = activeItems.filter((item) => {
-    if (filter !== "all" && item.itemType !== filter) return false;
+    if (filter === "favorites" && !favorites.has(item.id)) return false;
+    if (filter !== "all" && filter !== "favorites" && item.itemType !== filter) return false;
     if (search) {
       const plain = decrypted.get(item.id);
       if (!plain) return false;
@@ -783,9 +823,18 @@ export default function VaultPage() {
 
         {sidebarTab === "vault" ? (
           <nav className="flex-1 overflow-y-auto p-2">
-            {(["all", "login", "note", "card", "identity", "ssh_key"] as Filter[]).map((f) => {
-              const count = f === "all" ? activeItems.length : activeItems.filter((i) => i.itemType === f).length;
+            {(["all", "favorites", "login", "note", "card", "identity", "ssh_key"] as Filter[]).map((f) => {
+              const count =
+                f === "all"
+                  ? activeItems.length
+                  : f === "favorites"
+                    ? activeItems.filter((i) => favorites.has(i.id)).length
+                    : activeItems.filter((i) => i.itemType === f).length;
               const isActive = filter === f;
+              const label =
+                f === "all" ? "All items" :
+                f === "favorites" ? "Favorites" :
+                TYPE_LABELS[f as VaultItemType];
               return (
                 <button
                   key={f}
@@ -796,7 +845,14 @@ export default function VaultPage() {
                       : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white"
                   }`}
                 >
-                  <span>{f === "all" ? "All items" : TYPE_LABELS[f]}</span>
+                  <span className="flex items-center gap-2">
+                    {f === "favorites" && (
+                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                      </svg>
+                    )}
+                    {label}
+                  </span>
                   <span className={`text-xs tabular-nums ${isActive ? "text-blue-500 dark:text-blue-400" : "text-gray-400 dark:text-gray-500"}`}>
                     {count}
                   </span>
@@ -1058,6 +1114,8 @@ export default function VaultPage() {
           }
           onDelete={() => handleDelete(selectedEntry.item.id)}
           onClose={() => setSelectedId(null)}
+          isFavorite={favorites.has(selectedEntry.item.id)}
+          onToggleFavorite={() => toggleFavorite(selectedEntry.item.id)}
         />
       )}
 

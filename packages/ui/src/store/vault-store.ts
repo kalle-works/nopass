@@ -42,6 +42,29 @@ interface VaultState {
   items: EncryptedVaultItem[];
   isLoading: boolean;
   lastSyncAt: string | null;
+  /** Item IDs marked as favorite — stored locally, not synced */
+  favorites: Set<string>;
+}
+
+const FAVORITES_STORAGE_KEY = "nopass:favorites";
+
+function loadFavorites(): Set<string> {
+  if (typeof localStorage === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveFavorites(ids: Set<string>): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    // storage unavailable
+  }
 }
 
 interface NopassStore extends AuthState, CryptoState, VaultState {
@@ -57,6 +80,10 @@ interface NopassStore extends AuthState, CryptoState, VaultState {
   setLoading: (loading: boolean) => void;
   setLastSyncAt: (ts: string) => void;
   setDefaultVaultId: (id: string) => void;
+
+  // Favorites
+  toggleFavorite: (itemId: string) => void;
+  isFavorite: (itemId: string) => boolean;
 
   // Derived helpers
   isUnlocked: () => boolean;
@@ -83,6 +110,7 @@ export const useNopassStore = create<NopassStore>((set, get) => ({
   items: [],
   isLoading: false,
   lastSyncAt: null,
+  favorites: loadFavorites(),
 
   setSession: (auth, email, keys) =>
     set({
@@ -128,6 +156,20 @@ export const useNopassStore = create<NopassStore>((set, get) => ({
   setLoading: (isLoading) => set({ isLoading }),
   setLastSyncAt: (lastSyncAt) => set({ lastSyncAt }),
   setDefaultVaultId: (defaultVaultId) => set({ defaultVaultId }),
+
+  toggleFavorite: (itemId) =>
+    set((state) => {
+      const next = new Set(state.favorites);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      saveFavorites(next);
+      return { favorites: next };
+    }),
+
+  isFavorite: (itemId) => get().favorites.has(itemId),
 
   isUnlocked: () => get().vaultEncKey !== null,
   activeItems: () => get().items.filter((i) => i.deletedAt === null),
