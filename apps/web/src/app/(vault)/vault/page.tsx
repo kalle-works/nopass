@@ -775,7 +775,6 @@ function VaultPageInner() {
   if (!isUnlocked()) return null;
 
   const userInitial = userEmail ? userEmail.charAt(0).toUpperCase() : "?";
-  const displayEmail = userEmail;
 
   return (
     <div className="flex h-screen bg-[#070706]">

@@ -33,27 +33,33 @@ export function CardEditor({ initial, onSave, onCancel, saving }: CardEditorProp
         <input type="text" value={cardholderName} onChange={(e) => setCardholderName(e.target.value)} autoComplete="cc-name" className={input} />
       </Field>
       <Field label="Card number">
-        <input type="text" value={number} onChange={(e) => setNumber(e.target.value)} autoComplete="off" maxLength={19} className={input} />
+        <input type="text" value={number} onChange={(e) => setNumber(e.target.value)} autoComplete="off" maxLength={19} className={`${input} font-mono`} />
       </Field>
       <div className="flex gap-3">
         <Field label="Expiry month">
-          <input type="text" value={expMonth} onChange={(e) => setExpMonth(e.target.value)} placeholder="MM" maxLength={2} className={input} />
+          <input type="text" value={expMonth} onChange={(e) => setExpMonth(e.target.value)} placeholder="MM" maxLength={2} className={`${input} font-mono`} />
         </Field>
         <Field label="Expiry year">
-          <input type="text" value={expYear} onChange={(e) => setExpYear(e.target.value)} placeholder="YYYY" maxLength={4} className={input} />
+          <input type="text" value={expYear} onChange={(e) => setExpYear(e.target.value)} placeholder="YYYY" maxLength={4} className={`${input} font-mono`} />
         </Field>
         <Field label="CVV">
           <div className="flex gap-1">
-            <input type={showCvv ? "text" : "password"} value={cvv} onChange={(e) => setCvv(e.target.value)} autoComplete="off" maxLength={4} className={`${input} flex-1`} />
-            <button type="button" onClick={() => setShowCvv((s) => !s)} className="px-2 text-xs text-gray-500 border border-gray-300 dark:border-gray-600 rounded-lg">
+            <input type={showCvv ? "text" : "password"} value={cvv} onChange={(e) => setCvv(e.target.value)} autoComplete="off" maxLength={4} className={`${input} flex-1 font-mono`} />
+            <button
+              type="button"
+              onClick={() => setShowCvv((s) => !s)}
+              className="px-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:text-[#F4F1E8] hover:border-[#9C988D] transition-colors"
+            >
               {showCvv ? "Hide" : "Show"}
             </button>
           </div>
         </Field>
       </div>
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">Cancel</button>
-        <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-medium">
+      <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
+        <button type="button" onClick={onCancel} className="px-4 py-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors">
+          Cancel
+        </button>
+        <button type="submit" disabled={saving} className="px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] disabled:opacity-50 text-[#070706] transition-colors">
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
@@ -61,13 +67,14 @@ export function CardEditor({ initial, onSave, onCancel, saving }: CardEditorProp
   );
 }
 
-const input = "w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+const input =
+  "w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D]/60 focus:outline-none focus:border-[#D6FF3F] transition-colors";
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div className="flex-1">
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      <label className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-1.5">
+        {label}{required && <span className="text-[#E8321A] ml-0.5"> *</span>}
       </label>
       {children}
     </div>
