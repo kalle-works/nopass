@@ -28,77 +28,49 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
   ssh_key: "SSH Keys",
 };
 
-const TYPE_COLORS: Record<VaultItemType, string> = {
-  login: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
-  note: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-  card: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
-  identity: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300",
-  ssh_key: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
-};
-
-const AVATAR_COLORS = [
-  "bg-blue-500",
-  "bg-violet-500",
-  "bg-emerald-500",
-  "bg-amber-500",
-  "bg-rose-500",
-  "bg-cyan-500",
-  "bg-pink-500",
-  "bg-indigo-500",
-];
-
-function getAvatarColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]!;
-}
-
 interface DecryptedEntry {
   item: EncryptedVaultItem;
   plaintext: VaultItemPlaintext;
 }
 
-function ItemAvatar({ name, type }: { name: string; type: VaultItemType }) {
-  const initial = name.trim().charAt(0).toUpperCase() || "?";
-  const color = getAvatarColor(name);
+function ItemAvatar({ type }: { name: string; type: VaultItemType }) {
   const icons: Record<VaultItemType, React.ReactNode> = {
     login: (
-      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-        <rect x="3" y="11" width="18" height="11" rx="2" />
+      <svg className="w-4 h-4 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+        <rect x="3" y="11" width="18" height="11" />
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
       </svg>
     ),
     note: (
-      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+      <svg className="w-4 h-4 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
         <polyline points="14 2 14 8 20 8" />
         <line x1="16" y1="13" x2="8" y2="13" />
         <line x1="16" y1="17" x2="8" y2="17" />
-        <polyline points="10 9 9 9 8 9" />
       </svg>
     ),
     card: (
-      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+      <svg className="w-4 h-4 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+        <rect x="1" y="4" width="22" height="16" />
         <line x1="1" y1="10" x2="23" y2="10" />
       </svg>
     ),
     identity: (
-      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+      <svg className="w-4 h-4 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
         <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
         <circle cx="12" cy="7" r="4" />
       </svg>
     ),
     ssh_key: (
-      <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+      <svg className="w-4 h-4 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
         <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
       </svg>
     ),
   };
 
   return (
-    <div className={`w-9 h-9 rounded-xl ${color} flex items-center justify-center shrink-0 shadow-sm`}>
-      {icons[type] ?? <span className="text-sm font-bold text-white">{initial}</span>}
+    <div className="w-9 h-9 bg-[#181713] border border-[#2B2923] flex items-center justify-center shrink-0">
+      {icons[type]}
     </div>
   );
 }
@@ -120,10 +92,10 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
     <button
       onClick={handleCopy}
       title={copied ? "Copied!" : label}
-      className={`p-1.5 rounded-md transition-all ${
+      className={`p-1.5 transition-all ${
         copied
-          ? "text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-900/30"
-          : "text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700"
+          ? "text-[#7CFF6B] bg-[#7CFF6B]/10"
+          : "text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#2B2923]"
       }`}
     >
       {copied ? (
@@ -131,8 +103,8 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
           <polyline points="20 6 9 17 4 12" />
         </svg>
       ) : (
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+          <rect x="9" y="9" width="13" height="13" />
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
       )}
@@ -144,22 +116,22 @@ function SecretField({ value }: { value: string }) {
   const [visible, setVisible] = useState(false);
   return (
     <div className="flex items-center gap-1">
-      <span className="flex-1 font-mono text-sm text-gray-800 dark:text-gray-200 break-all">
+      <span className="flex-1 font-mono text-sm text-[#F4F1E8] break-all">
         {visible ? value : "•".repeat(Math.min(value.length, 20))}
       </span>
       <button
         onClick={() => setVisible((v) => !v)}
-        className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded transition-colors"
+        className="p-1 text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
         title={visible ? "Hide" : "Reveal"}
       >
         {visible ? (
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
             <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
             <line x1="1" y1="1" x2="23" y2="23" />
           </svg>
         ) : (
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
@@ -173,7 +145,7 @@ function SecretField({ value }: { value: string }) {
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">{label}</p>
+      <p className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mb-1.5">{label}</p>
       {children}
     </div>
   );
@@ -192,7 +164,6 @@ function TotpCode({ uri }: { uri: string }) {
     }
 
     tick();
-    // Align subsequent ticks to wall-clock second boundaries to avoid drift
     const delay = 1000 - (Date.now() % 1000);
     const timeoutId = setTimeout(() => {
       tick();
@@ -217,11 +188,11 @@ function TotpCode({ uri }: { uri: string }) {
 
   return (
     <div className="flex items-center gap-2">
-      <span className={`font-mono text-xl font-bold tracking-widest ${urgent ? "text-red-500 dark:text-red-400" : "text-gray-900 dark:text-white"}`}>
+      <span className={`font-mono text-xl font-bold tracking-widest ${urgent ? "text-[#E8321A]" : "text-[#F4F1E8]"}`}>
         {code.slice(0, 3)} {code.slice(3)}
       </span>
       <svg width="24" height="24" viewBox="0 0 24 24" className="shrink-0">
-        <circle cx="12" cy="12" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-200 dark:text-gray-700" />
+        <circle cx="12" cy="12" r={radius} fill="none" stroke="currentColor" strokeWidth="2" className="text-[#2B2923]" />
         <circle
           cx="12"
           cy="12"
@@ -233,9 +204,9 @@ function TotpCode({ uri }: { uri: string }) {
           strokeDashoffset={dashOffset}
           strokeLinecap="round"
           transform="rotate(-90 12 12)"
-          className={`transition-[stroke-dashoffset] ${urgent ? "text-red-500 dark:text-red-400" : "text-blue-500 dark:text-blue-400"}`}
+          className={`transition-[stroke-dashoffset] ${urgent ? "text-[#E8321A]" : "text-[#D6FF3F]"}`}
         />
-        <text x="12" y="16" textAnchor="middle" className="fill-current text-gray-500 dark:text-gray-400" style={{ fontSize: "7px" }}>
+        <text x="12" y="16" textAnchor="middle" fill="#9C988D" style={{ fontSize: "7px" }}>
           {remainingSeconds}s
         </text>
       </svg>
@@ -250,7 +221,7 @@ function LoginDetail({ login }: { login: LoginItem }) {
       {login.username && (
         <DetailField label="Username / Email">
           <div className="flex items-center gap-1">
-            <span className="text-sm text-gray-800 dark:text-gray-200 break-all flex-1">{login.username}</span>
+            <span className="text-sm text-[#F4F1E8] break-all flex-1">{login.username}</span>
             <CopyButton text={login.username} label="Copy username" />
           </div>
         </DetailField>
@@ -273,7 +244,7 @@ function LoginDetail({ login }: { login: LoginItem }) {
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-blue-600 dark:text-blue-400 hover:underline break-all block"
+              className="text-sm text-[#D6FF3F] hover:underline break-all block"
             >
               {url}
             </a>
@@ -288,7 +259,7 @@ function LoginDetail({ login }: { login: LoginItem }) {
                 <SecretField value={field.value} />
               ) : (
                 <div className="flex items-center gap-1">
-                  <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 break-all">{field.value}</span>
+                  <span className="text-sm text-[#F4F1E8] flex-1 break-all">{field.value}</span>
                   <CopyButton text={field.value} label={`Copy ${field.name}`} />
                 </div>
               )}
@@ -298,7 +269,7 @@ function LoginDetail({ login }: { login: LoginItem }) {
       )}
       {login.notes && (
         <DetailField label="Notes">
-          <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">{login.notes}</p>
+          <p className="text-sm text-[#9C988D] whitespace-pre-wrap break-words">{login.notes}</p>
         </DetailField>
       )}
     </>
@@ -308,7 +279,7 @@ function LoginDetail({ login }: { login: LoginItem }) {
 function NoteDetail({ note }: { note: NoteItem }) {
   return (
     <DetailField label="Content">
-      <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
+      <p className="text-sm text-[#F4F1E8] whitespace-pre-wrap break-words leading-relaxed">
         {note.content}
       </p>
     </DetailField>
@@ -320,7 +291,7 @@ function CardDetail({ card }: { card: CardItem }) {
     <>
       {card.cardholderName && (
         <DetailField label="Cardholder">
-          <span className="text-sm text-gray-800 dark:text-gray-200">{card.cardholderName}</span>
+          <span className="text-sm text-[#F4F1E8]">{card.cardholderName}</span>
         </DetailField>
       )}
       {card.number && (
@@ -330,7 +301,7 @@ function CardDetail({ card }: { card: CardItem }) {
       )}
       {(card.expMonth || card.expYear) && (
         <DetailField label="Expiry">
-          <span className="text-sm text-gray-800 dark:text-gray-200">
+          <span className="text-sm text-[#F4F1E8]">
             {card.expMonth}/{card.expYear}
           </span>
         </DetailField>
@@ -361,7 +332,7 @@ function IdentityDetail({ identity }: { identity: IdentityItem }) {
         .map(([label, value]) => (
           <DetailField key={label} label={label}>
             <div className="flex items-center gap-1">
-              <span className="text-sm text-gray-800 dark:text-gray-200 flex-1">{value}</span>
+              <span className="text-sm text-[#F4F1E8] flex-1">{value}</span>
               <CopyButton text={value!} label={`Copy ${label.toLowerCase()}`} />
             </div>
           </DetailField>
@@ -376,7 +347,7 @@ function SshKeyDetail({ sshKey }: { sshKey: SshKeyItem }) {
       {sshKey.publicKey && (
         <DetailField label="Public key">
           <div className="flex items-start gap-1">
-            <span className="flex-1 font-mono text-xs text-gray-800 dark:text-gray-200 break-all leading-relaxed">
+            <span className="flex-1 font-mono text-xs text-[#F4F1E8] break-all leading-relaxed">
               {sshKey.publicKey}
             </span>
             <CopyButton text={sshKey.publicKey} label="Copy public key" />
@@ -394,14 +365,14 @@ function SshKeyDetail({ sshKey }: { sshKey: SshKeyItem }) {
       {sshKey.comment && (
         <DetailField label="Comment">
           <div className="flex items-center gap-1">
-            <span className="text-sm text-gray-800 dark:text-gray-200 flex-1 font-mono">{sshKey.comment}</span>
+            <span className="text-sm text-[#F4F1E8] flex-1 font-mono">{sshKey.comment}</span>
             <CopyButton text={sshKey.comment} label="Copy comment" />
           </div>
         </DetailField>
       )}
       {sshKey.notes && (
         <DetailField label="Notes">
-          <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">{sshKey.notes}</p>
+          <p className="text-sm text-[#9C988D] whitespace-pre-wrap break-words">{sshKey.notes}</p>
         </DetailField>
       )}
     </>
@@ -427,33 +398,35 @@ function DetailPane({
   const { plaintext, item } = entry;
 
   return (
-    <aside className="w-96 flex flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0 animate-slide-in-right">
+    <aside className="w-96 flex flex-col border-l border-[#2B2923] bg-[#11110F] shrink-0 animate-slide-in-right">
       {/* Header */}
-      <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-start gap-3 px-5 py-4 border-b border-[#2B2923]">
         <ItemAvatar name={plaintext.name} type={item.itemType} />
         <div className="flex-1 min-w-0 pt-0.5">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-white truncate">{plaintext.name}</h2>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{TYPE_LABELS[item.itemType].slice(0, -1)}</p>
+          <h2 className="text-sm font-semibold text-[#F4F1E8] truncate">{plaintext.name}</h2>
+          <p className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mt-0.5">
+            {TYPE_LABELS[item.itemType].slice(0, -1)}
+          </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={onToggleFavorite}
             title={isFavorite ? "Remove from favorites" : "Add to favorites"}
-            className={`p-1.5 rounded-lg transition-colors ${isFavorite ? "text-amber-500 hover:text-amber-600" : "text-gray-300 dark:text-gray-600 hover:text-amber-400"}`}
+            className={`p-1.5 transition-colors ${isFavorite ? "text-[#D6FF3F] hover:text-[#C4EE30]" : "text-[#2B2923] hover:text-[#D6FF3F]"}`}
           >
-            <svg className="w-4 h-4" fill={isFavorite ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+            <svg className="w-4 h-4" fill={isFavorite ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
               <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
             </svg>
           </button>
           <button
             onClick={onEdit}
-            className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
+            className="px-3 py-1.5 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] border border-[#2B2923] hover:border-[#9C988D] transition-colors"
           >
             Edit
           </button>
           <button
             onClick={onClose}
-            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] transition-colors"
             title="Close"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -472,28 +445,28 @@ function DetailPane({
         {plaintext.type === "identity" && <IdentityDetail identity={plaintext as IdentityItem} />}
         {plaintext.type === "ssh_key" && <SshKeyDetail sshKey={plaintext as SshKeyItem} />}
 
-        <div className="text-[11px] text-gray-300 dark:text-gray-600 pt-2 border-t border-gray-100 dark:border-gray-700">
+        <div className="font-mono text-[10px] text-[#9C988D]/40 pt-2 border-t border-[#2B2923]">
           <p>ID {item.id.slice(0, 8)}… · v{item.version}</p>
         </div>
       </div>
 
       {/* Delete */}
-      <div className="p-4 border-t border-gray-100 dark:border-gray-700">
+      <div className="p-4 border-t border-[#2B2923]">
         {confirmDelete ? (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
-            <p className="text-xs text-red-700 dark:text-red-400 mb-3 font-medium">
+          <div className="bg-[#E8321A]/10 border border-[#E8321A]/30 p-3">
+            <p className="font-mono text-xs text-[#E8321A] mb-3">
               Delete this item permanently?
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="flex-1 py-1.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                className="flex-1 py-1.5 font-mono text-xs text-[#9C988D] hover:bg-[#2B2923] hover:text-[#F4F1E8] transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={onDelete}
-                className="flex-1 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
+                className="flex-1 py-1.5 font-mono text-xs font-medium text-white bg-[#E8321A] hover:bg-[#D42D18] transition-colors"
               >
                 Delete
               </button>
@@ -502,7 +475,7 @@ function DetailPane({
         ) : (
           <button
             onClick={() => setConfirmDelete(true)}
-            className="w-full py-1.5 text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+            className="w-full py-1.5 font-mono text-xs text-[#E8321A]/60 hover:text-[#E8321A] hover:bg-[#E8321A]/10 transition-colors"
           >
             Delete item
           </button>
@@ -514,7 +487,7 @@ function DetailPane({
 
 function Toast({ message }: { message: string }) {
   return (
-    <div className="fixed bottom-6 left-1/2 z-50 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm rounded-full shadow-lg animate-toast pointer-events-none">
+    <div className="fixed bottom-6 left-1/2 z-50 px-4 py-2 bg-[#F4F1E8] text-[#070706] font-mono text-xs animate-toast pointer-events-none">
       {message}
     </div>
   );
@@ -586,7 +559,6 @@ function VaultPageInner() {
     if (ok) showToast(successMessage);
   }
 
-  // Deep-link: /vault?item=ID (e.g. from health page)
   useEffect(() => {
     const itemId = searchParams.get("item");
     if (itemId) {
@@ -596,13 +568,11 @@ function VaultPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Autofocus search on mount
   useEffect(() => {
     const timer = setTimeout(() => searchRef.current?.focus(), 50);
     return () => clearTimeout(timer);
   }, []);
 
-  // Close type picker on outside click
   useEffect(() => {
     if (!typePicker) return;
     function handleClick(e: MouseEvent) {
@@ -614,7 +584,6 @@ function VaultPageInner() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [typePicker]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement).tagName;
@@ -640,7 +609,6 @@ function VaultPageInner() {
           setTypePicker(true);
           return;
         }
-        // Quick-copy shortcuts when a login item is selected
         if (selectedEntry?.plaintext.type === "login") {
           const login = selectedEntry.plaintext as LoginItem;
           if (e.key === "c" && login.password) {
@@ -665,7 +633,6 @@ function VaultPageInner() {
     if (!isUnlocked()) router.replace("/login");
   }, [isUnlocked, router]);
 
-  // Idle auto-lock: lock vault after 15 minutes of no user activity
   useEffect(() => {
     if (!isUnlocked()) return;
     const IDLE_MS = 15 * 60 * 1000;
@@ -808,34 +775,27 @@ function VaultPageInner() {
   if (!isUnlocked()) return null;
 
   const userInitial = userEmail ? userEmail.charAt(0).toUpperCase() : "?";
+  const displayEmail = userEmail;
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="flex h-screen bg-[#070706]">
       {/* Sidebar */}
-      <aside className="w-56 flex flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0">
+      <aside className="w-56 flex flex-col border-r border-[#2B2923] bg-[#11110F] shrink-0">
         {/* Logo */}
-        <div className="px-4 py-4 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-              <svg className="w-[14px] h-[14px] text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="11" width="18" height="11" rx="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-            </div>
-            <span className="font-semibold text-sm text-gray-900 dark:text-white tracking-tight">nopwd</span>
-          </div>
+        <div className="px-4 py-4 border-b border-[#2B2923]">
+          <span className="font-mono text-sm font-semibold text-[#F4F1E8] tracking-tight">nopwd</span>
         </div>
 
         {/* Tab switcher */}
-        <div className="flex border-b border-gray-200 dark:border-gray-700 shrink-0">
+        <div className="flex border-b border-[#2B2923] shrink-0">
           {(["vault", "teams"] as SidebarTab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setSidebarTab(tab)}
-              className={`flex-1 py-2 text-xs font-medium transition-colors ${
+              className={`flex-1 py-2 font-mono text-xs transition-colors ${
                 sidebarTab === tab
-                  ? "text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400"
-                  : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                  ? "text-[#D6FF3F] border-b border-[#D6FF3F]"
+                  : "text-[#9C988D] hover:text-[#F4F1E8]"
               }`}
             >
               {tab === "vault" ? "Vault" : "Teams"}
@@ -861,21 +821,21 @@ function VaultPageInner() {
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between mb-0.5 ${
+                  className={`w-full text-left px-3 py-2 font-mono text-xs transition-colors flex items-center justify-between mb-0.5 ${
                     isActive
-                      ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium"
-                      : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white"
+                      ? "text-[#D6FF3F] bg-[#D6FF3F]/10"
+                      : "text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713]"
                   }`}
                 >
                   <span className="flex items-center gap-2">
                     {f === "favorites" && (
-                      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                       </svg>
                     )}
                     {label}
                   </span>
-                  <span className={`text-xs tabular-nums ${isActive ? "text-blue-500 dark:text-blue-400" : "text-gray-400 dark:text-gray-500"}`}>
+                  <span className={`tabular-nums ${isActive ? "text-[#D6FF3F]" : "text-[#9C988D]/60"}`}>
                     {count}
                   </span>
                 </button>
@@ -891,21 +851,21 @@ function VaultPageInner() {
         )}
 
         {/* User info + lock */}
-        <div className="p-3 border-t border-gray-200 dark:border-gray-700">
+        <div className="p-3 border-t border-[#2B2923]">
           <div className="flex items-center gap-2.5 mb-2">
-            <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center shrink-0">
-              <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">{userInitial}</span>
+            <div className="w-7 h-7 bg-[#2B2923] flex items-center justify-center shrink-0">
+              <span className="font-mono text-xs font-semibold text-[#9C988D]">{userInitial}</span>
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 truncate flex-1" title={userEmail ?? ""}>
+            <p className="text-xs text-[#9C988D] truncate flex-1" title={userEmail ?? ""}>
               {userEmail}
             </p>
           </div>
           <button
             onClick={handleLock}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg transition-colors"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 font-mono text-xs text-[#9C988D] hover:bg-[#181713] hover:text-[#F4F1E8] transition-colors"
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-              <rect x="3" y="11" width="18" height="11" rx="2" />
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+              <rect x="3" y="11" width="18" height="11" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
             Lock vault
@@ -916,9 +876,9 @@ function VaultPageInner() {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <header className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <header className="flex items-center gap-3 px-5 py-3 border-b border-[#2B2923] bg-[#11110F]">
           <div className="relative flex-1 max-w-sm">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" />
               <path d="M21 21l-4.35-4.35" />
             </svg>
@@ -928,37 +888,37 @@ function VaultPageInner() {
               placeholder="Search…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              className="w-full pl-9 pr-3 py-2 text-sm border border-[#2B2923] bg-[#070706] text-[#F4F1E8] placeholder:text-[#9C988D]/60 focus:outline-none focus:border-[#D6FF3F] transition-colors"
             />
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs text-gray-400 dark:text-gray-500 hidden sm:block">
-              <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-gray-400 dark:text-gray-500 font-mono">⌘K</kbd>
+            <span className="font-mono text-xs text-[#9C988D]/60 hidden sm:block">
+              <kbd className="px-1.5 py-0.5 bg-[#2B2923] text-[#9C988D] font-mono">⌘K</kbd>
             </span>
             <button
               onClick={() => router.push("/vault/health")}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg font-medium transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 font-mono text-xs text-[#9C988D] hover:bg-[#181713] hover:text-[#F4F1E8] transition-colors"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
               </svg>
               Security
             </button>
             <button
               onClick={() => router.push("/vault/devices")}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg font-medium transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 font-mono text-xs text-[#9C988D] hover:bg-[#181713] hover:text-[#F4F1E8] transition-colors"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-                <rect x="2" y="3" width="20" height="14" rx="2" />
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                <rect x="2" y="3" width="20" height="14" />
                 <path d="M8 21h8M12 17v4" />
               </svg>
               Devices
             </button>
             <button
               onClick={() => router.push("/vault/import")}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg font-medium transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 font-mono text-xs text-[#9C988D] hover:bg-[#181713] hover:text-[#F4F1E8] transition-colors"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
               Import
@@ -967,7 +927,7 @@ function VaultPageInner() {
               <button
                 data-testid="new-item-btn"
                 onClick={() => setTypePicker((v) => !v)}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                className="flex items-center gap-1.5 px-3.5 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] transition-colors"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
                   <line x1="12" y1="5" x2="12" y2="19" />
@@ -978,7 +938,7 @@ function VaultPageInner() {
               {typePicker && (
                 <div
                   data-testid="type-picker"
-                  className="absolute right-0 top-full mt-1.5 z-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg py-1.5 min-w-[140px]"
+                  className="absolute right-0 top-full mt-1 z-40 bg-[#11110F] border border-[#2B2923] py-1 min-w-[140px]"
                 >
                   {(["Login", "Note", "Card", "Identity", "SSH Key"] as const).map((label) => (
                     <button
@@ -992,7 +952,7 @@ function VaultPageInner() {
                         setTypePicker(false);
                         setSelectedId(null);
                       }}
-                      className="w-full text-left px-3.5 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      className="w-full text-left px-3.5 py-2 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] transition-colors"
                     >
                       {label}
                     </button>
@@ -1006,14 +966,14 @@ function VaultPageInner() {
         {/* Item list */}
         <main className="flex-1 overflow-y-auto p-5">
           {error && (
-            <div className="mb-4 flex items-center gap-2.5 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+            <div className="mb-4 flex items-center gap-2.5 p-3 bg-[#E8321A]/10 border border-[#E8321A]/30 text-sm text-[#E8321A]">
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="10" />
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               {error}
-              <button onClick={() => setError(null)} className="ml-auto text-gray-400 hover:text-gray-600">
+              <button onClick={() => setError(null)} className="ml-auto text-[#9C988D] hover:text-[#F4F1E8]">
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
@@ -1022,36 +982,36 @@ function VaultPageInner() {
           )}
 
           {isLoading ? (
-            <div className="space-y-1.5 max-w-2xl">
+            <div className="space-y-px max-w-2xl">
               {[...Array(5)].map((_, i) => (
-                <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 animate-pulse">
-                  <div className="w-9 h-9 rounded-xl bg-gray-200 dark:bg-gray-700 shrink-0" />
+                <div key={i} className="flex items-center gap-3 p-3 bg-[#11110F] border border-[#2B2923] animate-pulse">
+                  <div className="w-9 h-9 bg-[#2B2923] shrink-0" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-28" />
-                    <div className="h-2.5 bg-gray-100 dark:bg-gray-700/50 rounded w-44" />
+                    <div className="h-3 bg-[#2B2923] w-28" />
+                    <div className="h-2.5 bg-[#181713] w-44" />
                   </div>
                 </div>
               ))}
             </div>
           ) : filteredItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
-                <svg className="w-7 h-7 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="3" y="11" width="18" height="11" rx="2" />
+              <div className="w-14 h-14 bg-[#11110F] border border-[#2B2923] flex items-center justify-center mb-4">
+                <svg className="w-7 h-7 text-[#2B2923]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="3" y="11" width="18" height="11" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
+              <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest">
                 {search ? "No matching items" : "Your vault is empty"}
               </p>
               {!search && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                  Press <kbd className="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-[11px] font-mono">N</kbd> or click New item to get started
+                <p className="text-xs text-[#9C988D]/60 mt-2">
+                  Press <kbd className="px-1 py-0.5 bg-[#2B2923] font-mono text-[#9C988D]">N</kbd> or click New item to get started
                 </p>
               )}
             </div>
           ) : (
-            <div className="max-w-2xl space-y-0.5">
+            <div className="max-w-2xl space-y-px">
               {filteredItems.map((item) => {
                 const plain = decrypted.get(item.id);
                 const name = plain?.name ?? "…";
@@ -1070,36 +1030,36 @@ function VaultPageInner() {
                   <div key={item.id} className="group relative flex items-center">
                     <button
                       onClick={() => setSelectedId(isSelected ? null : item.id)}
-                      className={`flex-1 flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${
+                      className={`flex-1 flex items-center gap-3 px-3 py-2.5 text-left transition-all ${
                         isSelected
-                          ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
-                          : "hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
+                          ? "bg-[#181713] border-l-2 border-l-[#D6FF3F] border-y border-r border-[#2B2923]"
+                          : "hover:bg-[#11110F] border-l-2 border-l-transparent border-y border-r border-transparent hover:border-[#2B2923]"
                       }`}
                     >
                       <ItemAvatar name={name} type={item.itemType} />
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium truncate ${isSelected ? "text-blue-700 dark:text-blue-300" : "text-gray-900 dark:text-white"}`}>
+                        <p className={`text-sm font-medium truncate ${isSelected ? "text-[#D6FF3F]" : "text-[#F4F1E8]"}`}>
                           {name}
                         </p>
                         {subtitle && (
-                          <p className="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5">{subtitle}</p>
+                          <p className="text-xs text-[#9C988D] truncate mt-0.5">{subtitle}</p>
                         )}
                       </div>
-                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 transition-opacity ${TYPE_COLORS[item.itemType]} ${loginPlain ? "group-hover:opacity-0" : ""}`}>
+                      <span className={`font-mono text-[10px] text-[#9C988D] uppercase tracking-widest shrink-0 transition-opacity ${loginPlain ? "group-hover:opacity-0" : ""}`}>
                         {TYPE_LABELS[item.itemType].slice(0, -1)}
                       </span>
                     </button>
 
-                    {/* Quick-copy actions for login items — visible on hover */}
+                    {/* Quick-copy actions for login items */}
                     {loginPlain && (
                       <div className="absolute right-3 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                         {loginPlain.username && (
                           <button
                             onClick={() => copyToClipboard(loginPlain.username!, "Username copied")}
                             title="Copy username (U)"
-                            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+                            className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#2B2923] transition-colors"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                               <circle cx="12" cy="7" r="4" />
                             </svg>
@@ -1109,10 +1069,10 @@ function VaultPageInner() {
                           <button
                             onClick={() => copyToClipboard(loginPlain.password!, "Password copied")}
                             title="Copy password (C)"
-                            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+                            className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#2B2923] transition-colors"
                           >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                              <rect x="9" y="9" width="13" height="13" />
                               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                             </svg>
                           </button>
@@ -1125,12 +1085,12 @@ function VaultPageInner() {
             </div>
           )}
 
-          {/* Keyboard shortcut hint — shown only when a login is selected */}
+          {/* Keyboard shortcut hint */}
           {selectedEntry?.plaintext.type === "login" && (
-            <div className="mt-4 max-w-2xl flex items-center gap-3 text-[11px] text-gray-300 dark:text-gray-600">
-              <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded font-mono text-gray-400">C</kbd>
+            <div className="mt-4 max-w-2xl flex items-center gap-3 font-mono text-[10px] text-[#9C988D]/40">
+              <kbd className="px-1.5 py-0.5 bg-[#2B2923] text-[#9C988D]">C</kbd>
               <span>copy password</span>
-              <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded font-mono text-gray-400">U</kbd>
+              <kbd className="px-1.5 py-0.5 bg-[#2B2923] text-[#9C988D]">U</kbd>
               <span>copy username</span>
             </div>
           )}
@@ -1154,19 +1114,19 @@ function VaultPageInner() {
       {/* Item editor modal */}
       {modal && (
         <div
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
           onClick={(e) => { if (e.target === e.currentTarget) setModal(null); }}
         >
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+          <div className="bg-[#11110F] border border-[#2B2923] w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#2B2923]">
+              <h2 className="font-mono text-sm font-semibold text-[#F4F1E8]">
                 {modal.mode === "create"
                   ? `New ${TYPE_LABELS[modal.itemType].slice(0, -1)}`
                   : `Edit ${TYPE_LABELS[modal.entry.plaintext.type as VaultItemType].slice(0, -1)}`}
               </h2>
               <button
                 onClick={() => setModal(null)}
-                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+                className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18" />
