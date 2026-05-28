@@ -21,14 +21,14 @@ const PLAN_DESCRIPTIONS: Record<SubscriptionPlan, string> = {
 };
 
 function PlanBadge({ plan }: { plan: SubscriptionPlan }) {
-  const colors: Record<SubscriptionPlan, string> = {
-    free: "bg-white/5 text-white/40 border border-white/10",
-    pro: "bg-blue-500/20 text-blue-300 border border-blue-500/30",
-    teams: "bg-violet-500/20 text-violet-300 border border-violet-500/30",
-    enterprise: "bg-amber-500/20 text-amber-300 border border-amber-500/30",
+  const styles: Record<SubscriptionPlan, string> = {
+    free: "text-[#9C988D] border border-[#2B2923]",
+    pro: "text-[#D6FF3F] border border-[#D6FF3F]/30",
+    teams: "text-[#F4F1E8] border border-[#F4F1E8]/20",
+    enterprise: "text-[#D6FF3F] border border-[#D6FF3F]/30",
   };
   return (
-    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${colors[plan]}`}>
+    <span className={`font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 ${styles[plan]}`}>
       {PLAN_LABELS[plan]}
     </span>
   );
@@ -106,8 +106,8 @@ export default function BillingPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-[#070706] flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-[#2B2923] border-t-[#D6FF3F] animate-spin" />
       </div>
     );
   }
@@ -119,11 +119,11 @@ export default function BillingPage() {
     : null;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-[#070706]">
       <div className="max-w-2xl mx-auto px-6 py-12">
         <button
           onClick={() => router.back()}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 mb-8 transition-colors"
+          className="flex items-center gap-1.5 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] mb-8 transition-colors"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -131,26 +131,26 @@ export default function BillingPage() {
           Back to vault
         </button>
 
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Billing</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">
+        <h1 className="font-mono text-2xl font-bold text-[#F4F1E8] mb-1">Billing</h1>
+        <p className="text-sm text-[#9C988D] mb-8">
           Manage your nopwd subscription
         </p>
 
         {error && (
-          <div className="mb-6 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-400">
+          <div className="mb-6 px-4 py-3 bg-[#E8321A]/10 border border-[#E8321A]/30 text-sm text-[#E8321A]">
             {error}
           </div>
         )}
 
         {/* Current plan */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 mb-6">
+        <div className="bg-[#11110F] border border-[#2B2923] p-6 mb-6">
           <div className="flex items-start justify-between mb-3">
             <div>
-              <p className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1">
+              <p className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mb-1">
                 Current plan
               </p>
               <div className="flex items-center gap-2.5">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                <h2 className="font-mono text-lg font-semibold text-[#F4F1E8]">
                   {PLAN_LABELS[plan]}
                 </h2>
                 <PlanBadge plan={plan} />
@@ -160,50 +160,48 @@ export default function BillingPage() {
               <button
                 onClick={openPortal}
                 disabled={actionLoading}
-                className="text-sm text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+                className="font-mono text-xs text-[#D6FF3F] hover:underline disabled:opacity-50"
               >
                 Manage billing
               </button>
             )}
           </div>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          <p className="text-sm text-[#9C988D] mb-4">
             {PLAN_DESCRIPTIONS[plan]}
           </p>
           {periodEnd && (
-            <p className="text-xs text-gray-400 dark:text-gray-500">
+            <p className="font-mono text-xs text-[#9C988D]/60">
               {status?.status === "canceled" ? "Access until" : "Renews"}: {periodEnd}
             </p>
           )}
         </div>
 
-        {/* Upgrade options — shown when on free plan */}
+        {/* Upgrade options */}
         {plan === "free" && (
           <>
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+            <h3 className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-3">
               Upgrade your plan
             </h3>
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="grid sm:grid-cols-2 gap-px bg-[#2B2923]">
               {/* Pro */}
-              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+              <div className="bg-[#11110F] p-5">
                 <div className="flex items-center gap-2 mb-3">
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white">Pro</span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                  <span className="font-mono text-sm font-semibold text-[#F4F1E8]">Pro</span>
+                  <span className="font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 text-[#D6FF3F] border border-[#D6FF3F]/30">
                     Popular
                   </span>
                 </div>
                 <div className="mb-4">
-                  <span className="text-2xl font-bold text-gray-900 dark:text-white">€4</span>
-                  <span className="text-sm text-gray-400 dark:text-gray-500"> /month</span>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                  <span className="font-mono text-2xl font-bold text-[#F4F1E8]">€4</span>
+                  <span className="text-sm text-[#9C988D]"> /month</span>
+                  <p className="font-mono text-xs text-[#9C988D]/60 mt-0.5">
                     or €36/year (save 25%)
                   </p>
                 </div>
-                <ul className="space-y-1.5 mb-5 text-xs text-gray-500 dark:text-gray-400">
+                <ul className="space-y-1.5 mb-5">
                   {["File attachments (1 GB)", "Hardware key 2FA", "Emergency access", "REST API access"].map((f) => (
-                    <li key={f} className="flex items-center gap-1.5">
-                      <svg className="w-3.5 h-3.5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
+                    <li key={f} className="flex items-center gap-1.5 text-xs text-[#9C988D]">
+                      <span className="font-mono text-[#D6FF3F] shrink-0">✓</span>
                       {f}
                     </li>
                   ))}
@@ -213,7 +211,7 @@ export default function BillingPage() {
                     <button
                       onClick={() => startCheckout(proMonthlyPriceId)}
                       disabled={actionLoading}
-                      className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50"
+                      className="w-full py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] transition-colors disabled:opacity-50"
                     >
                       {actionLoading ? "Loading…" : "Subscribe monthly"}
                     </button>
@@ -222,35 +220,33 @@ export default function BillingPage() {
                     <button
                       onClick={() => startCheckout(proAnnualPriceId)}
                       disabled={actionLoading}
-                      className="w-full py-2 rounded-lg border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 text-sm font-medium hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors disabled:opacity-50"
+                      className="w-full py-2 font-mono text-xs border border-[#2B2923] text-[#9C988D] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors disabled:opacity-50"
                     >
                       {actionLoading ? "Loading…" : "Subscribe yearly — €36"}
                     </button>
                   )}
                   {!proMonthlyPriceId && !proAnnualPriceId && (
-                    <p className="text-xs text-gray-400 text-center">Coming soon</p>
+                    <p className="font-mono text-xs text-[#9C988D]/60 text-center">Coming soon</p>
                   )}
                 </div>
               </div>
 
               {/* Teams */}
-              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+              <div className="bg-[#11110F] p-5">
                 <div className="flex items-center gap-2 mb-3">
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white">Teams</span>
+                  <span className="font-mono text-sm font-semibold text-[#F4F1E8]">Teams</span>
                 </div>
                 <div className="mb-4">
-                  <span className="text-2xl font-bold text-gray-900 dark:text-white">€5</span>
-                  <span className="text-sm text-gray-400 dark:text-gray-500"> /user/month</span>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                  <span className="font-mono text-2xl font-bold text-[#F4F1E8]">€5</span>
+                  <span className="text-sm text-[#9C988D]"> /user/month</span>
+                  <p className="font-mono text-xs text-[#9C988D]/60 mt-0.5">
                     Minimum 3 seats · annual billing
                   </p>
                 </div>
-                <ul className="space-y-1.5 mb-5 text-xs text-gray-500 dark:text-gray-400">
+                <ul className="space-y-1.5 mb-5">
                   {["Everything in Pro", "Unlimited org members", "SSO / SAML", "Audit logs"].map((f) => (
-                    <li key={f} className="flex items-center gap-1.5">
-                      <svg className="w-3.5 h-3.5 text-violet-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
+                    <li key={f} className="flex items-center gap-1.5 text-xs text-[#9C988D]">
+                      <span className="font-mono text-[#9C988D] shrink-0">—</span>
                       {f}
                     </li>
                   ))}
@@ -259,25 +255,25 @@ export default function BillingPage() {
                   <button
                     onClick={() => startCheckout(teamsPriceId)}
                     disabled={actionLoading}
-                    className="w-full py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-500 transition-colors disabled:opacity-50"
+                    className="w-full py-2 font-mono text-xs border border-[#2B2923] text-[#9C988D] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors disabled:opacity-50"
                   >
                     {actionLoading ? "Loading…" : "Start Teams trial"}
                   </button>
                 ) : (
-                  <p className="text-xs text-gray-400 text-center">Coming soon</p>
+                  <p className="font-mono text-xs text-[#9C988D]/60 text-center">Coming soon</p>
                 )}
               </div>
             </div>
           </>
         )}
 
-        {/* Downgrade option for paid plans */}
+        {/* Downgrade option */}
         {plan !== "free" && (
           <div className="mt-6 text-center">
             <button
               onClick={openPortal}
               disabled={actionLoading}
-              className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50 transition-colors"
+              className="font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] disabled:opacity-50 transition-colors"
             >
               Cancel subscription or change plan
             </button>

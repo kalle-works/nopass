@@ -84,11 +84,22 @@ function buildReport(entries: HealthEntry[]): Omit<HealthReport, "breached"> {
   return { weak, reused, noPassword };
 }
 
-function ScoreCard({ label, count, color, description }: { label: string; count: number; color: string; description: string }) {
+function ScoreCard({ label, count, variant, description }: {
+  label: string;
+  count: number;
+  variant: "danger" | "warning" | "neutral" | "ok";
+  description: string;
+}) {
+  const colors = {
+    danger: "border-[#E8321A]/30 bg-[#E8321A]/10 text-[#E8321A]",
+    warning: "border-[#D6FF3F]/30 bg-[#D6FF3F]/10 text-[#D6FF3F]",
+    neutral: "border-[#2B2923] bg-[#11110F] text-[#9C988D]",
+    ok: "border-[#2B2923] bg-[#11110F] text-[#9C988D]",
+  };
   return (
-    <div className={`rounded-xl border p-4 ${color}`}>
-      <div className="text-2xl font-bold tabular-nums">{count}</div>
-      <div className="text-sm font-medium mt-0.5">{label}</div>
+    <div className={`border p-4 ${colors[variant]}`}>
+      <div className="text-2xl font-mono font-bold tabular-nums">{count}</div>
+      <div className="font-mono text-xs uppercase tracking-widest mt-0.5">{label}</div>
       <div className="text-xs mt-1 opacity-70">{description}</div>
     </div>
   );
@@ -98,18 +109,18 @@ function EntryRow({ entry, onClick }: { entry: HealthEntry; onClick: () => void 
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors text-left"
+      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#181713] transition-colors text-left"
     >
-      <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center shrink-0">
-        <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-          <rect x="3" y="11" width="18" height="11" rx="2" />
+      <div className="w-8 h-8 bg-[#181713] border border-[#2B2923] flex items-center justify-center shrink-0">
+        <svg className="w-4 h-4 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+          <rect x="3" y="11" width="18" height="11" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </svg>
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{entry.plaintext.name}</p>
+        <p className="text-sm font-medium text-[#F4F1E8] truncate">{entry.plaintext.name}</p>
         {entry.plaintext.username && (
-          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{entry.plaintext.username}</p>
+          <p className="text-xs text-[#9C988D] truncate">{entry.plaintext.username}</p>
         )}
       </div>
     </button>
@@ -172,7 +183,6 @@ export default function HealthPage() {
         if (!pw) continue;
         const count = await checkHibp(pw);
         if (count > 0) results.push({ entry, count });
-        // Small delay to be a good citizen to the HIBP API
         await new Promise((r) => setTimeout(r, 80));
       }
       setBreached(results);
@@ -196,45 +206,45 @@ export default function HealthPage() {
   const score = entries.length === 0 ? 100 : Math.max(0, Math.round(100 - (problematicIds.size / entries.length) * 100));
 
   const scoreColor =
-    score >= 90 ? "text-green-600 dark:text-green-400" :
-    score >= 70 ? "text-blue-600 dark:text-blue-400" :
-    score >= 50 ? "text-amber-500 dark:text-amber-400" :
-    "text-red-600 dark:text-red-400";
+    score >= 90 ? "text-[#7CFF6B]" :
+    score >= 70 ? "text-[#D6FF3F]" :
+    score >= 50 ? "text-[#D6FF3F]/70" :
+    "text-[#E8321A]";
 
   if (!isUnlocked()) return null;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center gap-4">
+    <div className="min-h-screen bg-[#070706] flex flex-col">
+      <header className="bg-[#11110F] border-b border-[#2B2923] px-6 py-4 flex items-center gap-4">
         <button
           onClick={() => router.push("/vault")}
-          className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+          className="flex items-center gap-1.5 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
           Back to vault
         </button>
-        <h1 className="text-sm font-semibold text-gray-900 dark:text-white">Security audit</h1>
+        <h1 className="font-mono text-sm font-semibold text-[#F4F1E8]">Security audit</h1>
       </header>
 
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-8 space-y-8">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <div className="w-10 h-10 rounded-full border-4 border-blue-100 dark:border-blue-900/40 border-t-blue-600 dark:border-t-blue-400 animate-spin" />
-            <p className="text-sm text-gray-500 dark:text-gray-400">Analysing vault…</p>
+            <div className="w-8 h-8 border-2 border-[#2B2923] border-t-[#D6FF3F] animate-spin" />
+            <p className="font-mono text-xs text-[#9C988D]">Analysing vault…</p>
           </div>
         ) : (
           <>
             {/* Score */}
-            <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 flex items-center gap-6">
+            <div className="bg-[#11110F] border border-[#2B2923] p-6 flex items-center gap-6">
               <div className="text-center shrink-0">
-                <div className={`text-5xl font-bold tabular-nums ${scoreColor}`}>{score}</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Security score</div>
+                <div className={`text-5xl font-mono font-bold tabular-nums ${scoreColor}`}>{score}</div>
+                <div className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mt-1">Security score</div>
               </div>
               <div className="flex-1">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Analysed <strong className="text-gray-900 dark:text-white">{entries.length}</strong> login items.
+                <p className="text-sm text-[#9C988D]">
+                  Analysed <strong className="text-[#F4F1E8]">{entries.length}</strong> login items.
                   {problematicIds.size === 0
                     ? " Everything looks great — no issues found."
                     : ` Found ${problematicIds.size} issue${problematicIds.size !== 1 ? "s" : ""} to review.`}
@@ -243,55 +253,55 @@ export default function HealthPage() {
             </div>
 
             {/* Summary cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-[#2B2923]">
               <ScoreCard
                 label="Weak"
                 count={report.weak.length}
-                color={report.weak.length > 0 ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"}
+                variant={report.weak.length > 0 ? "danger" : "ok"}
                 description="Too short or simple"
               />
               <ScoreCard
                 label="Reused"
                 count={report.reused.reduce((sum, g) => sum + g.entries.length, 0)}
-                color={report.reused.length > 0 ? "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"}
+                variant={report.reused.length > 0 ? "warning" : "ok"}
                 description="Same password, multiple sites"
               />
               <ScoreCard
                 label="Breached"
                 count={report.breached.length}
-                color={report.breached.length > 0 ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"}
+                variant={report.breached.length > 0 ? "danger" : "ok"}
                 description={hibpChecked ? "Found in data breaches" : "Not checked yet"}
               />
               <ScoreCard
                 label="No password"
                 count={report.noPassword.length}
-                color={report.noPassword.length > 0 ? "border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700/50 text-gray-600 dark:text-gray-400" : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"}
+                variant={report.noPassword.length > 0 ? "neutral" : "ok"}
                 description="Empty password field"
               />
             </div>
 
             {/* HIBP check */}
             {!hibpChecked && (
-              <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+              <div className="bg-[#11110F] border border-[#2B2923] p-5">
                 <div className="flex items-start gap-4">
-                  <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center shrink-0">
-                    <svg className="w-5 h-5 text-orange-600 dark:text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+                  <div className="w-9 h-9 bg-[#181713] border border-[#2B2923] flex items-center justify-center shrink-0">
+                    <svg className="w-5 h-5 text-[#D6FF3F]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                     </svg>
                   </div>
                   <div className="flex-1">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Check for data breaches</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    <h3 className="font-mono text-xs font-semibold text-[#F4F1E8] uppercase tracking-widest">Check for data breaches</h3>
+                    <p className="text-xs text-[#9C988D] mt-1.5">
                       Checks your passwords against the HaveIBeenPwned database using k-anonymity — your passwords never leave your device in cleartext.
                     </p>
                     {hibpError && (
-                      <p className="text-xs text-red-600 dark:text-red-400 mt-2">{hibpError}</p>
+                      <p className="text-xs text-[#E8321A] mt-2">{hibpError}</p>
                     )}
                   </div>
                   <button
                     onClick={runHibpCheck}
                     disabled={hibpLoading || entries.length === 0}
-                    className="flex items-center gap-2 px-4 py-2 text-sm bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white rounded-lg font-medium transition-colors shrink-0"
+                    className="flex items-center gap-2 px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] disabled:opacity-50 transition-colors shrink-0"
                   >
                     {hibpLoading ? (
                       <>
@@ -307,8 +317,8 @@ export default function HealthPage() {
                   </button>
                 </div>
                 {hibpLoading && (
-                  <div className="mt-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2">
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                  <div className="mt-3 bg-[#070706] border border-[#2B2923] px-3 py-2">
+                    <p className="font-mono text-xs text-[#9C988D]">
                       Checking {entries.length} passwords via k-anonymity…
                     </p>
                   </div>
@@ -318,29 +328,29 @@ export default function HealthPage() {
 
             {/* Breached passwords */}
             {hibpChecked && report.breached.length > 0 && (
-              <section className="bg-white dark:bg-gray-800 rounded-2xl border border-red-200 dark:border-red-800 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-red-100 dark:border-red-800/50 flex items-center gap-2 bg-red-50 dark:bg-red-900/20">
-                  <div className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-                  <h2 className="text-sm font-semibold text-red-900 dark:text-red-200">Found in data breaches</h2>
-                  <span className="ml-auto text-xs text-red-600 dark:text-red-400">{report.breached.length} item{report.breached.length !== 1 ? "s" : ""}</span>
+              <section className="bg-[#11110F] border border-[#E8321A]/30 overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#E8321A]/20 flex items-center gap-2 bg-[#E8321A]/10">
+                  <div className="w-1.5 h-1.5 bg-[#E8321A] shrink-0" />
+                  <h2 className="font-mono text-xs font-semibold text-[#E8321A] uppercase tracking-widest">Found in data breaches</h2>
+                  <span className="ml-auto font-mono text-xs text-[#E8321A]/70">{report.breached.length} item{report.breached.length !== 1 ? "s" : ""}</span>
                 </div>
-                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                <div className="divide-y divide-[#2B2923]">
                   {report.breached.map(({ entry, count }) => (
                     <div key={entry.item.id} className="flex items-center">
                       <div className="flex-1">
                         <EntryRow entry={entry} onClick={() => router.push(`/vault?item=${entry.item.id}`)} />
                       </div>
                       <div className="px-4 shrink-0">
-                        <span className="text-xs font-mono font-bold text-red-600 dark:text-red-400">
+                        <span className="font-mono text-xs font-bold text-[#E8321A]">
                           {count.toLocaleString()}×
                         </span>
-                        <span className="text-[10px] text-gray-400 ml-1">breaches</span>
+                        <span className="font-mono text-[10px] text-[#9C988D] ml-1">breaches</span>
                       </div>
                     </div>
                   ))}
                 </div>
-                <div className="px-4 py-3 bg-red-50 dark:bg-red-900/10 border-t border-red-100 dark:border-red-800/50">
-                  <p className="text-xs text-red-700 dark:text-red-300">
+                <div className="px-4 py-3 bg-[#E8321A]/10 border-t border-[#E8321A]/20">
+                  <p className="text-xs text-[#E8321A]/80">
                     Change these passwords immediately. Use the built-in generator to create strong unique replacements.
                   </p>
                 </div>
@@ -348,11 +358,11 @@ export default function HealthPage() {
             )}
 
             {hibpChecked && report.breached.length === 0 && (
-              <div className="bg-green-50 dark:bg-green-900/20 rounded-2xl border border-green-200 dark:border-green-800 p-4 flex items-center gap-3">
-                <svg className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <div className="bg-[#7CFF6B]/10 border border-[#7CFF6B]/30 p-4 flex items-center gap-3">
+                <svg className="w-5 h-5 text-[#7CFF6B] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
                 </svg>
-                <p className="text-sm text-green-700 dark:text-green-300">
+                <p className="text-sm text-[#7CFF6B]">
                   None of your passwords appear in known data breaches.
                 </p>
               </div>
@@ -360,13 +370,13 @@ export default function HealthPage() {
 
             {/* Weak passwords */}
             {report.weak.length > 0 && (
-              <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Weak passwords</h2>
-                  <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{report.weak.length} items</span>
+              <section className="bg-[#11110F] border border-[#2B2923] overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#2B2923] flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-[#E8321A] shrink-0" />
+                  <h2 className="font-mono text-xs font-semibold text-[#F4F1E8] uppercase tracking-widest">Weak passwords</h2>
+                  <span className="ml-auto font-mono text-xs text-[#9C988D]">{report.weak.length} items</span>
                 </div>
-                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                <div className="divide-y divide-[#2B2923]">
                   {report.weak.map((entry) => (
                     <EntryRow key={entry.item.id} entry={entry} onClick={() => router.push(`/vault?item=${entry.item.id}`)} />
                   ))}
@@ -376,17 +386,17 @@ export default function HealthPage() {
 
             {/* Reused passwords */}
             {report.reused.length > 0 && (
-              <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Reused passwords</h2>
-                  <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{report.reused.length} groups</span>
+              <section className="bg-[#11110F] border border-[#2B2923] overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#2B2923] flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-[#D6FF3F] shrink-0" />
+                  <h2 className="font-mono text-xs font-semibold text-[#F4F1E8] uppercase tracking-widest">Reused passwords</h2>
+                  <span className="ml-auto font-mono text-xs text-[#9C988D]">{report.reused.length} groups</span>
                 </div>
-                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                <div className="divide-y divide-[#2B2923]">
                   {report.reused.map(({ password, entries: group }) => (
                     <div key={password}>
-                      <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/10">
-                        <span className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                      <div className="px-4 py-2 bg-[#D6FF3F]/10 border-b border-[#2B2923]">
+                        <span className="font-mono text-xs text-[#D6FF3F]">
                           {group.length} sites share this password
                         </span>
                       </div>
@@ -401,13 +411,13 @@ export default function HealthPage() {
 
             {/* No password */}
             {report.noPassword.length > 0 && (
-              <section className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-gray-400 shrink-0" />
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">No password stored</h2>
-                  <span className="ml-auto text-xs text-gray-400 dark:text-gray-500">{report.noPassword.length} items</span>
+              <section className="bg-[#11110F] border border-[#2B2923] overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#2B2923] flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-[#9C988D] shrink-0" />
+                  <h2 className="font-mono text-xs font-semibold text-[#F4F1E8] uppercase tracking-widest">No password stored</h2>
+                  <span className="ml-auto font-mono text-xs text-[#9C988D]">{report.noPassword.length} items</span>
                 </div>
-                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                <div className="divide-y divide-[#2B2923]">
                   {report.noPassword.map((entry) => (
                     <EntryRow key={entry.item.id} entry={entry} onClick={() => router.push(`/vault?item=${entry.item.id}`)} />
                   ))}
@@ -417,13 +427,13 @@ export default function HealthPage() {
 
             {problematicIds.size === 0 && hibpChecked && (
               <div className="text-center py-12">
-                <div className="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-7 h-7 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <div className="w-14 h-14 bg-[#7CFF6B]/10 border border-[#7CFF6B]/30 flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-7 h-7 text-[#7CFF6B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">All passwords look good</p>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">No weak, reused, or breached passwords detected</p>
+                <p className="font-mono text-xs font-semibold text-[#F4F1E8] uppercase tracking-widest">All passwords look good</p>
+                <p className="text-xs text-[#9C988D] mt-1">No weak, reused, or breached passwords detected</p>
               </div>
             )}
           </>
