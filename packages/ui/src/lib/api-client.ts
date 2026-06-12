@@ -11,6 +11,8 @@ import type {
   CreateCheckoutRequest,
   CreateOrgRequest,
   CreatePortalRequest,
+  CreateShareRequest,
+  CreateShareResponse,
   CreateVaultItemRequest,
   DeviceInfo,
   EncryptedVaultItem,
@@ -27,6 +29,7 @@ import type {
   RegisterRequest,
   RegisterResponse,
   SetRecoveryRequest,
+  ShareInfo,
   SrpInitRequest,
   SrpInitResponse,
   SrpVerifyRequest,
@@ -34,6 +37,7 @@ import type {
   SyncRequest,
   SyncResponse,
   UpdateVaultItemRequest,
+  ViewShareResponse,
 } from "@nopass/types";
 
 export class ApiError extends Error {
@@ -124,6 +128,13 @@ export function createApiClient(baseUrl: string) {
         ),
       delete: (vaultId: string, itemId: string, token: string) =>
         del<void>(`/vaults/${vaultId}/items/${itemId}`, token),
+    },
+    shares: {
+      create: (req: CreateShareRequest, token: string) =>
+        post<CreateShareResponse>("/shares", req, token),
+      list: (token: string) => get<ShareInfo[]>("/shares", token),
+      revoke: (shareId: string, token: string) => del<void>(`/shares/${shareId}`, token),
+      view: (shareId: string) => post<ViewShareResponse>(`/shares/${shareId}/view`, {}),
     },
     sync: {
       pull: (req: SyncRequest, token: string) => post<SyncResponse>("/sync", req, token),

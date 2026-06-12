@@ -3,6 +3,7 @@ pub mod billing;
 pub mod devices;
 pub mod orgs;
 pub mod recovery;
+pub mod shares;
 pub mod sync;
 pub mod vault;
 
@@ -31,11 +32,19 @@ pub fn router(state: AppState) -> Router<AppState> {
                     state.clone(),
                     auth_rate_limit,
                 )),
+        )
+        .nest(
+            "/shares",
+            shares::public_router().route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth_rate_limit,
+            )),
         );
 
     let protected = Router::new()
         .nest("/auth", auth::protected_router())
         .nest("/auth/recovery", recovery::protected_router())
+        .nest("/shares", shares::router())
         .nest("/billing", billing::router())
         .nest("/devices", devices::router())
         .nest("/organizations", orgs::router())

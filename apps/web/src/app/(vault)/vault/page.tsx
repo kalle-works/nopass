@@ -379,11 +379,177 @@ function SshKeyDetail({ sshKey }: { sshKey: SshKeyItem }) {
   );
 }
 
+const SHARE_EXPIRY_OPTIONS = [
+  { label: "1 hour", hours: 1 },
+  { label: "24 hours", hours: 24 },
+  { label: "7 days", hours: 168 },
+];
+
+function ShareDialog({
+  entry,
+  sessionToken,
+  vaultEncKey,
+  onClose,
+}: {
+  entry: DecryptedEntry;
+  sessionToken: string;
+  vaultEncKey: CryptoKey;
+  onClose: () => void;
+}) {
+  const [maxViews, setMaxViews] = useState(1);
+  const [expiresInHours, setExpiresInHours] = useState(24);
+  const [link, setLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleCreate() {
+    if (!sessionToken) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const { generateShareKey, encryptSharePayload, encryptBytes } = await import("@nopass/crypto");
+      const { key, keyB64url } = await generateShareKey();
+      const payload = await encryptSharePayload(entry.plaintext, key);
+      const label = await encryptBytes(
+        new Uint8Array(new TextEncoder().encode(entry.plaintext.name)),
+        vaultEncKey,
+      );
+      const { shareId } = await api.shares.create(
+        {
+          blob: payload.blob,
+          blobIv: payload.blobIv,
+          labelBlob: label.blob,
+          labelIv: label.blobIv,
+          maxViews,
+          expiresInHours,
+        },
+        sessionToken,
+      );
+      setLink(`${window.location.origin}/s/${shareId}#k=${keyB64url}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create share");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleCopy() {
+    if (!link) return;
+    await navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-[#11110F] border border-[#2B2923] w-full max-w-lg overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#2B2923]">
+          <h2 className="font-mono text-sm font-semibold text-[#F4F1E8]">
+            Share “{entry.plaintext.name}”
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="p-6 space-y-5">
+          {link ? (
+            <>
+              <p className="text-sm text-[#9C988D]">
+                Send this link over a channel you trust. The decryption key is in the part after{" "}
+                <span className="font-mono text-[#F4F1E8]">#</span> and never reaches our servers.
+              </p>
+              <div className="font-mono text-xs text-[#F4F1E8] bg-[#070706] border border-[#2B2923] p-3 break-all select-all">
+                {link}
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleCopy}
+                  className="px-3.5 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] transition-colors"
+                >
+                  {copied ? "Copied" : "Copy link"}
+                </button>
+                <button
+                  onClick={onClose}
+                  className="px-3.5 py-2 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-[#9C988D]">
+                Creates a link to a snapshot of this item, encrypted with a key that only exists
+                in the link itself. You can revoke it any time from the Shares page.
+              </p>
+              <div>
+                <p className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mb-1.5">Expires after</p>
+                <div className="flex gap-2">
+                  {SHARE_EXPIRY_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.hours}
+                      onClick={() => setExpiresInHours(opt.hours)}
+                      className={`px-3 py-1.5 font-mono text-xs border transition-colors ${
+                        expiresInHours === opt.hours
+                          ? "border-[#D6FF3F] text-[#D6FF3F]"
+                          : "border-[#2B2923] text-[#9C988D] hover:text-[#F4F1E8]"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mb-1.5">Views allowed</p>
+                <div className="flex gap-2">
+                  {[1, 3, 10].map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setMaxViews(n)}
+                      className={`px-3 py-1.5 font-mono text-xs border transition-colors ${
+                        maxViews === n
+                          ? "border-[#D6FF3F] text-[#D6FF3F]"
+                          : "border-[#2B2923] text-[#9C988D] hover:text-[#F4F1E8]"
+                      }`}
+                    >
+                      {n === 1 ? "1 (one-time)" : n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {error && <p className="text-sm text-[#E8321A]">{error}</p>}
+              <button
+                onClick={handleCreate}
+                disabled={creating}
+                className="px-3.5 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] disabled:opacity-50 transition-colors"
+              >
+                {creating ? "Creating…" : "Create share link"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DetailPane({
   entry,
   onEdit,
   onDelete,
   onClose,
+  onShare,
   isFavorite,
   onToggleFavorite,
   onTagClick,
@@ -392,6 +558,7 @@ function DetailPane({
   onEdit: () => void;
   onDelete: () => void;
   onClose: () => void;
+  onShare: () => void;
   isFavorite: boolean;
   onToggleFavorite: () => void;
   onTagClick: (tag: string) => void;
@@ -425,6 +592,12 @@ function DetailPane({
             className="px-3 py-1.5 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] border border-[#2B2923] hover:border-[#9C988D] transition-colors"
           >
             Edit
+          </button>
+          <button
+            onClick={onShare}
+            className="px-3 py-1.5 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] border border-[#2B2923] hover:border-[#9C988D] transition-colors"
+          >
+            Share
           </button>
           <button
             onClick={onClose}
@@ -543,6 +716,7 @@ function VaultPageInner() {
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
   const [filter, setFilter] = useState<Filter>("all");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [shareEntry, setShareEntry] = useState<DecryptedEntry | null>(null);
   const [search, setSearch] = useState("");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -991,6 +1165,16 @@ function VaultPageInner() {
               Devices
             </button>
             <button
+              onClick={() => router.push("/vault/shares")}
+              className="flex items-center gap-1.5 px-3 py-2 font-mono text-xs text-[#9C988D] hover:bg-[#181713] hover:text-[#F4F1E8] transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+              Shares
+            </button>
+            <button
               onClick={() => router.push("/vault/import")}
               className="flex items-center gap-1.5 px-3 py-2 font-mono text-xs text-[#9C988D] hover:bg-[#181713] hover:text-[#F4F1E8] transition-colors"
             >
@@ -1182,6 +1366,7 @@ function VaultPageInner() {
           }
           onDelete={() => handleDelete(selectedEntry.item.id)}
           onClose={() => setSelectedId(null)}
+          onShare={() => setShareEntry(selectedEntry)}
           isFavorite={favorites.has(selectedEntry.item.id)}
           onToggleFavorite={() => toggleFavorite(selectedEntry.item.id)}
           onTagClick={(tag) => setTagFilter(tag)}
@@ -1222,6 +1407,16 @@ function VaultPageInner() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Share dialog */}
+      {shareEntry && sessionToken && vaultEncKey && (
+        <ShareDialog
+          entry={shareEntry}
+          sessionToken={sessionToken}
+          vaultEncKey={vaultEncKey}
+          onClose={() => setShareEntry(null)}
+        />
       )}
 
       {/* Toast notification */}
