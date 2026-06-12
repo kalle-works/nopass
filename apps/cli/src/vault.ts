@@ -8,8 +8,12 @@ export async function fetchAndDecryptItems(
   session: Session,
 ): Promise<VaultItemPlaintext[]> {
   const api = createApiClient(session.apiUrl);
-  const encrypted = await api.vault.items(session.defaultVaultId, session.sessionToken);
-  const active = encrypted.filter((i) => i.deletedAt === null);
+  // Items live across every vault the user has, not just the default one
+  const vaults = await api.vault.list(session.sessionToken);
+  const perVault = await Promise.all(
+    vaults.map((v) => api.vault.items(v.id, session.sessionToken)),
+  );
+  const active = perVault.flat().filter((i) => i.deletedAt === null);
 
   const { vaultEncKey, vaultMacKey } = await importKeys(session);
   const results = await Promise.all(

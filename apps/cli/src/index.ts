@@ -4,6 +4,7 @@ import { lockCommand } from "./commands/lock.js";
 import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
 import { runCommand } from "./commands/run.js";
+import { recoverCommand } from "./commands/recover.js";
 
 const program = new Command();
 
@@ -13,6 +14,7 @@ program
   .version("0.1.0");
 
 program.addCommand(loginCommand);
+program.addCommand(recoverCommand);
 program.addCommand(getCommand);
 program.addCommand(listCommand);
 program.addCommand(lockCommand);

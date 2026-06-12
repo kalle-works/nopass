@@ -1,11 +1,15 @@
 import type {
   DeviceInfo,
   EncryptedVaultItem,
+  RecoveryCompleteRequest,
+  RecoveryInitRequest,
+  RecoveryInitResponse,
   RegisterDeviceRequest,
   SrpInitRequest,
   SrpInitResponse,
   SrpVerifyRequest,
   SrpVerifyResponse,
+  VaultInfo,
 } from "@nopass/types";
 
 export class ApiError extends Error {
@@ -52,6 +56,10 @@ export function createApiClient(baseUrl: string) {
       srpInit: (req: SrpInitRequest) => post<SrpInitResponse>("/auth/srp/init", req),
       srpVerify: (req: SrpVerifyRequest) => post<SrpVerifyResponse>("/auth/srp/verify", req),
       logout: (token: string) => post<void>("/auth/logout", {}, token),
+      recoveryInit: (req: RecoveryInitRequest) =>
+        post<RecoveryInitResponse>("/auth/recovery/init", req),
+      recoveryComplete: (req: RecoveryCompleteRequest) =>
+        post<void>("/auth/recovery/complete", req),
     },
     devices: {
       list: (token: string) => get<DeviceInfo[]>("/devices", token),
@@ -60,6 +68,7 @@ export function createApiClient(baseUrl: string) {
       remove: (deviceId: string, token: string) => del<void>(`/devices/${deviceId}`, token),
     },
     vault: {
+      list: (token: string) => get<VaultInfo[]>("/vaults", token),
       items: (vaultId: string, token: string) =>
         get<EncryptedVaultItem[]>(`/vaults/${vaultId}/items`, token),
     },
