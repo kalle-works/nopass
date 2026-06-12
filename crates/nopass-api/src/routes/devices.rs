@@ -1,11 +1,10 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{delete, get},
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use chrono::Utc;
 use nopass_models::{DeviceInfo, RegisterDeviceRequest};
 use uuid::Uuid;
 

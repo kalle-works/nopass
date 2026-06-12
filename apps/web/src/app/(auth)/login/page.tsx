@@ -13,6 +13,7 @@ export default function LoginPage() {
       mode="login"
       onSuccess={() => router.replace("/vault")}
       onSwitchMode={() => router.push("/register")}
+      onForgotPassword={() => router.push("/recover")}
     />
   );
 }

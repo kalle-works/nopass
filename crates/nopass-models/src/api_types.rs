@@ -101,6 +101,76 @@ pub struct SrpVerifyResponse {
     pub protected_private_key_iv: Option<String>,
 }
 
+// ─── Recovery ────────────────────────────────────────────────────────────────
+
+/// Enable or rotate the account recovery kit (authenticated).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRecoveryRequest {
+    /// Base64 auth key derived from the recovery code; only its SHA-256 is stored
+    pub recovery_auth_key: String,
+    /// Base64 AES-GCM(smk || enc || mac) under the recovery wrap key
+    pub recovery_blob: String,
+    pub recovery_blob_iv: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryStatusResponse {
+    pub enabled: bool,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryInitRequest {
+    pub email_hash: String,
+    pub recovery_auth_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryInitResponse {
+    /// Short-lived token authorizing the recovery completion
+    pub recovery_token: String,
+    pub recovery_blob: String,
+    pub recovery_blob_iv: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key_iv: Option<String>,
+    /// Every encrypted item the client must re-encrypt under the new password
+    pub items: Vec<crate::EncryptedVaultItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReencryptedItem {
+    pub id: Uuid,
+    pub blob: String,
+    pub blob_iv: String,
+    pub blob_mac: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryCompleteRequest {
+    pub recovery_token: String,
+    /// New SRP credentials derived from the new master password
+    pub srp_salt: String,
+    pub srp_verifier: String,
+    pub protected_symmetric_key: String,
+    pub protected_symmetric_key_iv: String,
+    /// RSA private key re-wrapped under the new stretched master key
+    pub protected_private_key: Option<String>,
+    pub protected_private_key_iv: Option<String>,
+    pub items: Vec<ReencryptedItem>,
+    /// Replacement recovery kit — the used code is burned
+    pub recovery_auth_key: String,
+    pub recovery_blob: String,
+    pub recovery_blob_iv: String,
+}
+
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

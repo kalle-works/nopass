@@ -2,6 +2,7 @@ pub mod auth;
 pub mod billing;
 pub mod devices;
 pub mod orgs;
+pub mod recovery;
 pub mod sync;
 pub mod vault;
 
@@ -24,14 +25,17 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(billing::webhook_router())
         .nest(
             "/auth",
-            auth::public_router().route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                auth_rate_limit,
-            )),
+            auth::public_router()
+                .nest("/recovery", recovery::public_router())
+                .route_layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth_rate_limit,
+                )),
         );
 
     let protected = Router::new()
         .nest("/auth", auth::protected_router())
+        .nest("/auth/recovery", recovery::protected_router())
         .nest("/billing", billing::router())
         .nest("/devices", devices::router())
         .nest("/organizations", orgs::router())

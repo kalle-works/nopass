@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useNopassStore } from "@nopass/ui";
 import { decryptItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, LoginItem, VaultItemPlaintext } from "@nopass/types";
+import { api } from "@/lib/api";
 
 interface HealthEntry {
   item: EncryptedVaultItem;
@@ -129,7 +130,7 @@ function EntryRow({ entry, onClick }: { entry: HealthEntry; onClick: () => void 
 
 export default function HealthPage() {
   const router = useRouter();
-  const { isUnlocked, items, vaultEncKey, vaultMacKey } = useNopassStore();
+  const { isUnlocked, items, vaultEncKey, vaultMacKey, sessionToken } = useNopassStore();
 
   const [entries, setEntries] = useState<HealthEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -137,6 +138,21 @@ export default function HealthPage() {
   const [breached, setBreached] = useState<Array<{ entry: HealthEntry; count: number }>>([]);
   const [hibpChecked, setHibpChecked] = useState(false);
   const [hibpError, setHibpError] = useState<string | null>(null);
+  const [recoveryEnabled, setRecoveryEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!sessionToken) return;
+    let cancelled = false;
+    api.recovery
+      .status(sessionToken)
+      .then((s) => {
+        if (!cancelled) setRecoveryEnabled(s.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setRecoveryEnabled(null);
+      });
+    return () => { cancelled = true; };
+  }, [sessionToken]);
 
   useEffect(() => {
     document.title = "Security audit — nopwd";
@@ -325,6 +341,33 @@ export default function HealthPage() {
                 )}
               </div>
             )}
+
+            {/* Recovery kit */}
+            <div className={`bg-[#11110F] border p-5 ${recoveryEnabled === false ? "border-amber-500/30" : "border-[#2B2923]"}`}>
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 bg-[#181713] border border-[#2B2923] flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-[#D6FF3F]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-mono text-xs font-semibold text-[#F4F1E8] uppercase tracking-widest">Recovery kit</h3>
+                  <p className="text-xs text-[#9C988D] mt-1.5">
+                    {recoveryEnabled === null
+                      ? "Checking recovery status…"
+                      : recoveryEnabled
+                        ? "Recovery is enabled. Your kit can restore vault access if you forget your master password."
+                        : "Recovery is off. If you forget your master password, your vault is permanently lost."}
+                  </p>
+                </div>
+                <button
+                  onClick={() => router.push("/vault/recovery")}
+                  className="px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] transition-colors shrink-0"
+                >
+                  {recoveryEnabled === false ? "Set up" : "Manage"}
+                </button>
+              </div>
+            </div>
 
             {/* Breached passwords */}
             {hibpChecked && report.breached.length > 0 && (

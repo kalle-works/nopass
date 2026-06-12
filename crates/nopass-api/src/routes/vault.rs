@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get, post, put},
+    routing::{get, put},
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -184,7 +184,7 @@ async fn delete_item(
     }
 }
 
-fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
+pub(crate) fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
     match s {
         "login" => Ok(VaultItemType::Login),
         "note" => Ok(VaultItemType::Note),

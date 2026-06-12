@@ -14,7 +14,7 @@ use axum::{Router, http::{HeaderName, HeaderValue}, routing::get};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceBuilder;
 use tower_http::{
-    cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer},
+    cors::{AllowOrigin, CorsLayer},
     limit::RequestBodyLimitLayer,
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
