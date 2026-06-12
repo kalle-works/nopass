@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "nopwd — zero-knowledge password manager",
+  "name": "nopwd - zero-knowledge password manager",
   "version": "0.2.0",
   "description": "Passwords, passkeys, and 2FA codes — encrypted on your device before they ever leave it. The server can't read your vault.",
   "permissions": [

@@ -69,7 +69,9 @@ function injectButton(passwordField: HTMLInputElement): void {
   btn.title = "Fill with nopwd";
   btn.setAttribute("data-nopass-button", "1");
   btn.style.cssText = [
-    "position:absolute",
+    // fixed + viewport coords: immune to a positioned <body> (common on
+    // framework pages), which would shift an absolutely-positioned overlay
+    "position:fixed",
     `width:${BTN_SIZE}px`,
     `height:${BTN_SIZE}px`,
     "display:flex",
@@ -107,8 +109,8 @@ function positionButton({ field, btn }: InjectedButton): void {
     return;
   }
   btn.style.display = "flex";
-  btn.style.top = `${window.scrollY + rect.top + (rect.height - BTN_SIZE) / 2}px`;
-  btn.style.left = `${window.scrollX + rect.right - BTN_SIZE - 6}px`;
+  btn.style.top = `${rect.top + (rect.height - BTN_SIZE) / 2}px`;
+  btn.style.left = `${rect.right - BTN_SIZE - 6}px`;
 }
 
 function repositionAll(): void {

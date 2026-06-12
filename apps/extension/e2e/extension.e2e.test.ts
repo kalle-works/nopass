@@ -153,6 +153,14 @@ class PopupDriver {
         driver.pending.delete(m.id);
       }
     };
+    // Fail outstanding calls fast if the popup closes — otherwise they hang
+    // until the suite timeout
+    driver.ws.onclose = () => {
+      for (const resolve of driver.pending.values()) {
+        resolve({ error: { message: "popup CDP connection closed" } });
+      }
+      driver.pending.clear();
+    };
     await driver.cdp("Runtime.enable");
     return driver;
   }
