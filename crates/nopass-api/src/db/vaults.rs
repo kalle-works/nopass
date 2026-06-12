@@ -198,12 +198,25 @@ pub async fn count_vaults_for_user(pool: &PgPool, user_id: Uuid) -> Result<i64> 
     Ok(row.0)
 }
 
-pub async fn delete_vault(pool: &PgPool, vault_id: Uuid, user_id: Uuid) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM vaults WHERE id = $1 AND user_id = $2")
-        .bind(vault_id)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+/// Guards live inside the statement — separate count-then-delete queries race:
+/// two concurrent deletes could remove the last vault, or a concurrent item
+/// create could land in a vault mid-deletion.
+pub async fn delete_vault_if_safe(pool: &PgPool, vault_id: Uuid, user_id: Uuid) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM vaults
+        WHERE id = $1 AND user_id = $2
+          AND (SELECT COUNT(*) FROM vaults WHERE user_id = $2) > 1
+          AND NOT EXISTS (
+              SELECT 1 FROM vault_items
+              WHERE vault_id = $1 AND user_id = $2 AND deleted_at IS NULL
+          )
+        "#,
+    )
+    .bind(vault_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() > 0)
 }
 

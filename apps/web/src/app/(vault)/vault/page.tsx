@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useNopassStore, ItemEditor, OrgPanel } from "@nopass/ui";
+import { useNopassStore, ItemEditor, OrgPanel, ConflictError } from "@nopass/ui";
 import { decryptItem, encryptItem, decryptBytes, encryptBytes } from "@nopass/crypto";
 import { computeTotp } from "@nopass/ui";
 import type {
@@ -947,6 +947,8 @@ function VaultPageInner() {
       try {
         await api.vault.moveItem(item.vaultId, item.id, { toVaultId }, sessionToken);
         upsertItem({ ...item, vaultId: toVaultId, version: item.version + 1 });
+        // Close the pane — the item may have just left the vault being viewed
+        setSelectedId(null);
         showToast("Item moved");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to move item");
@@ -988,8 +990,13 @@ function VaultPageInner() {
       try {
         const encrypted = await encryptItem(plaintext, vaultEncKey, vaultMacKey);
         if (modal?.mode === "create") {
+          // activeVaultId can go stale if the vault was deleted in another tab
+          const targetVault =
+            activeVaultId && vaults.some((v) => v.id === activeVaultId)
+              ? activeVaultId
+              : defaultVaultId;
           const created = await api.vault.create(
-            activeVaultId ?? defaultVaultId,
+            targetVault,
             { itemType: plaintext.type, blob: encrypted.blob, blobIv: encrypted.blobIv, blobMac: encrypted.blobMac },
             sessionToken,
           );
@@ -1015,23 +1022,25 @@ function VaultPageInner() {
         }
         setModal(null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Save failed");
+        if (err instanceof ConflictError) {
+          setError("This item changed somewhere else (another tab or device). Reload before saving.");
+        } else {
+          setError(err instanceof Error ? err.message : "Save failed");
+        }
       } finally {
         setSaving(false);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [modal, sessionToken, defaultVaultId, activeVaultId, vaultEncKey, vaultMacKey, upsertItem],
+    [modal, sessionToken, defaultVaultId, activeVaultId, vaults, vaultEncKey, vaultMacKey, upsertItem],
   );
 
   const handleDelete = useCallback(
-    async (itemId: string) => {
+    async (target: EncryptedVaultItem) => {
       if (!sessionToken) return;
-      const target = items.find((i) => i.id === itemId);
-      if (!target) return;
       try {
-        await api.vault.delete(target.vaultId, itemId, sessionToken);
-        markDeleted(itemId);
+        await api.vault.delete(target.vaultId, target.id, sessionToken);
+        markDeleted(target.id);
         setSelectedId(null);
         showToast("Item deleted");
       } catch (err) {
@@ -1039,7 +1048,7 @@ function VaultPageInner() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionToken, items, markDeleted],
+    [sessionToken, markDeleted],
   );
 
   const handleLock = useCallback(() => {
@@ -1510,7 +1519,7 @@ function VaultPageInner() {
           onEdit={() =>
             setModal({ mode: "edit", entry: selectedEntry })
           }
-          onDelete={() => handleDelete(selectedEntry.item.id)}
+          onDelete={() => handleDelete(selectedEntry.item)}
           onClose={() => setSelectedId(null)}
           onShare={() => setShareEntry(selectedEntry)}
           isFavorite={favorites.has(selectedEntry.item.id)}

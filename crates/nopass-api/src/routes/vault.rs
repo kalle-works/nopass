@@ -95,18 +95,13 @@ async fn delete_vault(
         .await?
         .ok_or_else(|| ApiError::NotFound("vault not found".into()))?;
 
-    // The last vault must survive, and non-empty vaults must be emptied first —
-    // silently deleting items would be data loss behind one keystroke
-    let vault_count = db_vaults::count_vaults_for_user(&state.db, auth.user_id).await?;
-    if vault_count <= 1 {
-        return Err(ApiError::Conflict("cannot delete your only vault".into()));
+    // Atomic: last-vault and non-empty guards live inside the DELETE itself
+    let deleted = db_vaults::delete_vault_if_safe(&state.db, vault_id, auth.user_id).await?;
+    if !deleted {
+        return Err(ApiError::Conflict(
+            "vault must be empty and cannot be your only vault".into(),
+        ));
     }
-    let item_count = db_vaults::count_items_in_vault(&state.db, vault_id, auth.user_id).await?;
-    if item_count > 0 {
-        return Err(ApiError::Conflict("move or delete the vault's items first".into()));
-    }
-
-    db_vaults::delete_vault(&state.db, vault_id, auth.user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
