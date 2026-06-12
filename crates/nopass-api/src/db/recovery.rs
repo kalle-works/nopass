@@ -9,6 +9,8 @@ use crate::models::vault::VaultItem;
 #[derive(Debug)]
 pub enum CompleteRecoveryError {
     ItemMismatch,
+    /// Token was already consumed by a concurrent completion — replay refused
+    TokenConsumed,
     Db(anyhow::Error),
 }
 
@@ -92,11 +94,23 @@ pub struct ReencryptedItemRow {
 /// password change would brick the account.
 pub async fn complete_recovery(
     pool: &PgPool,
+    token: Uuid,
     user_id: Uuid,
     completion: RecoveryCompletion<'_>,
     items: &[ReencryptedItemRow],
 ) -> std::result::Result<(), CompleteRecoveryError> {
     let mut tx = pool.begin().await?;
+
+    // Consume the token INSIDE the transaction: a concurrent completion
+    // serializes on this row and sees zero rows (replay refused), while a
+    // failed transaction rolls the delete back, keeping the token retryable.
+    let consumed = sqlx::query("DELETE FROM pending_recovery_sessions WHERE token = $1")
+        .bind(token)
+        .execute(&mut *tx)
+        .await?;
+    if consumed.rows_affected() == 0 {
+        return Err(CompleteRecoveryError::TokenConsumed);
+    }
 
     sqlx::query(
         r#"

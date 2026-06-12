@@ -168,7 +168,7 @@ async fn recovery_complete(
         .await?
         .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
 
-    if (chrono::Utc::now() - pending_session.created_at).num_seconds() >= RECOVERY_SESSION_TTL_SECS as i64 {
+    if (chrono::Utc::now() - pending_session.created_at).num_seconds() > RECOVERY_SESSION_TTL_SECS as i64 {
         return Err(ApiError::Unauthorized("recovery session expired".into()));
     }
 
@@ -211,6 +211,7 @@ async fn recovery_complete(
     let new_auth_hash = hash_auth_key(&new_auth_key);
     db_recovery::complete_recovery(
         &state.db,
+        token,
         pending_session.user_id,
         db_recovery::RecoveryCompletion {
             srp_salt: &srp_salt,
@@ -230,11 +231,13 @@ async fn recovery_complete(
         db_recovery::CompleteRecoveryError::ItemMismatch => {
             ApiError::BadRequest("one or more items do not belong to this account".into())
         }
+        db_recovery::CompleteRecoveryError::TokenConsumed => {
+            ApiError::Unauthorized("recovery session not found or expired".into())
+        }
         db_recovery::CompleteRecoveryError::Db(e) => ApiError::Internal(e),
     })?;
 
-    // Success — burn the token
-    pending::delete_recovery(&state.db, token).await?;
+    // Token was burned inside the completion transaction
     activity::record(&state.db, pending_session.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
 
     Ok(StatusCode::NO_CONTENT)

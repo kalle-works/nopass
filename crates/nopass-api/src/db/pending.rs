@@ -79,22 +79,14 @@ pub async fn peek_recovery(pool: &PgPool, token: Uuid) -> Result<Option<PendingR
     Ok(session)
 }
 
-pub async fn delete_recovery(pool: &PgPool, token: Uuid) -> Result<()> {
-    sqlx::query("DELETE FROM pending_recovery_sessions WHERE token = $1")
-        .bind(token)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
 /// Sweep expired handshakes/tokens; runs from the periodic cleanup task.
 pub async fn prune_expired(pool: &PgPool, srp_ttl_secs: i64, recovery_ttl_secs: i64) -> Result<u64> {
-    let a = sqlx::query("DELETE FROM pending_srp_sessions WHERE created_at < NOW() - make_interval(secs => $1)")
-        .bind(srp_ttl_secs as f64)
+    let a = sqlx::query("DELETE FROM pending_srp_sessions WHERE created_at < NOW() - ($1 * INTERVAL '1 second')")
+        .bind(srp_ttl_secs)
         .execute(pool)
         .await?;
-    let b = sqlx::query("DELETE FROM pending_recovery_sessions WHERE created_at < NOW() - make_interval(secs => $1)")
-        .bind(recovery_ttl_secs as f64)
+    let b = sqlx::query("DELETE FROM pending_recovery_sessions WHERE created_at < NOW() - ($1 * INTERVAL '1 second')")
+        .bind(recovery_ttl_secs)
         .execute(pool)
         .await?;
     Ok(a.rows_affected() + b.rows_affected())

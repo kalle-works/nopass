@@ -119,7 +119,7 @@ async fn srp_verify(
         .await?
         .ok_or_else(|| ApiError::Unauthorized("SRP session not found or expired".into()))?;
 
-    if (chrono::Utc::now() - pending.created_at).num_seconds() > 300 {
+    if (chrono::Utc::now() - pending.created_at).num_seconds() > crate::state::SRP_SESSION_TTL_SECS as i64 {
         return Err(ApiError::Unauthorized("SRP session expired".into()));
     }
 
