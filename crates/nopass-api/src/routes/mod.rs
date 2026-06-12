@@ -98,7 +98,7 @@ async fn auth_rate_limit(
 ///
 /// X-Forwarded-For is only trusted if the direct TCP peer is in `trusted_proxies`.
 /// Without this check, any client can spoof arbitrary IPs and bypass rate limiting.
-fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> IpAddr {
+fn extract_client_ip(req: &Request, trusted_proxies: &[ipnet::IpNet]) -> IpAddr {
     let peer_ip = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -106,7 +106,7 @@ fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> IpAddr {
         .unwrap_or(IpAddr::from([127, 0, 0, 1]));
 
     // Only honour X-Forwarded-For when the direct connection comes from a trusted proxy.
-    if trusted_proxies.contains(&peer_ip) {
+    if trusted_proxies.iter().any(|net| net.contains(&peer_ip)) {
         if let Some(forwarded) = req
             .headers()
             .get("x-forwarded-for")

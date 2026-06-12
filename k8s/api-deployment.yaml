@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nopwd-api
+  namespace: nopwd
+  labels:
+    app.kubernetes.io/name: nopwd-api
+    app.kubernetes.io/component: api
+spec:
+  # SRP handshakes and recovery tokens live in process memory — keep one
+  # replica until that state moves to Postgres/Redis
+  replicas: 1
+  progressDeadlineSeconds: 300
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nopwd-api
+    spec:
+      nodeSelector:
+        role: apps
+        kubernetes.io/arch: amd64
+      securityContext:
+        runAsUser: 10001
+        runAsNonRoot: true
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: ghcr.io/kalle-works/nopwd-api:v0.1.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: nopwd-api-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: nopwd-secrets
+                  key: database-url
+            - name: NOPASS_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nopwd-secrets
+                  key: session-secret
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

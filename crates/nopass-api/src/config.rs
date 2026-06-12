@@ -9,7 +9,7 @@ pub struct Config {
     pub allowed_origins: Vec<String>,
     /// Trusted proxy CIDRs — only trust X-Forwarded-For from these IPs.
     /// Leave empty to always use the direct TCP connection IP (safe default).
-    pub trusted_proxies: Vec<std::net::IpAddr>,
+    pub trusted_proxies: Vec<ipnet::IpNet>,
 
     // ─── Stripe (optional — billing routes return 503 when unset) ────────────
     pub stripe_secret_key: Option<String>,
@@ -40,14 +40,19 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
-        // NOPASS_TRUSTED_PROXIES: comma-separated list of proxy IP addresses that are
-        // allowed to set X-Forwarded-For. Leave unset (default) when not behind a proxy.
+        // NOPASS_TRUSTED_PROXIES: comma-separated proxy IPs or CIDRs allowed to
+        // set X-Forwarded-For. CIDRs matter behind in-cluster ingress (Traefik
+        // pod IPs are dynamic). Leave unset (default) when not behind a proxy.
         let trusted_proxies = std::env::var("NOPASS_TRUSTED_PROXIES")
             .unwrap_or_default()
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .filter_map(|s| s.parse::<std::net::IpAddr>().ok())
+            .filter_map(|s| {
+                s.parse::<ipnet::IpNet>()
+                    .ok()
+                    .or_else(|| s.parse::<std::net::IpAddr>().ok().map(ipnet::IpNet::from))
+            })
             .collect();
 
         let stripe_secret_key = std::env::var("STRIPE_SECRET_KEY").ok();

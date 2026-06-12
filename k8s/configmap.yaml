@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nopwd-api-config
+  namespace: nopwd
+data:
+  NOPASS_HOST: "0.0.0.0"
+  NOPASS_PORT: "3001"
+  NOPASS_ALLOWED_ORIGINS: "https://nopwd.dev"
+  # Traefik pods carry dynamic pod-CIDR IPs — trust the pod network so
+  # X-Forwarded-For resolves real client IPs for rate limiting + activity log
+  NOPASS_TRUSTED_PROXIES: "10.42.0.0/16"
+  RUST_LOG: "info"

@@ -1320,6 +1320,7 @@ dependencies = [
  "governor",
  "hex",
  "hmac",
+ "ipnet",
  "nopass-crypto",
  "nopass-models",
  "rand 0.8.6",
