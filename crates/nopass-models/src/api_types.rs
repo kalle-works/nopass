@@ -107,7 +107,7 @@ pub struct SrpVerifyResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RegisterDeviceRequest {
     pub device_name: String,
-    pub device_type: String, // "desktop_mac" | "android" | "web" | "extension"
+    pub device_type: String, // "desktop_mac" | "desktop_linux" | "desktop_windows" | "android" | "web" | "extension"
     /// Base64-encoded X25519 public key for encrypted device channel
     pub device_public_key: String,
     /// Optional: vault key re-encrypted for biometric unlock (base64)

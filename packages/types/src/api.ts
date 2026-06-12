@@ -73,7 +73,13 @@ export interface SrpVerifyResponse {
 
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
-export type DeviceType = "desktop_mac" | "android" | "web" | "extension";
+export type DeviceType =
+  | "desktop_mac"
+  | "desktop_linux"
+  | "desktop_windows"
+  | "android"
+  | "web"
+  | "extension";
 
 export interface RegisterDeviceRequest {
   deviceName: string;

@@ -124,6 +124,12 @@ function spawnViaSocket(
       shell: false,
     });
 
+    // Forward termination signals so a `kill <nopwd-pid>` doesn't orphan the
+    // child and leave the secrets socket on disk
+    const forward = (sig: NodeJS.Signals) => child.kill(sig);
+    process.on("SIGINT", forward);
+    process.on("SIGTERM", forward);
+
     child.on("error", (err) => {
       server.close();
       cleanup();
@@ -135,6 +141,8 @@ function spawnViaSocket(
       server.close();
       cleanup();
       if (signal) {
+        process.removeListener("SIGINT", forward);
+        process.removeListener("SIGTERM", forward);
         process.kill(process.pid, signal);
       } else {
         process.exit(code ?? 0);
@@ -202,17 +210,28 @@ Examples:
         process.exit(1);
       }
 
-      // Resolve any nopwd:// references in the calling environment
-      const refOverrides = resolveSecretRefs(all);
-
       const [cmd, ...cmdArgs] = args as [string, ...string[]];
 
       if (opts.viaSocket) {
-        // Secrets never enter the child's environment — served on demand via socket
+        // Secrets never enter the child's environment — served on demand via socket.
+        // nopwd:// env references are deliberately left unresolved here (resolving
+        // them would put plaintext back into the env); tell the user instead.
+        const unresolvedRefs = Object.entries(process.env)
+          .filter(([, v]) => v?.startsWith("nopwd://"))
+          .map(([k]) => k);
+        if (unresolvedRefs.length > 0) {
+          process.stderr.write(
+            `nopwd run: --via-socket does not resolve nopwd:// references (${unresolvedRefs.join(", ")}); ` +
+            `fetch them via $NOPWD_SOCKET instead\n`,
+          );
+        }
         spawnViaSocket(selected, cmd, cmdArgs);
         // spawnViaSocket manages its own event loop — don't return
         return new Promise<void>(() => { /* intentionally never resolves */ });
       }
+
+      // Resolve any nopwd:// references in the calling environment
+      const refOverrides = resolveSecretRefs(all);
 
       const child = spawn(cmd, cmdArgs, {
         stdio: "inherit",

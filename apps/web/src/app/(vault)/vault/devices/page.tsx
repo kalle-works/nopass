@@ -20,7 +20,7 @@ function timeAgo(dateStr: string | null): string {
 }
 
 function DeviceIcon({ type }: { type: string }) {
-  if (type === "desktop_mac") {
+  if (type.startsWith("desktop_")) {
     return (
       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
         <rect x="2" y="3" width="20" height="14" />
@@ -54,6 +54,8 @@ function DeviceIcon({ type }: { type: string }) {
 
 const DEVICE_TYPE_LABELS: Record<string, string> = {
   desktop_mac: "Mac",
+  desktop_linux: "Linux",
+  desktop_windows: "Windows",
   android: "Android",
   web: "Web",
   extension: "Browser Extension",

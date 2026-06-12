@@ -7,12 +7,19 @@ import {
   srpStep1,
   srpStep2,
 } from "@nopass/crypto";
-import { DEFAULT_KDF_PARAMS } from "@nopass/types";
+import { DEFAULT_KDF_PARAMS, type DeviceType } from "@nopass/types";
 import { createApiClient } from "./api-client.js";
 import { saveSession, loadDeviceId, saveDeviceId, type Session } from "./session.js";
 
-function deviceType(): "desktop_mac" | "android" | "web" | "extension" {
-  return platform() === "darwin" ? "desktop_mac" : "desktop_mac";
+function deviceType(): DeviceType {
+  switch (platform()) {
+    case "darwin":
+      return "desktop_mac";
+    case "win32":
+      return "desktop_windows";
+    default:
+      return "desktop_linux";
+  }
 }
 
 function devicePublicKeyB64(): string {
