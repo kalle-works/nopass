@@ -41,8 +41,24 @@ function findUsernameField(passwordField: HTMLInputElement): HTMLInputElement | 
 }
 
 // ─── Autofill button ──────────────────────────────────────────────────────────
+//
+// The button is an overlay appended to <body>, positioned over the field's
+// right edge. Reparenting the field into a wrapper (the obvious alternative)
+// breaks `width: 100%` sizing and detaches React refs on framework pages.
 
 const ATTR = "data-nopass-injected";
+const BTN_SIZE = 22;
+
+const KEY_ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">' +
+  '<circle cx="5" cy="11" r="3"/><path d="M7.5 8.5 L13.5 2.5 M11 5 L13 7"/></svg>';
+
+interface InjectedButton {
+  field: HTMLInputElement;
+  btn: HTMLButtonElement;
+}
+
+const injected: InjectedButton[] = [];
 
 function injectButton(passwordField: HTMLInputElement): void {
   if (passwordField.hasAttribute(ATTR)) return;
@@ -50,23 +66,27 @@ function injectButton(passwordField: HTMLInputElement): void {
 
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.title = "Fill with nopass";
+  btn.title = "Fill with nopwd";
+  btn.setAttribute("data-nopass-button", "1");
   btn.style.cssText = [
     "position:absolute",
-    "right:6px",
-    "top:50%",
-    "transform:translateY(-50%)",
-    "width:22px",
-    "height:22px",
+    `width:${BTN_SIZE}px`,
+    `height:${BTN_SIZE}px`,
+    "display:flex",
+    "align-items:center",
+    "justify-content:center",
     "padding:0",
     "border:none",
+    "border-radius:0",
     "background:transparent",
+    "color:#9C988D",
     "cursor:pointer",
     "z-index:2147483647",
     "line-height:1",
-    "font-size:14px",
   ].join(";");
-  btn.textContent = "🔑";
+  btn.innerHTML = KEY_ICON_SVG;
+  btn.addEventListener("mouseenter", () => { btn.style.color = "#D6FF3F"; });
+  btn.addEventListener("mouseleave", () => { btn.style.color = "#9C988D"; });
 
   btn.addEventListener("click", (e) => {
     e.preventDefault();
@@ -74,16 +94,37 @@ function injectButton(passwordField: HTMLInputElement): void {
     openPopupForField(passwordField);
   });
 
-  // Wrap field in a positioned container so the button can be absolutely placed
-  const parent = passwordField.parentElement;
-  if (!parent) return;
-
-  const wrapper = document.createElement("span");
-  wrapper.style.cssText = "position:relative;display:inline-block";
-  parent.insertBefore(wrapper, passwordField);
-  wrapper.appendChild(passwordField);
-  wrapper.appendChild(btn);
+  document.body.appendChild(btn);
+  const entry: InjectedButton = { field: passwordField, btn };
+  injected.push(entry);
+  positionButton(entry);
 }
+
+function positionButton({ field, btn }: InjectedButton): void {
+  const rect = field.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) {
+    btn.style.display = "none";
+    return;
+  }
+  btn.style.display = "flex";
+  btn.style.top = `${window.scrollY + rect.top + (rect.height - BTN_SIZE) / 2}px`;
+  btn.style.left = `${window.scrollX + rect.right - BTN_SIZE - 6}px`;
+}
+
+function repositionAll(): void {
+  for (let i = injected.length - 1; i >= 0; i--) {
+    const entry = injected[i]!;
+    if (!entry.field.isConnected) {
+      entry.btn.remove();
+      injected.splice(i, 1);
+      continue;
+    }
+    positionButton(entry);
+  }
+}
+
+window.addEventListener("scroll", repositionAll, { capture: true, passive: true });
+window.addEventListener("resize", repositionAll, { passive: true });
 
 let activePasswordField: HTMLInputElement | null = null;
 
@@ -127,6 +168,7 @@ function scanAndInject(): void {
   for (const field of findPasswordFields()) {
     injectButton(field);
   }
+  repositionAll();
 }
 
 // The script now runs at document_start (for the WebAuthn relay), so the
