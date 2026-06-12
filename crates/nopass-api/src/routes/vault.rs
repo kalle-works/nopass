@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get, post, put},
+    routing::{get, put},
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};

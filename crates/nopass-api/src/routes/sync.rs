@@ -1,8 +1,7 @@
 use axum::{extract::State, routing::post, Extension, Json, Router};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use chrono::Utc;
 use nopass_models::{
-    SyncCheckpoint, SyncEvent as ModelSyncEvent, SyncEventType, SyncRequest, SyncResponse,
+    SyncEvent as ModelSyncEvent, SyncEventType, SyncRequest, SyncResponse,
     VectorClock,
 };
 use uuid::Uuid;

@@ -12,6 +12,8 @@ interface UnlockScreenProps {
   mode: "login" | "register";
   onSuccess?: () => void;
   onSwitchMode: () => void;
+  /** Shown in login mode — navigates to the recovery-kit flow */
+  onForgotPassword?: () => void;
 }
 
 function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string; color: string; bg: string } {
@@ -47,7 +49,7 @@ function humanizeError(err: unknown): string {
   return msg || "Something went wrong. Please try again.";
 }
 
-export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: UnlockScreenProps) {
+export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgotPassword }: UnlockScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -294,6 +296,18 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode }: Unloc
               {mode === "login" ? "Create account" : "Sign in"}
             </button>
           </p>
+
+          {mode === "login" && onForgotPassword && (
+            <p className="mt-2 text-center text-xs text-[#9C988D]">
+              Forgot your master password?{" "}
+              <button
+                onClick={onForgotPassword}
+                className="text-[#9C988D] hover:text-[#D6FF3F] underline underline-offset-2 transition-colors"
+              >
+                Use your recovery kit
+              </button>
+            </p>
+          )}
         </div>
 
         {/* Security badge */}

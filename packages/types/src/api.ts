@@ -1,3 +1,5 @@
+import type { EncryptedVaultItem } from "./vault";
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 export interface KdfParams {
