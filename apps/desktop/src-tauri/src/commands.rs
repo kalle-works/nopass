@@ -225,16 +225,76 @@ fn write_askpass_script(passphrase: &str) -> Result<std::path::PathBuf, String> 
     Ok(path)
 }
 
-// ─── Biometric availability ───────────────────────────────────────────────────
-// Full Touch ID integration via LocalAuthentication is planned for v2.
-// The Keychain still provides fast re-unlock (no Argon2id re-run) in v1.
+// ─── Biometric (Touch ID via LocalAuthentication) ────────────────────────────
+// The vault keys live in the login Keychain; Touch ID gates the load in-app.
+// evaluatePolicy presents its own system prompt and replies on a private
+// queue, so the whole interaction runs on a blocking thread.
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn touch_id_available() -> bool {
+    use objc2_local_authentication::{LAContext, LAPolicy};
+    unsafe {
+        LAContext::new()
+            .canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics)
+            .is_ok()
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn touch_id_authenticate(reason: String) -> Result<bool, String> {
+    use block2::RcBlock;
+    use objc2::runtime::Bool;
+    use objc2_foundation::{NSError, NSString};
+    use objc2_local_authentication::{LAContext, LAPolicy};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let (tx, rx) = mpsc::channel::<bool>();
+        unsafe {
+            let ctx = LAContext::new();
+            let ns_reason = NSString::from_str(&reason);
+            let reply = RcBlock::new(move |success: Bool, _error: *mut NSError| {
+                let _ = tx.send(success.as_bool());
+            });
+            ctx.evaluatePolicy_localizedReason_reply(
+                LAPolicy::DeviceOwnerAuthenticationWithBiometrics,
+                &ns_reason,
+                &reply,
+            );
+            // The context must outlive the system prompt; recv blocks until
+            // the user confirms, cancels, or the prompt times out.
+            let ok = rx.recv_timeout(Duration::from_secs(120)).unwrap_or(false);
+            drop(ctx);
+            Ok(ok)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 pub fn touch_id_available() -> bool {
     false
 }
 
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 pub async fn touch_id_authenticate(_reason: String) -> Result<bool, String> {
     Ok(false)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod biometric_tests {
+    /// canEvaluatePolicy never shows a prompt — this exercises the real
+    /// LocalAuthentication call. The value depends on the host hardware,
+    /// so only the call itself is asserted (no panic / no ObjC exception).
+    #[test]
+    fn touch_id_availability_probe() {
+        let available = super::touch_id_available();
+        println!("touch_id_available: {available}");
+    }
 }
