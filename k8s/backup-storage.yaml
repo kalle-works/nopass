@@ -1,0 +1,40 @@
+# Hetzner Cloud Volume (Ceph network storage, terraform: hcloud_volume.nopwd_backups)
+# attached to ci-1 — a separate failure domain from the bare-metal disks that
+# hold Longhorn/Postgres. Exposed as a local PV because PSS baseline forbids
+# hostPath volumes in pods.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nopwd-backups
+  labels:
+    app.kubernetes.io/name: nopwd-backup
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nopwd-backup-local
+  local:
+    path: /mnt/HC_Volume_106003442
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - k3s-production-ci-1-dcc57cc4
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nopwd-backups
+  namespace: nopwd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nopwd-backup-local
+  resources:
+    requests:
+      storage: 10Gi

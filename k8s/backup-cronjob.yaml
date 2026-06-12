@@ -1,0 +1,100 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nopwd-backup
+  namespace: nopwd
+  labels:
+    app.kubernetes.io/name: nopwd-backup
+spec:
+  schedule: "20 3 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: nopwd-backup
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: postgres:17-alpine
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  TS=$(date -u +%Y%m%d-%H%M%S)
+                  echo "dumping nopwd database…"
+                  pg_dump "$DATABASE_URL" -Fc -f /tmp/nopwd-$TS.dump
+                  echo "encrypting…"
+                  openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+                    -in /tmp/nopwd-$TS.dump -out /backups/nopwd-$TS.dump.enc \
+                    -pass env:BACKUP_PASSPHRASE
+                  rm /tmp/nopwd-$TS.dump
+                  # Tier 1 retention: 14 most recent on the Hetzner volume
+                  ls -1t /backups/nopwd-*.dump.enc | tail -n +15 | xargs -r rm -f
+
+                  echo "pushing offsite (rolling 7, constant-size repo)…"
+                  apk add --no-cache git openssh-client >/dev/null
+                  export HOME=/tmp
+                  mkdir -p /tmp/.ssh
+                  cp /secrets/deploy-key /tmp/.ssh/id_ed25519
+                  chmod 600 /tmp/.ssh/id_ed25519
+                  ssh-keyscan github.com >> /tmp/.ssh/known_hosts 2>/dev/null
+                  rm -rf /tmp/off
+                  if ! git clone --depth 1 git@github.com:kalle-works/nopwd-backups.git /tmp/off 2>/dev/null; then
+                    mkdir -p /tmp/off && cd /tmp/off && git init -q -b main
+                    git remote add origin git@github.com:kalle-works/nopwd-backups.git
+                  fi
+                  cd /tmp/off
+                  rm -f nopwd-*.dump.enc
+                  cp $(ls -1t /backups/nopwd-*.dump.enc | head -7) .
+                  git add -A
+                  git -c user.email=backup@nopwd.dev -c user.name=nopwd-backup \
+                    commit -q --amend -m "nopwd encrypted backups (rolling)" 2>/dev/null \
+                  || git -c user.email=backup@nopwd.dev -c user.name=nopwd-backup \
+                    commit -q -m "nopwd encrypted backups (rolling)"
+                  git push -q --force origin main
+                  echo "backup complete: nopwd-$TS.dump.enc ($(stat -c%s /backups/nopwd-$TS.dump.enc) bytes), offsite synced"
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: nopwd-secrets
+                      key: database-url
+                - name: BACKUP_PASSPHRASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: nopwd-backup-secrets
+                      key: passphrase
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                - name: secrets
+                  mountPath: /secrets
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+              securityContext:
+                allowPrivilegeEscalation: false
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: nopwd-backups
+            - name: secrets
+              secret:
+                secretName: nopwd-backup-secrets
+                defaultMode: 0400
+            - name: tmp
+              emptyDir: {}

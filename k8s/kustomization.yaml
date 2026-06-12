@@ -10,3 +10,6 @@ resources:
   - services.yaml
   - ingress.yaml
   - poddisruptionbudget.yaml
+  - backup-storage.yaml
+  - backup-cronjob.yaml
+  - backup-sealed-secret.yaml
