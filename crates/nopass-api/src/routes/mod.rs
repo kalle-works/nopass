@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod auth;
 pub mod billing;
 pub mod devices;
@@ -19,6 +20,21 @@ use axum::{
 };
 
 use crate::{middleware::auth::require_auth, state::AppState};
+
+/// Resolved client IP, honoring X-Forwarded-For only from trusted proxies.
+/// Inserted into request extensions so handlers can log activity events.
+#[derive(Debug, Clone, Copy)]
+pub struct ClientIp(pub IpAddr);
+
+async fn attach_client_ip(
+    State(state): State<AppState>,
+    mut req: Request,
+    next: Next,
+) -> impl IntoResponse {
+    let ip = extract_client_ip(&req, &state.config.trusted_proxies);
+    req.extensions_mut().insert(ClientIp(ip));
+    next.run(req).await
+}
 
 pub fn router(state: AppState) -> Router<AppState> {
     let public = Router::new()
@@ -46,13 +62,17 @@ pub fn router(state: AppState) -> Router<AppState> {
         .nest("/auth/recovery", recovery::protected_router())
         .nest("/shares", shares::router())
         .nest("/billing", billing::router())
+        .nest("/activity", activity::router())
         .nest("/devices", devices::router())
         .nest("/organizations", orgs::router())
         .nest("/vaults", vault::router())
         .nest("/sync", sync::router())
-        .route_layer(middleware::from_fn_with_state(state, require_auth));
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
-    Router::new().merge(public).merge(protected)
+    Router::new()
+        .merge(public)
+        .merge(protected)
+        .layer(middleware::from_fn_with_state(state, attach_client_ip))
 }
 
 /// Per-IP rate limiter middleware for auth endpoints (20 req/min, burst 10).

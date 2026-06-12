@@ -1,4 +1,5 @@
 // Database query helpers — keeps routes thin
+pub mod activity;
 pub mod auth;
 pub mod devices;
 pub mod orgs;

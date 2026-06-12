@@ -265,6 +265,16 @@ pub struct MoveItemRequest {
     pub to_vault_id: Uuid,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityEventInfo {
+    pub id: Uuid,
+    pub event_type: String,
+    pub ip: Option<String>,
+    pub device_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
 // ─── Generic ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

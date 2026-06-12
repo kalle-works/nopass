@@ -13,10 +13,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, recovery as db_recovery},
+    db::{activity, auth as db_auth, recovery as db_recovery},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
-    routes::vault::parse_item_type,
+    routes::{vault::parse_item_type, ClientIp},
     state::{AppState, RecoveryPendingSession, RECOVERY_SESSION_TTL_SECS},
 };
 
@@ -64,6 +64,7 @@ async fn status(
 async fn set_recovery(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<SetRecoveryRequest>,
 ) -> ApiResult<StatusCode> {
     let auth_key = decode_b64(&req.recovery_auth_key, "recovery_auth_key")?;
@@ -76,6 +77,7 @@ async fn set_recovery(
 
     db_recovery::set_recovery(&state.db, auth.user_id, &hash_auth_key(&auth_key), &blob, &blob_iv)
         .await?;
+    activity::record(&state.db, auth.user_id, "recovery_kit_created", Some(&client_ip.to_string()), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -83,13 +85,16 @@ async fn set_recovery(
 async fn disable(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
 ) -> ApiResult<StatusCode> {
     db_recovery::clear_recovery(&state.db, auth.user_id).await?;
+    activity::record(&state.db, auth.user_id, "recovery_kit_disabled", Some(&client_ip.to_string()), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn recovery_init(
     State(state): State<AppState>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<RecoveryInitRequest>,
 ) -> ApiResult<Json<RecoveryInitResponse>> {
     let auth_key = decode_b64(&req.recovery_auth_key, "recovery_auth_key")?;
@@ -131,6 +136,7 @@ async fn recovery_init(
         })
         .collect::<ApiResult<Vec<_>>>()?;
 
+    activity::record(&state.db, user.id, "recovery_initiated", Some(&client_ip.to_string()), None).await;
     let recovery_token = Uuid::new_v4();
     {
         let mut sessions = state.recovery_sessions.lock().await;
@@ -155,6 +161,7 @@ async fn recovery_init(
 
 async fn recovery_complete(
     State(state): State<AppState>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<RecoveryCompleteRequest>,
 ) -> ApiResult<StatusCode> {
     let token: Uuid = req
@@ -244,6 +251,7 @@ async fn recovery_complete(
         let mut sessions = state.recovery_sessions.lock().await;
         sessions.remove(&token);
     }
+    activity::record(&state.db, pending.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

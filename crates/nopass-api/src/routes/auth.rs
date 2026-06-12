@@ -7,9 +7,10 @@ use nopass_models::{
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, devices as db_devices, sessions, vaults as db_vaults},
+    db::{activity, auth as db_auth, devices as db_devices, sessions, vaults as db_vaults},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
+    routes::ClientIp,
     state::{AppState, SrpPendingSession},
 };
 use nopass_crypto::srp::{srp_server_init, srp_server_verify};
@@ -113,6 +114,7 @@ async fn srp_init(
 
 async fn srp_verify(
     State(state): State<AppState>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<SrpVerifyRequest>,
 ) -> ApiResult<Json<SrpVerifyResponse>> {
     let pending = {
@@ -129,13 +131,18 @@ async fn srp_verify(
     let client_proof_m1 = B64.decode(&req.client_proof_m1)
         .map_err(|_| ApiError::BadRequest("invalid client_proof_m1".into()))?;
 
-    let verify_result = srp_server_verify(
+    let verify_result = match srp_server_verify(
         &pending.verifier,
         &pending.server_ephemeral_b,
         &pending.client_public_a,
         &client_proof_m1,
-    )
-    .map_err(|_| ApiError::Unauthorized("authentication failed".into()))?;
+    ) {
+        Ok(r) => r,
+        Err(_) => {
+            activity::record(&state.db, pending.user_id, "login_failed", Some(&client_ip.to_string()), None).await;
+            return Err(ApiError::Unauthorized("authentication failed".into()));
+        }
+    };
 
     let _ = verify_result.session_key;
 
@@ -166,6 +173,7 @@ async fn srp_verify(
         .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("no vault found for user")))?;
 
     let session_token = sessions::create_session(&state.db, user.id, device_id).await?;
+    activity::record(&state.db, user.id, "login_succeeded", Some(&client_ip.to_string()), device_id).await;
 
     Ok(Json(SrpVerifyResponse {
         server_proof_m2: B64.encode(&verify_result.server_proof_m2),

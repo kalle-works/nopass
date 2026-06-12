@@ -369,6 +369,29 @@ export default function HealthPage() {
               </div>
             </div>
 
+            {/* Activity log */}
+            <div className="bg-[#11110F] border border-[#2B2923] p-5">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 bg-[#181713] border border-[#2B2923] flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-[#D6FF3F]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-mono text-xs font-semibold text-[#F4F1E8] uppercase tracking-widest">Activity</h3>
+                  <p className="text-xs text-[#9C988D] mt-1.5">
+                    Sign-ins, recovery attempts, new devices, and shares — spot anything you don&apos;t recognize.
+                  </p>
+                </div>
+                <button
+                  onClick={() => router.push("/vault/activity")}
+                  className="px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] transition-colors shrink-0"
+                >
+                  View
+                </button>
+              </div>
+            </div>
+
             {/* Breached passwords */}
             {hibpChecked && report.breached.length > 0 && (
               <section className="bg-[#11110F] border border-[#E8321A]/30 overflow-hidden">

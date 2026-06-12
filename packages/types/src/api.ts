@@ -130,6 +130,17 @@ export interface RecoveryCompleteRequest {
   recoveryBlobIv: string;
 }
 
+// ─── Activity ────────────────────────────────────────────────────────────────
+
+/** Security audit event — metadata only, never item contents. */
+export interface ActivityEventInfo {
+  id: string;
+  eventType: string;
+  ip: string | null;
+  deviceId: string | null;
+  createdAt: string;
+}
+
 // ─── Vaults ──────────────────────────────────────────────────────────────────
 
 export interface VaultInfo {

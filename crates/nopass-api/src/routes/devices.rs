@@ -9,9 +9,11 @@ use nopass_models::{DeviceInfo, RegisterDeviceRequest};
 use uuid::Uuid;
 
 use crate::{
+    db::activity,
     db::devices as db_devices,
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
+    routes::ClientIp,
     state::AppState,
 };
 
@@ -44,6 +46,7 @@ async fn list_devices(
 async fn register_device(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<RegisterDeviceRequest>,
 ) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
     let device_public_key = B64.decode(&req.device_public_key)
@@ -73,6 +76,7 @@ async fn register_device(
         protected_device_key_iv.as_deref(),
     )
     .await?;
+    activity::record(&state.db, auth.user_id, "device_registered", Some(&client_ip.to_string()), Some(device.id)).await;
 
     Ok((
         StatusCode::CREATED,
@@ -83,10 +87,12 @@ async fn register_device(
 async fn remove_device(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Path(device_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
     let deleted = db_devices::delete_device(&state.db, device_id, auth.user_id).await?;
     if deleted {
+        activity::record(&state.db, auth.user_id, "device_revoked", Some(&client_ip.to_string()), Some(device_id)).await;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound("device not found".into()))
