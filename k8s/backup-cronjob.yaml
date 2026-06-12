@@ -44,7 +44,8 @@ spec:
                   mkdir -p /tmp/.ssh
                   cp /secrets/deploy-key /tmp/.ssh/id_ed25519
                   chmod 600 /tmp/.ssh/id_ed25519
-                  ssh-keyscan github.com >> /tmp/.ssh/known_hosts 2>/dev/null
+                  # ssh resolves ~ from passwd, not $HOME — be explicit about both files
+                  export GIT_SSH_COMMAND="ssh -i /tmp/.ssh/id_ed25519 -o UserKnownHostsFile=/tmp/.ssh/known_hosts -o StrictHostKeyChecking=accept-new"
                   rm -rf /tmp/off
                   if ! git clone --depth 1 git@github.com:kalle-works/nopwd-backups.git /tmp/off 2>/dev/null; then
                     mkdir -p /tmp/off && cd /tmp/off && git init -q -b main
