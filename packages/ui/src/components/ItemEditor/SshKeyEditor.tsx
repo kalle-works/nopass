@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SshKeyItem } from "@nopass/types";
+import { TagsEditor } from "./TagsEditor";
 
 interface SshKeyEditorProps {
   initial?: Partial<SshKeyItem> | undefined;
@@ -12,6 +13,7 @@ interface SshKeyEditorProps {
 
 export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditorProps) {
   const [name, setName] = useState(initial?.name ?? "");
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [privateKey, setPrivateKey] = useState(initial?.privateKey ?? "");
   const [publicKey, setPublicKey] = useState(initial?.publicKey ?? "");
   const [passphrase, setPassphrase] = useState(initial?.passphrase ?? "");
@@ -30,6 +32,7 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
       ...(passphrase && { passphrase }),
       ...(comment && { comment }),
       ...(notes && { notes }),
+      ...(tags.length > 0 ? { tags } : {}),
       useInAgent,
     });
   }
@@ -140,6 +143,7 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
         </button>
       </label>
 
+      <TagsEditor tags={tags} onChange={setTags} />
       <FormActions onCancel={onCancel} {...(saving !== undefined && { saving })} />
     </form>
   );

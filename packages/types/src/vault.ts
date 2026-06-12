@@ -11,6 +11,7 @@ export interface CustomField {
 export interface LoginItem {
   type: "login";
   name: string;
+  tags?: string[];
   username: string;
   password: string;
   urls: string[];
@@ -22,12 +23,14 @@ export interface LoginItem {
 export interface NoteItem {
   type: "note";
   name: string;
+  tags?: string[];
   content: string;
 }
 
 export interface CardItem {
   type: "card";
   name: string;
+  tags?: string[];
   cardholderName: string;
   number: string;
   expMonth: string;
@@ -39,6 +42,7 @@ export interface CardItem {
 export interface IdentityItem {
   type: "identity";
   name: string;
+  tags?: string[];
   firstName: string;
   lastName: string;
   email: string;
@@ -52,6 +56,7 @@ export interface IdentityItem {
 export interface SshKeyItem {
   type: "ssh_key";
   name: string;
+  tags?: string[];
   privateKey: string;
   publicKey?: string;
   passphrase?: string;
