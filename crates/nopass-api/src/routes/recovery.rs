@@ -13,11 +13,11 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    db::{activity, auth as db_auth, recovery as db_recovery},
+    db::{activity, auth as db_auth, pending, recovery as db_recovery},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     routes::{vault::parse_item_type, ClientIp},
-    state::{AppState, RecoveryPendingSession, RECOVERY_SESSION_TTL_SECS},
+    state::{AppState, RECOVERY_SESSION_TTL_SECS},
 };
 
 pub fn public_router() -> Router<AppState> {
@@ -138,16 +138,7 @@ async fn recovery_init(
 
     activity::record(&state.db, user.id, "recovery_initiated", Some(&client_ip.to_string()), None).await;
     let recovery_token = Uuid::new_v4();
-    {
-        let mut sessions = state.recovery_sessions.lock().await;
-        sessions.insert(
-            recovery_token,
-            RecoveryPendingSession {
-                user_id: user.id,
-                created_at: std::time::Instant::now(),
-            },
-        );
-    }
+    pending::insert_recovery(&state.db, recovery_token, user.id).await?;
 
     Ok(Json(RecoveryInitResponse {
         recovery_token: recovery_token.to_string(),
@@ -173,15 +164,11 @@ async fn recovery_complete(
     // leave the token usable so the client can retry without restarting the
     // whole code-entry flow. The token holder already has full recovery power,
     // so single-use isn't load-bearing; it's consumed on success below.
-    let pending = {
-        let sessions = state.recovery_sessions.lock().await;
-        sessions
-            .get(&token)
-            .cloned()
-            .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?
-    };
+    let pending_session = pending::peek_recovery(&state.db, token)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
 
-    if pending.created_at.elapsed().as_secs() >= RECOVERY_SESSION_TTL_SECS {
+    if (chrono::Utc::now() - pending_session.created_at).num_seconds() > RECOVERY_SESSION_TTL_SECS as i64 {
         return Err(ApiError::Unauthorized("recovery session expired".into()));
     }
 
@@ -199,7 +186,7 @@ async fn recovery_complete(
 
     // The client must re-encrypt every single item — a partial set would leave
     // the rest of the vault undecryptable under the new keys.
-    let expected = db_recovery::list_all_items_for_user(&state.db, pending.user_id).await?;
+    let expected = db_recovery::list_all_items_for_user(&state.db, pending_session.user_id).await?;
     if expected.len() != req.items.len() {
         return Err(ApiError::BadRequest(format!(
             "expected {} re-encrypted items, got {}",
@@ -224,7 +211,8 @@ async fn recovery_complete(
     let new_auth_hash = hash_auth_key(&new_auth_key);
     db_recovery::complete_recovery(
         &state.db,
-        pending.user_id,
+        token,
+        pending_session.user_id,
         db_recovery::RecoveryCompletion {
             srp_salt: &srp_salt,
             srp_verifier: &srp_verifier,
@@ -243,15 +231,14 @@ async fn recovery_complete(
         db_recovery::CompleteRecoveryError::ItemMismatch => {
             ApiError::BadRequest("one or more items do not belong to this account".into())
         }
+        db_recovery::CompleteRecoveryError::TokenConsumed => {
+            ApiError::Unauthorized("recovery session not found or expired".into())
+        }
         db_recovery::CompleteRecoveryError::Db(e) => ApiError::Internal(e),
     })?;
 
-    // Success — burn the token
-    {
-        let mut sessions = state.recovery_sessions.lock().await;
-        sessions.remove(&token);
-    }
-    activity::record(&state.db, pending.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
+    // Token was burned inside the completion transaction
+    activity::record(&state.db, pending_session.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

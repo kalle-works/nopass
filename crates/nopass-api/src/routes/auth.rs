@@ -7,11 +7,11 @@ use nopass_models::{
 use uuid::Uuid;
 
 use crate::{
-    db::{activity, auth as db_auth, devices as db_devices, sessions, vaults as db_vaults},
+    db::{activity, auth as db_auth, devices as db_devices, pending, sessions, vaults as db_vaults},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     routes::ClientIp,
-    state::{AppState, SrpPendingSession},
+    state::AppState,
 };
 use nopass_crypto::srp::{srp_server_init, srp_server_verify};
 
@@ -90,19 +90,15 @@ async fn srp_init(
     let kdf_params: KdfParams = serde_json::from_value(user.kdf_params.clone())
         .map_err(|e| ApiError::Internal(e.into()))?;
 
-    {
-        let mut sessions = state.srp_sessions.lock().await;
-        sessions.insert(
-            session_id,
-            SrpPendingSession {
-                user_id: user.id,
-                verifier: user.srp_verifier.clone(),
-                server_ephemeral_b: srp_result.server_ephemeral_b,
-                client_public_a,
-                created_at: std::time::Instant::now(),
-            },
-        );
-    }
+    pending::insert_srp(
+        &state.db,
+        session_id,
+        user.id,
+        &user.srp_verifier,
+        &srp_result.server_ephemeral_b,
+        &client_public_a,
+    )
+    .await?;
 
     Ok(Json(SrpInitResponse {
         session_id,
@@ -117,14 +113,13 @@ async fn srp_verify(
     Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<SrpVerifyRequest>,
 ) -> ApiResult<Json<SrpVerifyResponse>> {
-    let pending = {
-        let mut sessions = state.srp_sessions.lock().await;
-        sessions
-            .remove(&req.session_id)
-            .ok_or_else(|| ApiError::Unauthorized("SRP session not found or expired".into()))?
-    };
+    // DELETE … RETURNING consumes the handshake atomically — one proof
+    // attempt per init, valid across replicas and restarts
+    let pending = pending::take_srp(&state.db, req.session_id)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("SRP session not found or expired".into()))?;
 
-    if pending.created_at.elapsed().as_secs() > 300 {
+    if (chrono::Utc::now() - pending.created_at).num_seconds() > crate::state::SRP_SESSION_TTL_SECS as i64 {
         return Err(ApiError::Unauthorized("SRP session expired".into()));
     }
 
@@ -132,7 +127,7 @@ async fn srp_verify(
         .map_err(|_| ApiError::BadRequest("invalid client_proof_m1".into()))?;
 
     let verify_result = match srp_server_verify(
-        &pending.verifier,
+        &pending.srp_verifier,
         &pending.server_ephemeral_b,
         &pending.client_public_a,
         &client_proof_m1,
