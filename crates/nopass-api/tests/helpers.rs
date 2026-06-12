@@ -56,7 +56,7 @@ pub async fn register_user(server: &TestServer, email: &str, password: &str) {
 /// Completes the SRP login flow and returns the SrpVerifyResponse.
 pub async fn login(server: &TestServer, email: &str, password: &str) -> SrpVerifyResponse {
     let email_hash = compute_email_hash(email);
-    let (srp_salt, _srp_verifier) = generate_srp_verifier(email, password);
+    let (_srp_salt, _srp_verifier) = generate_srp_verifier(email, password);
 
     let client = SrpClient::<Sha256>::new(&G_2048);
 

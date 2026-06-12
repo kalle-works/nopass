@@ -130,6 +130,26 @@ export interface RecoveryCompleteRequest {
   recoveryBlobIv: string;
 }
 
+// ─── Vaults ──────────────────────────────────────────────────────────────────
+
+export interface VaultInfo {
+  id: string;
+  /** base64 AES-GCM encrypted vault name (the registration default is a
+   *  plaintext placeholder that fails decryption — render a fallback) */
+  nameBlob: string;
+  nameIv: string;
+  createdAt: string;
+}
+
+export interface CreateVaultRequest {
+  nameBlob: string;
+  nameIv: string;
+}
+
+export interface MoveItemRequest {
+  toVaultId: string;
+}
+
 // ─── Shares ──────────────────────────────────────────────────────────────────
 
 /** One-time/expiring share — blob key travels only in the URL fragment. */

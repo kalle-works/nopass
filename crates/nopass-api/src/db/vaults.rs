@@ -143,3 +143,103 @@ pub async fn soft_delete_item(pool: &PgPool, item_id: Uuid, user_id: Uuid) -> Re
     .await?;
     Ok(result.rows_affected() > 0)
 }
+
+pub async fn create_named_vault(
+    pool: &PgPool,
+    user_id: Uuid,
+    name_blob: &[u8],
+    name_iv: &[u8],
+) -> Result<Vault> {
+    let vault = sqlx::query_as::<_, Vault>(
+        "INSERT INTO vaults (user_id, name_blob, name_iv) VALUES ($1, $2, $3) RETURNING *",
+    )
+    .bind(user_id)
+    .bind(name_blob)
+    .bind(name_iv)
+    .fetch_one(pool)
+    .await?;
+    Ok(vault)
+}
+
+pub async fn rename_vault(
+    pool: &PgPool,
+    vault_id: Uuid,
+    user_id: Uuid,
+    name_blob: &[u8],
+    name_iv: &[u8],
+) -> Result<bool> {
+    let result =
+        sqlx::query("UPDATE vaults SET name_blob = $3, name_iv = $4 WHERE id = $1 AND user_id = $2")
+            .bind(vault_id)
+            .bind(user_id)
+            .bind(name_blob)
+            .bind(name_iv)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn count_items_in_vault(pool: &PgPool, vault_id: Uuid, user_id: Uuid) -> Result<i64> {
+    let row = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM vault_items WHERE vault_id = $1 AND user_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(vault_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn count_vaults_for_user(pool: &PgPool, user_id: Uuid) -> Result<i64> {
+    let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM vaults WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
+/// Guards live inside the statement — separate count-then-delete queries race:
+/// two concurrent deletes could remove the last vault, or a concurrent item
+/// create could land in a vault mid-deletion.
+pub async fn delete_vault_if_safe(pool: &PgPool, vault_id: Uuid, user_id: Uuid) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM vaults
+        WHERE id = $1 AND user_id = $2
+          AND (SELECT COUNT(*) FROM vaults WHERE user_id = $2) > 1
+          AND NOT EXISTS (
+              SELECT 1 FROM vault_items
+              WHERE vault_id = $1 AND user_id = $2 AND deleted_at IS NULL
+          )
+        "#,
+    )
+    .bind(vault_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Move an item to another vault owned by the same user. The destination is
+/// verified inside the query so a forged vault id can't smuggle items.
+pub async fn move_item(
+    pool: &PgPool,
+    item_id: Uuid,
+    user_id: Uuid,
+    to_vault_id: Uuid,
+) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE vault_items
+        SET vault_id = $3, updated_at = NOW(), version = version + 1
+        WHERE id = $1 AND user_id = $2
+          AND EXISTS (SELECT 1 FROM vaults WHERE id = $3 AND user_id = $2)
+        "#,
+    )
+    .bind(item_id)
+    .bind(user_id)
+    .bind(to_vault_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}

@@ -1,14 +1,14 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{get, put},
+    routing::{get, post, put},
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use chrono::{DateTime, Utc};
 use nopass_models::{
-    ConflictResponse, CreateVaultItemRequest, EncryptedVaultItem, UpdateVaultItemRequest,
-    VaultItemType,
+    ConflictResponse, CreateVaultItemRequest, CreateVaultRequest, EncryptedVaultItem,
+    MoveItemRequest, UpdateVaultItemRequest, VaultInfo, VaultItemType,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -22,11 +22,100 @@ use crate::{
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/", get(list_vaults).post(create_vault))
+        .route("/{vault_id}", put(rename_vault).delete(delete_vault))
         .route("/{vault_id}/items", get(list_items).post(create_item))
         .route(
             "/{vault_id}/items/{item_id}",
             put(update_item).delete(delete_item),
         )
+        .route("/{vault_id}/items/{item_id}/move", post(move_item))
+}
+
+fn vault_to_info(v: crate::models::vault::Vault) -> VaultInfo {
+    VaultInfo {
+        id: v.id,
+        name_blob: B64.encode(&v.name_blob),
+        name_iv: B64.encode(&v.name_iv),
+        created_at: v.created_at,
+    }
+}
+
+async fn list_vaults(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+) -> ApiResult<Json<Vec<VaultInfo>>> {
+    let vaults = db_vaults::list_vaults_for_user(&state.db, auth.user_id).await?;
+    Ok(Json(vaults.into_iter().map(vault_to_info).collect()))
+}
+
+async fn create_vault(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Json(req): Json<CreateVaultRequest>,
+) -> ApiResult<(StatusCode, Json<VaultInfo>)> {
+    let name_blob = B64.decode(&req.name_blob)
+        .map_err(|_| ApiError::BadRequest("invalid name_blob base64".into()))?;
+    let name_iv = B64.decode(&req.name_iv)
+        .map_err(|_| ApiError::BadRequest("invalid name_iv base64".into()))?;
+
+    let count = db_vaults::count_vaults_for_user(&state.db, auth.user_id).await?;
+    if count >= 32 {
+        return Err(ApiError::BadRequest("vault limit reached".into()));
+    }
+
+    let vault = db_vaults::create_named_vault(&state.db, auth.user_id, &name_blob, &name_iv).await?;
+    Ok((StatusCode::CREATED, Json(vault_to_info(vault))))
+}
+
+async fn rename_vault(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(vault_id): Path<Uuid>,
+    Json(req): Json<CreateVaultRequest>,
+) -> ApiResult<StatusCode> {
+    let name_blob = B64.decode(&req.name_blob)
+        .map_err(|_| ApiError::BadRequest("invalid name_blob base64".into()))?;
+    let name_iv = B64.decode(&req.name_iv)
+        .map_err(|_| ApiError::BadRequest("invalid name_iv base64".into()))?;
+
+    let renamed = db_vaults::rename_vault(&state.db, vault_id, auth.user_id, &name_blob, &name_iv).await?;
+    if !renamed {
+        return Err(ApiError::NotFound("vault not found".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_vault(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(vault_id): Path<Uuid>,
+) -> ApiResult<StatusCode> {
+    db_vaults::get_vault(&state.db, vault_id, auth.user_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("vault not found".into()))?;
+
+    // Atomic: last-vault and non-empty guards live inside the DELETE itself
+    let deleted = db_vaults::delete_vault_if_safe(&state.db, vault_id, auth.user_id).await?;
+    if !deleted {
+        return Err(ApiError::Conflict(
+            "vault must be empty and cannot be your only vault".into(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn move_item(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path((_vault_id, item_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<MoveItemRequest>,
+) -> ApiResult<StatusCode> {
+    let moved = db_vaults::move_item(&state.db, item_id, auth.user_id, req.to_vault_id).await?;
+    if !moved {
+        return Err(ApiError::NotFound("item or destination vault not found".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

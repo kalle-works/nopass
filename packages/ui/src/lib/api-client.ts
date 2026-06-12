@@ -12,11 +12,13 @@ import type {
   CreateOrgRequest,
   CreatePortalRequest,
   CreateShareRequest,
+  CreateVaultRequest,
   CreateShareResponse,
   CreateVaultItemRequest,
   DeviceInfo,
   EncryptedVaultItem,
   InviteMemberRequest,
+  MoveItemRequest,
   OrgDetails,
   OrgSummary,
   PortalSessionResponse,
@@ -37,6 +39,7 @@ import type {
   SyncRequest,
   SyncResponse,
   UpdateVaultItemRequest,
+  VaultInfo,
   ViewShareResponse,
 } from "@nopass/types";
 
@@ -113,6 +116,14 @@ export function createApiClient(baseUrl: string) {
       remove: (deviceId: string, token: string) => del<void>(`/devices/${deviceId}`, token),
     },
     vault: {
+      list: (token: string) => get<VaultInfo[]>("/vaults", token),
+      createVault: (req: CreateVaultRequest, token: string) =>
+        post<VaultInfo>("/vaults", req, token),
+      renameVault: (vaultId: string, req: CreateVaultRequest, token: string) =>
+        put<void>(`/vaults/${vaultId}`, req, token),
+      deleteVault: (vaultId: string, token: string) => del<void>(`/vaults/${vaultId}`, token),
+      moveItem: (vaultId: string, itemId: string, req: MoveItemRequest, token: string) =>
+        post<void>(`/vaults/${vaultId}/items/${itemId}/move`, req, token),
       items: (vaultId: string, token: string, since?: string) =>
         get<EncryptedVaultItem[]>(
           `/vaults/${vaultId}/items${since ? `?since=${encodeURIComponent(since)}` : ""}`,
