@@ -109,7 +109,7 @@ export default function ActivityPage() {
             <div className="divide-y divide-[#2B2923]">
               {events.map((event) => {
                 const meta = EVENT_LABELS[event.eventType] ?? {
-                  label: event.eventType,
+                  label: event.eventType.replace(/_/g, " "),
                   tone: "neutral" as const,
                 };
                 return (

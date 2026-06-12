@@ -124,7 +124,11 @@ async fn view_share(
     let share = db_shares::consume_view(&state.db, share_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("share not found".into()))?;
-    activity::record(&state.db, share.user_id, "share_viewed", Some(&client_ip.to_string()), None).await;
+    // Deliberately no IP: the viewer is an anonymous third party; retaining
+    // their address in the owner's log would be a privacy surprise. The
+    // timestamp is what the owner's audit needs.
+    let _ = client_ip;
+    activity::record(&state.db, share.user_id, "share_viewed", None, None).await;
 
     Ok(Json(ViewShareResponse {
         blob: B64.encode(&share.blob),

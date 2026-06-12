@@ -31,9 +31,20 @@ pub async fn record(pool: &PgPool, user_id: Uuid, event_type: &str, ip: Option<&
     }
 }
 
+/// Per-type cap of 50 inside the overall limit: a flood of one event type
+/// (e.g. attacker-generated login_failed noise) must not displace the rest
+/// of the audit trail from the visible window.
 pub async fn list_for_user(pool: &PgPool, user_id: Uuid, limit: i64) -> Result<Vec<ActivityEvent>> {
     let events = sqlx::query_as::<_, ActivityEvent>(
-        "SELECT * FROM activity_events WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+        r#"
+        SELECT id, user_id, event_type, ip, device_id, created_at FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY event_type ORDER BY created_at DESC) AS rn
+            FROM activity_events WHERE user_id = $1
+        ) ranked
+        WHERE rn <= 50
+        ORDER BY created_at DESC
+        LIMIT $2
+        "#,
     )
     .bind(user_id)
     .bind(limit)
