@@ -14,7 +14,7 @@ import {
   generateSrpRegistration,
   stretchMasterKeyRaw,
   encryptBytes,
-} from "../index.ts";
+} from "../index.js";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 
 const BASE = "http://127.0.0.1:3001/v1";
@@ -84,7 +84,12 @@ let bobToken: string;
 let bobKeys: Awaited<ReturnType<typeof registerAndLogin>>["keys"];
 let bobKeyPair: Awaited<ReturnType<typeof registerAndLogin>>["keyPair"];
 
-describe("Organization API — end-to-end", () => {
+// Requires a running API server — skip cleanly when it isn't reachable
+const apiAvailable = await fetch(`${BASE}/health`)
+  .then((r) => r.ok)
+  .catch(() => false);
+
+describe.skipIf(!apiAvailable)("Organization API — end-to-end", () => {
   beforeAll(async () => {
     const alice = await registerAndLogin(ALICE_EMAIL, PASSWORD);
     aliceToken = alice.token;

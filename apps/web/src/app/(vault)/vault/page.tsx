@@ -33,7 +33,7 @@ interface DecryptedEntry {
   plaintext: VaultItemPlaintext;
 }
 
-function ItemAvatar({ type }: { name: string; type: VaultItemType }) {
+function ItemAvatar({ type }: { type: VaultItemType }) {
   const icons: Record<VaultItemType, React.ReactNode> = {
     login: (
       <svg className="w-4 h-4 text-[#9C988D]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
@@ -401,7 +401,7 @@ function DetailPane({
     <aside className="w-96 flex flex-col border-l border-[#2B2923] bg-[#11110F] shrink-0 animate-slide-in-right">
       {/* Header */}
       <div className="flex items-start gap-3 px-5 py-4 border-b border-[#2B2923]">
-        <ItemAvatar name={plaintext.name} type={item.itemType} />
+        <ItemAvatar type={item.itemType} />
         <div className="flex-1 min-w-0 pt-0.5">
           <h2 className="text-sm font-semibold text-[#F4F1E8] truncate">{plaintext.name}</h2>
           <p className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mt-0.5">
@@ -1035,7 +1035,7 @@ function VaultPageInner() {
                           : "hover:bg-[#11110F] border-l-2 border-l-transparent border-y border-r border-transparent hover:border-[#2B2923]"
                       }`}
                     >
-                      <ItemAvatar name={name} type={item.itemType} />
+                      <ItemAvatar type={item.itemType} />
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm font-medium truncate ${isSelected ? "text-[#D6FF3F]" : "text-[#F4F1E8]"}`}>
                           {name}
