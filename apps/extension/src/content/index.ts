@@ -6,11 +6,16 @@
  * 2. Receive FILL_CREDENTIALS from the background SW and fill the fields
  */
 
+import { initWebauthnRelay } from "../webauthn/relay";
+
 interface FillMessage {
   type: "FILL_CREDENTIALS";
   username: string;
   password: string;
 }
+
+// Passkey relay must be listening before the page calls navigator.credentials
+initWebauthnRelay();
 
 // ─── Field detection ─────────────────────────────────────────────────────────
 
@@ -124,6 +129,16 @@ function scanAndInject(): void {
   }
 }
 
-const observer = new MutationObserver(() => scanAndInject());
-observer.observe(document.body, { childList: true, subtree: true });
-scanAndInject();
+// The script now runs at document_start (for the WebAuthn relay), so the
+// body may not exist yet when field scanning initializes
+function initFieldScanning(): void {
+  const observer = new MutationObserver(() => scanAndInject());
+  observer.observe(document.body, { childList: true, subtree: true });
+  scanAndInject();
+}
+
+if (document.body) {
+  initFieldScanning();
+} else {
+  document.addEventListener("DOMContentLoaded", initFieldScanning, { once: true });
+}
