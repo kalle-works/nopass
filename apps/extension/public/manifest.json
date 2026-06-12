@@ -20,7 +20,14 @@
     {
       "matches": ["https://*/*", "http://*/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["webauthn-inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
     }
   ],
   "action": {

@@ -9,9 +9,23 @@
  * - Raw key bytes are zeroed immediately after CryptoKey import.
  */
 
-import { decryptItem } from "@nopass/crypto";
+import {
+  decryptItem,
+  encryptItem,
+  generateCredential,
+  buildAuthenticatorData,
+  buildAttestationObject,
+  signAssertion,
+  rpIdMatchesOrigin,
+  bytesToB64u,
+  b64uToBytes,
+  FLAG_UP,
+  FLAG_UV,
+  SYNCED_FLAGS,
+} from "@nopass/crypto";
 import { createApiClient } from "@nopass/ui";
-import type { EncryptedVaultItem } from "@nopass/types";
+import { parse as parseDomain } from "tldts";
+import type { EncryptedVaultItem, LoginItem } from "@nopass/types";
 import { base64ToBytes } from "../lib/base64";
 import { urlMatches, nameMatches } from "../lib/url-match";
 
@@ -37,7 +51,23 @@ type Message =
   | { type: "GET_ITEMS" }
   | { type: "SEARCH_ITEMS"; query: string; url?: string }
   | { type: "GET_CREDENTIALS"; itemId: string }
-  | { type: "AUTOFILL"; itemId: string; tabId: number };
+  | { type: "AUTOFILL"; itemId: string; tabId: number }
+  | { type: "WEBAUTHN_HAS_CREDENTIAL"; rpId: string; allowCredentialIdsB64u: string[] }
+  | {
+      type: "WEBAUTHN_CREATE";
+      rpId: string;
+      rpName: string;
+      userName: string;
+      userDisplayName: string;
+      userHandleB64u: string;
+      excludeCredentialIdsB64u: string[];
+    }
+  | {
+      type: "WEBAUTHN_GET";
+      rpId: string;
+      clientDataJSONB64u: string;
+      allowCredentialIdsB64u: string[];
+    };
 
 chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
   handleMessage(message, sender).then(sendResponse).catch((err) => {
@@ -145,7 +175,185 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       return { ok: true };
     }
 
+    case "WEBAUTHN_HAS_CREDENTIAL": {
+      if (!senderOrigin(sender) || !vaultState) return { matches: false };
+      const matches = await findPasskeyLogins(message.rpId, message.allowCredentialIdsB64u);
+      return { matches: matches.length > 0 };
+    }
+
+    case "WEBAUTHN_CREATE": {
+      const origin = senderOrigin(sender);
+      if (!origin) return { error: "unauthorized" };
+      if (!vaultState) return { error: "locked" };
+      if (!rpIdMatchesOrigin(message.rpId, origin) || !isRegistrableRpId(message.rpId)) {
+        return { error: "rpId does not match origin" };
+      }
+
+      // The RP excludes credentials it already knows — re-registering would
+      // orphan the existing one
+      const existing = await findPasskeyLogins(message.rpId, []);
+      if (
+        existing.some((e) =>
+          message.excludeCredentialIdsB64u.includes(e.plain.passkey!.credentialIdB64u),
+        )
+      ) {
+        return { error: "already registered" };
+      }
+
+      const cred = await generateCredential();
+      const authData = await buildAuthenticatorData(
+        message.rpId,
+        FLAG_UP | FLAG_UV | SYNCED_FLAGS,
+        0,
+        { credentialId: cred.credentialId, cosePublicKey: cred.cosePublicKey },
+      );
+      const attestationObject = buildAttestationObject(authData);
+
+      const item: LoginItem = {
+        type: "login",
+        name: message.rpName || message.rpId,
+        username: message.userName || message.userDisplayName,
+        password: "",
+        urls: [`https://${message.rpId}`],
+        customFields: [],
+        passkey: {
+          credentialIdB64u: bytesToB64u(cred.credentialId),
+          rpId: message.rpId,
+          userHandleB64u: message.userHandleB64u,
+          userName: message.userName || message.userDisplayName,
+          privateKeyPkcs8B64: btoa(String.fromCharCode(...cred.privateKeyPkcs8)),
+          signCount: 0,
+          createdAt: new Date().toISOString(),
+        },
+      };
+      cred.privateKeyPkcs8.fill(0);
+
+      const blob = await encryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const created = await api.vault.create(
+        vaultState.defaultVaultId,
+        { itemType: "login", blob: blob.blob, blobIv: blob.blobIv, blobMac: blob.blobMac },
+        vaultState.sessionToken,
+      );
+      vaultState.items.push(created);
+
+      return {
+        data: {
+          credentialIdB64u: bytesToB64u(cred.credentialId),
+          attestationObjectB64u: bytesToB64u(attestationObject),
+          authDataB64u: bytesToB64u(authData),
+          publicKeySpkiB64u: bytesToB64u(cred.publicKeySpki),
+        },
+      };
+    }
+
+    case "WEBAUTHN_GET": {
+      const origin = senderOrigin(sender);
+      if (!origin) return { error: "unauthorized" };
+      if (!vaultState) return { error: "locked" };
+      if (!rpIdMatchesOrigin(message.rpId, origin) || !isRegistrableRpId(message.rpId)) {
+        return { error: "rpId does not match origin" };
+      }
+
+      const candidates = await findPasskeyLogins(message.rpId, message.allowCredentialIdsB64u);
+      if (candidates.length === 0) return { error: "no matching credential" };
+
+      // Most recently created wins when the RP doesn't narrow it down
+      candidates.sort((a, b) =>
+        (b.plain.passkey!.createdAt ?? "").localeCompare(a.plain.passkey!.createdAt ?? ""),
+      );
+      const { item, plain } = candidates[0]!;
+      const passkey = plain.passkey!;
+
+      // Sign FIRST — persisting an incremented signCount before a failed
+      // signature would make the RP see a counter jump and flag the
+      // credential as cloned, bricking it permanently
+      const newCount = passkey.signCount + 1;
+      const authData = await buildAuthenticatorData(
+        message.rpId,
+        FLAG_UP | FLAG_UV | SYNCED_FLAGS,
+        newCount,
+      );
+      const clientDataHash = new Uint8Array(
+        await crypto.subtle.digest("SHA-256", b64uToBytes(message.clientDataJSONB64u)),
+      );
+      const pkcs8 = new Uint8Array(base64ToBytes(passkey.privateKeyPkcs8B64));
+      const signature = await signAssertion(pkcs8, authData, clientDataHash);
+      pkcs8.fill(0);
+
+      const updatedPlain: LoginItem = {
+        ...plain,
+        passkey: { ...passkey, signCount: newCount },
+      };
+      const blob = await encryptItem(updatedPlain, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const updated = await api.vault.update(
+        item.vaultId,
+        item.id,
+        { blob: blob.blob, blobIv: blob.blobIv, blobMac: blob.blobMac, version: item.version },
+        vaultState.sessionToken,
+      );
+      Object.assign(item, blob, { version: updated.version, updatedAt: updated.updatedAt });
+
+      return {
+        data: {
+          credentialIdB64u: passkey.credentialIdB64u,
+          authDataB64u: bytesToB64u(authData),
+          signatureB64u: bytesToB64u(signature),
+          userHandleB64u: passkey.userHandleB64u,
+        },
+      };
+    }
+
     default:
       return { error: "unknown message type" };
   }
+}
+
+/** Origin of a content-script sender — undefined for anything else. */
+function senderOrigin(sender: chrome.runtime.MessageSender): string | undefined {
+  if (sender.id !== chrome.runtime.id || !sender.tab || !sender.url) return undefined;
+  try {
+    return new URL(sender.url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * rpIdMatchesOrigin checks label boundaries, but per WebAuthn §5.1.3 the rp.id
+ * must also be a REGISTRABLE domain — "com", "co.uk", or "github.io" would
+ * otherwise let one site mint credentials every sibling site can discover.
+ */
+function isRegistrableRpId(rpId: string): boolean {
+  if (rpId === "localhost") return true; // dev convenience, matches browsers
+  return parseDomain(rpId).domain !== null;
+}
+
+async function findPasskeyLogins(
+  rpId: string,
+  allowCredentialIdsB64u: string[],
+): Promise<Array<{ item: EncryptedVaultItem; plain: LoginItem }>> {
+  if (!vaultState) return [];
+  const { vaultEncKey, vaultMacKey, items } = vaultState;
+
+  const results = await Promise.all(
+    items
+      .filter((i) => i.deletedAt === null && i.itemType === "login")
+      .map(async (item) => {
+        try {
+          const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
+          if (plain.type !== "login" || !plain.passkey) return null;
+          if (plain.passkey.rpId !== rpId) return null;
+          if (
+            allowCredentialIdsB64u.length > 0 &&
+            !allowCredentialIdsB64u.includes(plain.passkey.credentialIdB64u)
+          ) {
+            return null;
+          }
+          return { item, plain };
+        } catch {
+          return null;
+        }
+      }),
+  );
+  return results.filter((r): r is { item: EncryptedVaultItem; plain: LoginItem } => r !== null);
 }

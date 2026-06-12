@@ -8,6 +8,24 @@ export interface CustomField {
   fieldType: "text" | "hidden" | "boolean";
 }
 
+/** A WebAuthn passkey credential bound to a login item. Lives inside the
+ *  encrypted blob like every other secret. */
+export interface PasskeyCredential {
+  /** base64url credential ID returned to relying parties */
+  credentialIdB64u: string;
+  /** the rp.id this credential was created for (registrable domain) */
+  rpId: string;
+  /** base64url user.id handle supplied by the RP at registration */
+  userHandleB64u: string;
+  /** RP-side account display (user.name) — shown when picking a passkey */
+  userName: string;
+  /** base64 PKCS#8 ES256 (P-256) private key */
+  privateKeyPkcs8B64: string;
+  /** signature counter; incremented on every assertion */
+  signCount: number;
+  createdAt: string;
+}
+
 export interface LoginItem {
   type: "login";
   name: string;
@@ -18,6 +36,7 @@ export interface LoginItem {
   totp?: string;
   notes?: string;
   customFields: CustomField[];
+  passkey?: PasskeyCredential;
 }
 
 export interface NoteItem {

@@ -236,6 +236,18 @@ function LoginDetail({ login }: { login: LoginItem }) {
           <TotpCode uri={login.totp} />
         </DetailField>
       )}
+      {login.passkey && (
+        <DetailField label="Passkey">
+          <p className="text-sm text-[#7CFF6B]">
+            Active for <span className="font-mono">{login.passkey.rpId}</span>
+          </p>
+          <p className="font-mono text-[10px] text-[#9C988D] mt-0.5">
+            {login.passkey.userName && `${login.passkey.userName} · `}
+            created {new Date(login.passkey.createdAt).toLocaleDateString()} · sign in via the
+            browser extension
+          </p>
+        </DetailField>
+      )}
       {login.urls && login.urls.length > 0 && (
         <DetailField label="Website">
           {login.urls.map((url) => (
