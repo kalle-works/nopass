@@ -12,10 +12,21 @@ spec:
   tls:
     - hosts:
         - nopwd.dev
+        - www.nopwd.dev
         - api.nopwd.dev
       secretName: nopwd-tls
   rules:
     - host: nopwd.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nopwd-web
+                port:
+                  number: 80
+    - host: www.nopwd.dev
       http:
         paths:
           - path: /
