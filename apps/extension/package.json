@@ -1,13 +1,14 @@
 {
   "name": "@nopass/extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "vite build && vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
     "@nopass/crypto": "workspace:*",
@@ -26,6 +27,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
     "happy-dom": "^20.9.0",
+    "playwright": "^1.60.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^6",
