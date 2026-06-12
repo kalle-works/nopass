@@ -3,10 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nopass</title>
+    <title>nopwd</title>
     <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { width: 360px; min-height: 480px; font-family: system-ui, sans-serif; }
+      /* Tailwind preflight owns the reset — an unlayered universal reset here
+         would override layered padding/margin utilities */
+      body {
+        width: 360px;
+        min-height: 480px;
+        background: #070706;
+        color: #f4f1e8;
+        font-family: "IBM Plex Sans", system-ui, sans-serif;
+      }
     </style>
   </head>
   <body>

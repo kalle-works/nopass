@@ -142,8 +142,8 @@ export function App() {
 
   if (state.screen === "loading") {
     return (
-      <div className="flex items-center justify-center h-32">
-        <div className="text-gray-400 text-sm">Loading…</div>
+      <div className="flex items-center justify-center h-32 bg-ink">
+        <div className="text-faded text-sm font-brand">Loading…</div>
       </div>
     );
   }
@@ -197,35 +197,35 @@ export function App() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <header className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white">
-        <span className="font-semibold text-gray-800 text-sm">nopass</span>
+    <div className="flex flex-col h-full min-h-[480px] bg-ink text-cream font-body">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-edge bg-surface">
+        <span className="font-brand font-semibold text-cream text-sm">nopwd</span>
         <button
           onClick={handleLock}
-          className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+          className="font-brand text-xs text-faded border border-edge px-2 py-1 hover:border-cream hover:text-cream"
         >
           Lock
         </button>
       </header>
 
-      <div className="px-3 py-2 border-b border-gray-100">
+      <div className="px-4 py-3 border-b border-edge">
         <input
           type="search"
           placeholder="Search vault…"
           value={state.query}
           onChange={(e) => handleSearch(e.target.value)}
           autoFocus
-          className="w-full text-sm px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full text-sm px-3 py-2 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
         />
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {state.entries.length === 0 ? (
-          <div className="text-center text-gray-400 text-sm py-8">
+          <div className="text-center text-faded text-sm py-8">
             {state.query ? "No matches" : "No logins for this site"}
           </div>
         ) : (
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-edge">
             {state.entries.map((entry) => (
               <EntryRow
                 key={entry.id}
@@ -256,8 +256,9 @@ function UnlockForm({ error, unlocking, onUnlock }: UnlockFormProps) {
   const [password, setPassword] = useState("");
 
   return (
-    <div className="p-4">
-      <h1 className="font-semibold text-gray-900 text-base mb-4">Unlock vault</h1>
+    <div className="min-h-[480px] bg-ink text-cream font-body p-4 pt-8">
+      <p className="font-brand text-[11px] uppercase tracking-[0.1em] text-faded mb-2">nopwd</p>
+      <h1 className="font-brand font-semibold text-cream text-base mb-6">Unlock vault</h1>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -272,7 +273,7 @@ function UnlockForm({ error, unlocking, onUnlock }: UnlockFormProps) {
           onChange={(e) => setEmail(e.target.value)}
           required
           autoComplete="email"
-          className="w-full text-sm px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full text-sm h-11 px-3 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
         />
         <input
           type="password"
@@ -281,13 +282,13 @@ function UnlockForm({ error, unlocking, onUnlock }: UnlockFormProps) {
           onChange={(e) => setPassword(e.target.value)}
           required
           autoComplete="current-password"
-          className="w-full text-sm px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full text-sm h-11 px-3 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
         />
-        {error && <p className="text-xs text-red-600">{error}</p>}
+        {error && <p className="text-xs text-danger">{error}</p>}
         <button
           type="submit"
           disabled={unlocking}
-          className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg"
+          className="w-full h-11 bg-accent hover:bg-accent-hover disabled:opacity-50 text-ink text-sm font-brand font-semibold"
         >
           {unlocking ? "Unlocking…" : "Unlock"}
         </button>
@@ -312,29 +313,29 @@ function EntryRow({ entry, copied, onCopy, onCopyPassword, onAutofill }: EntryRo
   const initial = entry.name.charAt(0).toUpperCase();
 
   return (
-    <li className="px-3 py-2">
-      <div className="flex items-start gap-2">
-        <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-semibold shrink-0 mt-0.5">
+    <li className="px-4 py-3">
+      <div className="flex items-start gap-3">
+        <div className="w-7 h-7 bg-elevated border border-edge text-accent flex items-center justify-center text-xs font-brand font-semibold shrink-0 mt-0.5">
           {initial}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-800 truncate">
+          <p className="text-sm font-medium text-cream truncate">
             {entry.name}
             {entry.hasPasskey && (
-              <span className="ml-1.5 px-1 py-px text-[10px] font-semibold uppercase tracking-wide bg-lime-200 text-lime-900 rounded-sm align-middle">
+              <span className="ml-2 font-brand text-[10px] font-semibold uppercase tracking-[0.1em] text-accent align-middle">
                 passkey
               </span>
             )}
           </p>
-          <p className="text-xs text-gray-500 truncate">{entry.username}</p>
+          <p className="text-xs text-faded truncate">{entry.username}</p>
         </div>
       </div>
-      <div className="flex gap-1.5 mt-2 ml-9">
+      <div className="flex gap-1.5 mt-2">
         <CopyButton label="Username" copied={copied === userKey} onClick={() => onCopy(entry.username, userKey)} />
         <CopyButton label="Password" copied={copied === passKey} onClick={() => onCopyPassword(entry.id)} />
         <button
           onClick={() => onAutofill(entry)}
-          className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium"
+          className="text-[11px] px-2 py-1.5 whitespace-nowrap bg-accent hover:bg-accent-hover text-ink font-brand font-semibold"
         >
           Autofill
         </button>
@@ -347,10 +348,10 @@ function CopyButton({ label, copied, onClick }: { label: string; copied: boolean
   return (
     <button
       onClick={onClick}
-      className={`text-xs px-2 py-1 rounded font-medium border transition-colors ${
+      className={`text-[11px] px-2 py-1.5 whitespace-nowrap font-brand border transition-colors ${
         copied
-          ? "bg-green-50 border-green-300 text-green-700"
-          : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+          ? "border-success text-success"
+          : "border-edge text-faded hover:border-cream hover:text-cream"
       }`}
     >
       {copied ? "Copied!" : `Copy ${label}`}

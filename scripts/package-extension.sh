@@ -16,7 +16,7 @@ VITE_API_BASE="$API_BASE" $PNPM build
 # The store rejects packages with stray files — zip only what the manifest needs
 cd dist
 rm -f "$OUT"
-zip -qr "$OUT" manifest.json background.js content.js webauthn-inject.js base64.js popup.js popup.css icons src
+zip -qr "$OUT" manifest.json background.js content.js webauthn-inject.js base64.js popup.js popup.css ./*.woff2 icons src
 
 echo "Packaged: $OUT"
 unzip -l "$OUT"
