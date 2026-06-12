@@ -165,7 +165,6 @@ export function App() {
             const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
             const verifyResp = await api.auth.srpVerify({
               sessionId: initResp.sessionId,
-              clientPublicA: step1.clientPublicA,
               clientProofM1: step2.clientProofM1,
             });
             step2.verifyServerProof(verifyResp.serverProofM2);
