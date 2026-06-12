@@ -57,3 +57,4 @@ lcov.info
 apps/web/test-results/
 *.png
 .gstack/
+apps/extension/nopwd-extension.zip
