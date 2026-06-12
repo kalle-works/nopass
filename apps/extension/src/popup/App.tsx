@@ -77,12 +77,19 @@ function sendMessage<T>(msg: object): Promise<T> {
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initial);
+  const [lastEmail, setLastEmail] = useState("");
 
   // Check if SW is already unlocked on popup open
   useEffect(() => {
     async function init() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       dispatch({ type: "SET_TAB_URL", url: tab?.url ?? "" });
+
+      // Resolve the remembered email before showing any screen so the unlock
+      // form always mounts prefilled (also after an in-popup Lock) and focus
+      // lands on the password field
+      const stored = await chrome.storage.local.get("lastEmail");
+      setLastEmail(typeof stored["lastEmail"] === "string" ? stored["lastEmail"] : "");
 
       const resp = await sendMessage<{ unlocked: boolean }>({ type: "IS_UNLOCKED" });
       if (resp.unlocked) {
@@ -155,6 +162,7 @@ export function App() {
       <UnlockForm
         error={state.error}
         unlocking={state.unlocking}
+        initialEmail={lastEmail}
         onUnlock={async (email, password) => {
           dispatch({ type: "SET_ERROR", error: null });
           dispatch({ type: "SET_UNLOCKING", value: true });
@@ -186,6 +194,8 @@ export function App() {
 
             if (resp.error) throw new Error(resp.error);
 
+            await chrome.storage.local.set({ lastEmail: email });
+            setLastEmail(email);
             dispatch({ type: "SET_SCREEN", screen: "unlocked" });
             await refreshSearch("", state.tabUrl);
           } catch (e) {
@@ -250,11 +260,12 @@ export function App() {
 interface UnlockFormProps {
   error: string | null;
   unlocking: boolean;
+  initialEmail: string;
   onUnlock: (email: string, password: string) => void;
 }
 
-function UnlockForm({ error, unlocking, onUnlock }: UnlockFormProps) {
-  const [email, setEmail] = useState("");
+function UnlockForm({ error, unlocking, initialEmail, onUnlock }: UnlockFormProps) {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
 
   return (
@@ -275,6 +286,7 @@ function UnlockForm({ error, unlocking, onUnlock }: UnlockFormProps) {
           onChange={(e) => setEmail(e.target.value)}
           required
           autoComplete="email"
+          autoFocus={!initialEmail}
           className="w-full text-sm h-11 px-3 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
         />
         <input
@@ -284,6 +296,7 @@ function UnlockForm({ error, unlocking, onUnlock }: UnlockFormProps) {
           onChange={(e) => setPassword(e.target.value)}
           required
           autoComplete="current-password"
+          autoFocus={!!initialEmail}
           className="w-full text-sm h-11 px-3 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
         />
         {error && <p className="text-xs text-danger">{error}</p>}

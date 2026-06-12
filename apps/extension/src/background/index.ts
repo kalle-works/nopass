@@ -2,8 +2,12 @@
  * MV3 Service Worker — background script for nopass extension.
  *
  * Security model:
- * - Vault keys (CryptoKey) live in memory only; never written to storage
- * - Service workers are ephemeral — vault auto-locks when the SW terminates
+ * - Vault keys never touch persistent storage. The unlocked session lives in
+ *   chrome.storage.session: RAM-only, cleared when the browser exits, and
+ *   readable only from trusted extension contexts (never content scripts).
+ *   Without it the ephemeral SW would re-lock the vault ~30s after idle and
+ *   force a master-password prompt several times a minute.
+ * - Explicit Lock wipes both the in-memory state and storage.session.
  * - Only extension pages (popup) may trigger UNLOCK/LOCK/AUTOFILL.
  *   Content scripts (running in web pages) are rejected for these operations.
  * - Raw key bytes are zeroed immediately after CryptoKey import.
@@ -44,6 +48,60 @@ let vaultState: {
   items: EncryptedVaultItem[];
 } | null = null;
 
+const SESSION_KEY = "vaultSession";
+
+interface PersistedSession {
+  sessionToken: string;
+  defaultVaultId: string;
+  encKeyB64: string;
+  macKeyB64: string;
+}
+
+async function importVaultKeys(encKeyB64: string, macKeyB64: string) {
+  const encKeyBytes = base64ToBytes(encKeyB64);
+  const macKeyBytes = base64ToBytes(macKeyB64);
+  const [vaultEncKey, vaultMacKey] = await Promise.all([
+    crypto.subtle.importKey("raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
+    crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]),
+  ]);
+  // Zero raw key bytes immediately after import — they must not linger in memory.
+  encKeyBytes.fill(0);
+  macKeyBytes.fill(0);
+  return { vaultEncKey, vaultMacKey };
+}
+
+// Single in-flight restore so concurrent messages after an SW restart don't
+// each refetch the vault.
+let restoring: Promise<void> | null = null;
+
+/** Rehydrates the unlocked session after an SW restart, if one was persisted. */
+function restoreVaultState(): Promise<void> {
+  restoring ??= (async () => {
+    if (vaultState) return;
+    const stored = (await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY] as
+      | PersistedSession
+      | undefined;
+    if (!stored) return;
+    try {
+      const { vaultEncKey, vaultMacKey } = await importVaultKeys(stored.encKeyB64, stored.macKeyB64);
+      const items = await api.vault.items(stored.defaultVaultId, stored.sessionToken);
+      vaultState = {
+        sessionToken: stored.sessionToken,
+        defaultVaultId: stored.defaultVaultId,
+        vaultEncKey,
+        vaultMacKey,
+        items,
+      };
+    } catch {
+      // Server rejected the session (expired/revoked) — drop it and stay locked
+      await chrome.storage.session.remove(SESSION_KEY);
+    }
+  })().finally(() => {
+    restoring = null;
+  });
+  return restoring;
+}
+
 type Message =
   | { type: "UNLOCK"; sessionToken: string; defaultVaultId: string; vaultEncKeyB64: string; vaultMacKeyB64: string }
   | { type: "LOCK" }
@@ -82,30 +140,38 @@ function isExtensionPage(sender: chrome.runtime.MessageSender): boolean {
 }
 
 async function handleMessage(message: Message, sender: chrome.runtime.MessageSender): Promise<unknown> {
+  // The SW may have been torn down since the vault was unlocked — rehydrate
+  // from storage.session before treating any request as locked.
+  if (!vaultState && message.type !== "UNLOCK" && message.type !== "LOCK") {
+    await restoreVaultState();
+  }
+
   switch (message.type) {
     case "UNLOCK": {
       if (!isExtensionPage(sender)) return { error: "unauthorized" };
 
-      const encKeyBytes = base64ToBytes(message.vaultEncKeyB64);
-      const macKeyBytes = base64ToBytes(message.vaultMacKeyB64);
-
-      const [vaultEncKey, vaultMacKey] = await Promise.all([
-        crypto.subtle.importKey("raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
-        crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]),
-      ]);
-
-      // Zero raw key bytes immediately after import — they must not linger in memory.
-      encKeyBytes.fill(0);
-      macKeyBytes.fill(0);
+      const { vaultEncKey, vaultMacKey } = await importVaultKeys(
+        message.vaultEncKeyB64,
+        message.vaultMacKeyB64,
+      );
 
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
       vaultState = { sessionToken: message.sessionToken, defaultVaultId: message.defaultVaultId, vaultEncKey, vaultMacKey, items };
+
+      const persisted: PersistedSession = {
+        sessionToken: message.sessionToken,
+        defaultVaultId: message.defaultVaultId,
+        encKeyB64: message.vaultEncKeyB64,
+        macKeyB64: message.vaultMacKeyB64,
+      };
+      await chrome.storage.session.set({ [SESSION_KEY]: persisted });
       return { ok: true };
     }
 
     case "LOCK": {
       if (!isExtensionPage(sender)) return { error: "unauthorized" };
       vaultState = null;
+      await chrome.storage.session.remove(SESSION_KEY);
       return { ok: true };
     }
 

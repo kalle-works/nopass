@@ -333,6 +333,62 @@ describe.skipIf(!runnable)("extension end-to-end", () => {
     }));
     expect(filled).toEqual({ email: "e2e-user@example.com", password: "e2e-password-value" });
   });
+
+  it("stays unlocked after the service worker is killed", async () => {
+    // Kill the SW the way Chrome does after ~30s idle (browser-level CDP)
+    const { webSocketDebuggerUrl } = await (
+      await fetch(`http://127.0.0.1:${cdpPort}/json/version`)
+    ).json();
+    const bws = new WebSocket(webSocketDebuggerUrl);
+    await new Promise((res, rej) => { bws.onopen = res; bws.onerror = rej; });
+    const browserCdp = (id: number, method: string, params: object = {}) =>
+      new Promise<any>((resolve) => {
+        const onMsg = (ev: MessageEvent) => {
+          const m = JSON.parse(String(ev.data));
+          if (m.id === id) {
+            bws.removeEventListener("message", onMsg);
+            resolve(m.result);
+          }
+        };
+        bws.addEventListener("message", onMsg);
+        bws.send(JSON.stringify({ id, method, params }));
+      });
+    const { targetInfos } = await browserCdp(1, "Target.getTargets");
+    const swTarget = targetInfos.find(
+      (t: any) => t.type === "service_worker" && t.url.includes(extId),
+    );
+    expect(swTarget).toBeTruthy();
+    await browserCdp(2, "Target.closeTarget", { targetId: swTarget.targetId });
+    bws.close();
+
+    // Opening an extension page spawns a fresh SW, which must rehydrate the
+    // unlocked session from chrome.storage.session — no master password
+    const tabPopup = await context.newPage();
+    await tabPopup.goto(`chrome-extension://${extId}/src/popup/index.html`);
+    await tabPopup.waitForSelector("input[type=search]", { timeout: 15_000 });
+    await tabPopup.fill("input[type=search]", "E2E");
+    await tabPopup.waitForSelector("text=e2e-user@example.com", { timeout: 10_000 });
+    await tabPopup.close();
+  });
+
+  it("prefills the remembered email after locking", async () => {
+    await site.bringToFront();
+    let [sw] = context.serviceWorkers();
+    if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 15_000 });
+    await sw.evaluate(() => chrome.action.openPopup());
+    const popup2 = await PopupDriver.attach(cdpPort, extId);
+
+    await popup2.waitFor(`document.querySelector("input[type=search]") !== null`, 10_000);
+    await popup2.eval(`{
+      [...document.querySelectorAll("button")].find(b => b.textContent === "Lock").click();
+    }`);
+    const prefilled = await popup2.waitFor<string>(
+      `document.querySelector("input[type=email]")?.value || ""`,
+      10_000,
+    );
+    expect(prefilled).toBe(EMAIL);
+    popup2.close();
+  });
 });
 
 if (!runnable) {

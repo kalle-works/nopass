@@ -34,8 +34,11 @@ secret sharing, and an offline recovery kit live at nopwd.dev.
   authenticator. It only forwards WebAuthn requests the page itself initiates,
   always behind an explicit user-consent dialog, and falls back to the
   browser's native authenticator in every other case.
-- `storage`: extension settings only. Vault keys live in memory and are wiped
-  when the service worker stops.
+- `storage`: `storage.session` (RAM-only, cleared when the browser exits,
+  trusted extension contexts only) holds the unlocked session so the vault
+  does not re-lock every time the MV3 service worker idles out.
+  `storage.local` holds only the last-used email for sign-in prefill — never
+  passwords, keys, or vault data.
 
 ## Privacy disclosure
 The extension sends nothing to anyone except the user's own nopwd API
