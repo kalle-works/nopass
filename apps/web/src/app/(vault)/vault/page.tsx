@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNopassStore, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
@@ -774,17 +774,31 @@ function VaultPageInner() {
     router.replace("/login");
   }, [lock, router]);
 
-  const activeItems = items.filter((i) => i.deletedAt === null);
+  const activeItems = useMemo(() => items.filter((i) => i.deletedAt === null), [items]);
 
   // Tag counts come from decrypted plaintexts — tags are zero-knowledge data
-  const tagCounts = new Map<string, number>();
-  for (const item of activeItems) {
-    const plain = decrypted.get(item.id);
-    for (const tag of plain?.tags ?? []) {
-      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of activeItems) {
+      const plain = decrypted.get(item.id);
+      for (const tag of plain?.tags ?? []) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
     }
-  }
-  const allTags = [...tagCounts.keys()].sort((a, b) => a.localeCompare(b));
+    return counts;
+  }, [activeItems, decrypted]);
+  const allTags = useMemo(
+    () => [...tagCounts.keys()].sort((a, b) => a.localeCompare(b)),
+    [tagCounts],
+  );
+
+  // Deleting or editing away the last item with the active tag would leave an
+  // inexplicable empty list — drop the filter when its tag disappears
+  useEffect(() => {
+    if (tagFilter && !allTags.some((t) => t.toLowerCase() === tagFilter.toLowerCase())) {
+      setTagFilter(null);
+    }
+  }, [tagFilter, allTags]);
 
   const filteredItems = activeItems.filter((item) => {
     if (filter === "favorites" && !favorites.has(item.id)) return false;

@@ -18,7 +18,7 @@ export function NoteEditor({ initial, onSave, onCancel, saving }: NoteEditorProp
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ type: "note", name, content, ...(tags.length > 0 ? { tags } : {}) });
+    onSave({ type: "note", name, content, tags });
   }
 
   return (

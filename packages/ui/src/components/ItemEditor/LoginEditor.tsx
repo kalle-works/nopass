@@ -281,7 +281,7 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
       urls: url ? [url] : [],
       ...(totp && { totp }),
       ...(notes && { notes }),
-      ...(tags.length > 0 ? { tags } : {}),
+      tags,
       customFields,
     });
   }

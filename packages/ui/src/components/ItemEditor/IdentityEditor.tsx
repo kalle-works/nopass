@@ -24,7 +24,7 @@ export function IdentityEditor({ initial, onSave, onCancel, saving }: IdentityEd
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ type: "identity", name, firstName, lastName, email, phone, address, city, country, ...(tags.length > 0 ? { tags } : {}) });
+    onSave({ type: "identity", name, firstName, lastName, email, phone, address, city, country, tags });
   }
 
   const inp =

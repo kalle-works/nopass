@@ -32,7 +32,7 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
       ...(passphrase && { passphrase }),
       ...(comment && { comment }),
       ...(notes && { notes }),
-      ...(tags.length > 0 ? { tags } : {}),
+      tags,
       useInAgent,
     });
   }

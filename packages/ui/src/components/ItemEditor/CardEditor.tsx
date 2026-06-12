@@ -23,7 +23,7 @@ export function CardEditor({ initial, onSave, onCancel, saving }: CardEditorProp
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ type: "card", name, cardholderName, number, expMonth, expYear, cvv, ...(tags.length > 0 ? { tags } : {}) });
+    onSave({ type: "card", name, cardholderName, number, expMonth, expYear, cvv, tags });
   }
 
   return (
