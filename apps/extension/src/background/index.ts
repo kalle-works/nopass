@@ -131,7 +131,13 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
               const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
               if (plain.type !== "login") return null;
               if (nameMatches(plain.name, query) || (url ? urlMatches(plain.urls, url) : !query)) {
-                return { id: item.id, name: plain.name, username: plain.username, urls: plain.urls };
+                return {
+                  id: item.id,
+                  name: plain.name,
+                  username: plain.username,
+                  urls: plain.urls,
+                  hasPasskey: plain.passkey !== undefined,
+                };
               }
               return null;
             } catch {

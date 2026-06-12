@@ -14,6 +14,7 @@ interface VaultEntry {
   name: string;
   username: string;
   urls: string[];
+  hasPasskey?: boolean;
 }
 
 type Screen = "loading" | "locked" | "unlocked";
@@ -317,7 +318,14 @@ function EntryRow({ entry, copied, onCopy, onCopyPassword, onAutofill }: EntryRo
           {initial}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-800 truncate">{entry.name}</p>
+          <p className="text-sm font-medium text-gray-800 truncate">
+            {entry.name}
+            {entry.hasPasskey && (
+              <span className="ml-1.5 px-1 py-px text-[10px] font-semibold uppercase tracking-wide bg-lime-200 text-lime-900 rounded-sm align-middle">
+                passkey
+              </span>
+            )}
+          </p>
           <p className="text-xs text-gray-500 truncate">{entry.username}</p>
         </div>
       </div>
