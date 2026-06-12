@@ -233,6 +233,60 @@ function HowItWorks() {
   );
 }
 
+function Capabilities() {
+  const capabilities = [
+    {
+      title: "Passkeys",
+      body: "The extension is a full WebAuthn authenticator. Create and use passkeys on any site; they sync inside your encrypted vault like everything else.",
+    },
+    {
+      title: "Recovery kit",
+      body: "A one-time offline code that can restore your vault if you forget the master password. The server stores a blob it cannot read — recovery stays zero-knowledge.",
+    },
+    {
+      title: "One-time sharing",
+      body: "Send a credential to anyone with an expiring link. The decryption key lives in the URL fragment and never reaches our servers.",
+    },
+    {
+      title: "TOTP + breach checks",
+      body: "Consolidate your 2FA codes and audit every password against HaveIBeenPwned via k-anonymity. Nothing leaves your device in cleartext.",
+    },
+    {
+      title: "Tags and instant search",
+      body: "Organize with encrypted tags — the server can't see how you label your life. Import from 1Password without losing a thing.",
+    },
+    {
+      title: "Autofill, CLI, desktop",
+      body: "Browser autofill, nopwd run for injecting secrets into processes, SSH agent, and biometric unlock on desktop.",
+    },
+  ];
+
+  return (
+    <section id="capabilities" className="py-16 md:py-24 border-t border-[#2B2923]">
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="mb-12">
+          <p className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-3">Capabilities</p>
+          <h2 className="font-mono text-3xl md:text-4xl font-bold text-[#F4F1E8] tracking-tight">
+            Everything a password manager owes you.
+          </h2>
+          <p className="text-[#9C988D] text-sm mt-3 max-w-lg leading-relaxed">
+            All of it end-to-end encrypted. None of it readable by us.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-3 border-t border-l border-[#2B2923]">
+          {capabilities.map((cap) => (
+            <div key={cap.title} className="p-6 bg-[#11110F] border-b border-r border-[#2B2923]">
+              <h3 className="font-mono text-sm font-semibold text-[#F4F1E8] mb-3">{cap.title}</h3>
+              <p className="text-sm text-[#9C988D] leading-relaxed">{cap.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ThreatModel() {
   const protects = [
     {
@@ -255,8 +309,9 @@ function ThreatModel() {
       detail: "If an attacker controls your device, they can observe decryption.",
     },
     {
-      claim: "Forgotten master password",
-      detail: "Zero-knowledge means zero recovery. By design, not negligence.",
+      claim: "Forgotten master password without a recovery kit",
+      detail:
+        "Zero-knowledge means we can't reset it for you. Generate the offline recovery kit — a one-time code only you hold — or accept that loss is permanent.",
     },
     {
       claim: "Weak master password",
@@ -508,6 +563,7 @@ export default function LandingPage() {
         <Hero />
         <ProofBar />
         <HowItWorks />
+        <Capabilities />
         <ThreatModel />
         <Pricing />
       </main>
