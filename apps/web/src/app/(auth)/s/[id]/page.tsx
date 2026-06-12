@@ -97,17 +97,30 @@ function ItemFields({ item }: { item: VaultItemPlaintext }) {
 export default function ShareViewPage() {
   const params = useParams<{ id: string }>();
   const [state, setState] = useState<State>({ status: "loading" });
+  // Re-read the fragment when it changes (e.g. a second share link opened in
+  // the same tab) — parsing only on mount would decrypt with a stale key
+  const [hash, setHash] = useState<string | null>(null);
 
   useEffect(() => {
+    const update = () => setHash(window.location.hash);
+    update();
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
+  }, []);
+
+  useEffect(() => {
+    if (hash === null) return;
     let cancelled = false;
     (async () => {
       try {
-        const keyB64url = new URLSearchParams(window.location.hash.slice(1)).get("k");
+        const keyB64url = new URLSearchParams(hash.slice(1)).get("k");
         if (!keyB64url) {
           throw new Error("This link is missing its decryption key — make sure you copied the whole URL.");
         }
         const key = await importShareKey(keyB64url);
         const resp = await api.shares.view(params.id);
+        // blobMac is unused for shares — AES-GCM's own auth tag covers
+        // integrity; the separate HMAC only exists for vault items
         const item = await decryptSharePayload(
           { blob: resp.blob, blobIv: resp.blobIv, blobMac: "" },
           key,
@@ -123,7 +136,7 @@ export default function ShareViewPage() {
             message: msg.includes("404") || msg.toLowerCase().includes("not found")
               ? "This share doesn't exist anymore — it may have expired, been viewed already, or been revoked."
               : msg.toLowerCase().includes("operation") || msg.toLowerCase().includes("decrypt")
-                ? "The link's decryption key doesn't match. Make sure you copied the whole URL."
+                ? "The link's decryption key doesn't match — and this attempt used up one of the link's views. Ask the sender to check the URL or share again."
                 : msg,
           });
         }
@@ -132,7 +145,7 @@ export default function ShareViewPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, hash]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#070706] px-4 py-12">

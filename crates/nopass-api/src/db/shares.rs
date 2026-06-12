@@ -27,11 +27,6 @@ pub async fn create_share(
     max_views: i32,
     expires_at: DateTime<Utc>,
 ) -> Result<Uuid> {
-    // Opportunistic housekeeping — expired shares hold ciphertext for no reason
-    sqlx::query("DELETE FROM shares WHERE expires_at < NOW()")
-        .execute(pool)
-        .await?;
-
     let row = sqlx::query_as::<_, (Uuid,)>(
         r#"
         INSERT INTO shares (user_id, blob, blob_iv, label_blob, label_iv, max_views, expires_at)
@@ -68,6 +63,15 @@ pub async fn delete_share(pool: &PgPool, share_id: Uuid, user_id: Uuid) -> Resul
         .execute(pool)
         .await?;
     Ok(result.rows_affected() > 0)
+}
+
+/// Drop expired shares — they hold ciphertext for no reason. Called from the
+/// periodic cleanup task, not the request path.
+pub async fn delete_expired(pool: &PgPool) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM shares WHERE expires_at < NOW()")
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 /// Atomically consume one view. Returns None when the share doesn't exist,
