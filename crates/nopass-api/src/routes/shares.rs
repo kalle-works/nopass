@@ -12,9 +12,10 @@ use nopass_models::{
 use uuid::Uuid;
 
 use crate::{
-    db::shares as db_shares,
+    db::{activity, shares as db_shares},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
+    routes::ClientIp,
     state::AppState,
 };
 
@@ -42,6 +43,7 @@ fn decode_b64(value: &str, field: &str) -> ApiResult<Vec<u8>> {
 async fn create_share(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<CreateShareRequest>,
 ) -> ApiResult<(StatusCode, Json<CreateShareResponse>)> {
     if !(1..=MAX_VIEWS).contains(&req.max_views) {
@@ -73,6 +75,7 @@ async fn create_share(
     )
     .await?;
 
+    activity::record(&state.db, auth.user_id, "share_created", Some(&client_ip.to_string()), None).await;
     Ok((StatusCode::CREATED, Json(CreateShareResponse { share_id })))
 }
 
@@ -100,12 +103,14 @@ async fn list_shares(
 async fn delete_share(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Path(share_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
     let deleted = db_shares::delete_share(&state.db, share_id, auth.user_id).await?;
     if !deleted {
         return Err(ApiError::NotFound("share not found".into()));
     }
+    activity::record(&state.db, auth.user_id, "share_revoked", Some(&client_ip.to_string()), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -113,11 +118,13 @@ async fn delete_share(
 /// the same 404 — a share link reveals nothing once it stops resolving.
 async fn view_share(
     State(state): State<AppState>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Path(share_id): Path<Uuid>,
 ) -> ApiResult<Json<ViewShareResponse>> {
     let share = db_shares::consume_view(&state.db, share_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("share not found".into()))?;
+    activity::record(&state.db, share.user_id, "share_viewed", Some(&client_ip.to_string()), None).await;
 
     Ok(Json(ViewShareResponse {
         blob: B64.encode(&share.blob),

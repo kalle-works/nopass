@@ -94,6 +94,11 @@ impl AppState {
                         Ok(_) => {}
                         Err(e) => tracing::warn!("expired-share cleanup failed: {e}"),
                     }
+                    match crate::db::activity::prune_old(&db).await {
+                        Ok(n) if n > 0 => tracing::debug!("pruned {n} old activity events"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("activity prune failed: {e}"),
+                    }
                 }
                 {
                     let mut map = sessions.lock().await;

@@ -5,6 +5,7 @@
  */
 import type {
   AcceptInviteRequest,
+  ActivityEventInfo,
   BillingStatus,
   CheckoutSessionResponse,
   ConflictResponse,
@@ -108,6 +109,9 @@ export function createApiClient(baseUrl: string) {
       disable: (token: string) => del<void>("/auth/recovery", token),
       init: (req: RecoveryInitRequest) => post<RecoveryInitResponse>("/auth/recovery/init", req),
       complete: (req: RecoveryCompleteRequest) => post<void>("/auth/recovery/complete", req),
+    },
+    activity: {
+      list: (token: string) => get<ActivityEventInfo[]>("/activity", token),
     },
     devices: {
       list: (token: string) => get<DeviceInfo[]>("/devices", token),

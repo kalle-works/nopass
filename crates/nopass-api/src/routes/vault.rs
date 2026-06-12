@@ -14,9 +14,10 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-    db::vaults as db_vaults,
+    db::{activity, vaults as db_vaults},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
+    routes::ClientIp,
     state::AppState,
 };
 
@@ -52,6 +53,7 @@ async fn list_vaults(
 async fn create_vault(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<CreateVaultRequest>,
 ) -> ApiResult<(StatusCode, Json<VaultInfo>)> {
     let name_blob = B64.decode(&req.name_blob)
@@ -65,6 +67,7 @@ async fn create_vault(
     }
 
     let vault = db_vaults::create_named_vault(&state.db, auth.user_id, &name_blob, &name_iv).await?;
+    activity::record(&state.db, auth.user_id, "vault_created", Some(&client_ip.to_string()), None).await;
     Ok((StatusCode::CREATED, Json(vault_to_info(vault))))
 }
 
@@ -89,6 +92,7 @@ async fn rename_vault(
 async fn delete_vault(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Path(vault_id): Path<Uuid>,
 ) -> ApiResult<StatusCode> {
     db_vaults::get_vault(&state.db, vault_id, auth.user_id)
@@ -102,6 +106,7 @@ async fn delete_vault(
             "vault must be empty and cannot be your only vault".into(),
         ));
     }
+    activity::record(&state.db, auth.user_id, "vault_deleted", Some(&client_ip.to_string()), None).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
