@@ -18,8 +18,11 @@ const apiOrigin = (() => {
 // so we allow style-src 'self' only in production.
 const csp = [
   "default-src 'self'",
-  // Scripts: only self + Next.js inline bootstrap (needs 'unsafe-inline' in dev only)
-  isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self'",
+  // Scripts: Next App Router hydrates via inline bootstrap scripts, so
+  // 'unsafe-inline' is required in prod too (verified: 'self'-only breaks
+  // hydration on the live site). 'unsafe-eval' stays dev-only. Hardening
+  // path: nonce-based CSP via middleware, at the cost of static rendering.
+  isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self' 'unsafe-inline'",
   // Styles: self only (no CDN fonts)
   "style-src 'self' 'unsafe-inline'",
   // Fonts loaded from self (Martian Mono + IBM Plex Sans are self-hosted)

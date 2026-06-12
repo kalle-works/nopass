@@ -33,7 +33,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: web
-          image: ghcr.io/kalle-works/nopwd-web:v0.1.1
+          image: ghcr.io/kalle-works/nopwd-web:v0.1.2
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
