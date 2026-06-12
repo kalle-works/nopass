@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 
+// Explicit `| undefined` — callers build these with `?? undefined` and the
+// project compiles with exactOptionalPropertyTypes
 export interface SshKeyPayload {
   privateKey: string;
-  passphrase?: string;
-  comment?: string;
+  passphrase?: string | undefined;
+  comment?: string | undefined;
 }
 
 export const sshAgent = {
