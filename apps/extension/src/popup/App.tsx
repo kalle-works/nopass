@@ -4,7 +4,9 @@ import { createApiClient } from "@nopass/ui";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import { bytesToBase64 } from "../lib/base64";
 
-const API_BASE = "http://localhost:3001";
+// Injected at build time (vite define) — falls back to the dev API server
+const API_BASE: string =
+  typeof __API_BASE__ !== "undefined" ? __API_BASE__ : "http://localhost:3001";
 const api = createApiClient(API_BASE);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
