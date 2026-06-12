@@ -49,6 +49,26 @@ function humanizeError(err: unknown): string {
   return msg || "Something went wrong. Please try again.";
 }
 
+const LAST_EMAIL_STORAGE_KEY = "nopass:lastEmail";
+
+function readLastEmail(): string {
+  if (typeof localStorage === "undefined") return "";
+  try {
+    return localStorage.getItem(LAST_EMAIL_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLastEmail(email: string): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(LAST_EMAIL_STORAGE_KEY, email);
+  } catch {
+    // private mode / quota — remembering the email is best-effort
+  }
+}
+
 export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgotPassword }: UnlockScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -58,6 +78,15 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
   const [loadingStep, setLoadingStep] = useState<"kdf" | "auth" | null>(null);
 
   const { setSession } = useNopassStore();
+
+  // Prefill in an effect, not useState — localStorage is unavailable during SSR
+  // and a mismatch with the server-rendered empty input breaks hydration
+  useEffect(() => {
+    if (mode === "login") {
+      const last = readLastEmail();
+      if (last) setEmail((current) => current || last);
+    }
+  }, [mode]);
 
   useEffect(() => {
     document.title = mode === "login" ? "Sign in — nopwd" : "Create account — nopwd";
@@ -76,6 +105,7 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
       } else {
         await handleLogin();
       }
+      writeLastEmail(email);
       onSuccess?.();
     } catch (err) {
       setError(humanizeError(err));
