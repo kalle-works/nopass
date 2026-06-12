@@ -4,6 +4,7 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - sealed-secret.yaml
+  - ghcr-pull-secret.yaml
   - api-deployment.yaml
   - web-deployment.yaml
   - services.yaml

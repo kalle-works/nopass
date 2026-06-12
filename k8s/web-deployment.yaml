@@ -25,6 +25,8 @@ spec:
       nodeSelector:
         role: apps
         kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: ghcr-pull-secret
       securityContext:
         runAsUser: 10001
         runAsNonRoot: true
