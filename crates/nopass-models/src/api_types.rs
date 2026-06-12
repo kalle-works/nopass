@@ -259,6 +259,12 @@ pub struct CreateVaultRequest {
     pub name_iv: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveItemRequest {
+    pub to_vault_id: Uuid,
+}
+
 // ─── Generic ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

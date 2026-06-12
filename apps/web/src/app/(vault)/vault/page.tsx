@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNopassStore, ItemEditor, OrgPanel } from "@nopass/ui";
-import { decryptItem, encryptItem } from "@nopass/crypto";
+import { decryptItem, encryptItem, decryptBytes, encryptBytes } from "@nopass/crypto";
 import { computeTotp } from "@nopass/ui";
 import type {
   EncryptedVaultItem,
@@ -14,6 +14,7 @@ import type {
   CardItem,
   IdentityItem,
   SshKeyItem,
+  VaultInfo,
 } from "@nopass/types";
 import { api } from "@/lib/api";
 
@@ -565,6 +566,8 @@ function DetailPane({
   isFavorite,
   onToggleFavorite,
   onTagClick,
+  vaultOptions,
+  onMove,
 }: {
   entry: DecryptedEntry;
   onEdit: () => void;
@@ -574,6 +577,8 @@ function DetailPane({
   isFavorite: boolean;
   onToggleFavorite: () => void;
   onTagClick: (tag: string) => void;
+  vaultOptions: Array<{ id: string; name: string }>;
+  onMove: (toVaultId: string) => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { plaintext, item } = entry;
@@ -644,6 +649,25 @@ function DetailPane({
                 {tag}
               </button>
             ))}
+          </div>
+        )}
+
+        {vaultOptions.length > 1 && (
+          <div className="pt-2 border-t border-[#2B2923]">
+            <label className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-1.5">
+              Vault
+            </label>
+            <select
+              value={item.vaultId}
+              onChange={(e) => {
+                if (e.target.value !== item.vaultId) onMove(e.target.value);
+              }}
+              className="w-full px-2 py-1.5 font-mono text-xs bg-[#070706] border border-[#2B2923] text-[#F4F1E8] focus:outline-none focus:border-[#D6FF3F]"
+            >
+              {vaultOptions.map((v) => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </select>
           </div>
         )}
 
@@ -726,6 +750,9 @@ function VaultPageInner() {
   } = useNopassStore();
 
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
+  const [vaults, setVaults] = useState<VaultInfo[]>([]);
+  const [vaultNames, setVaultNames] = useState<Map<string, string>>(new Map());
+  const [activeVaultId, setActiveVaultId] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [shareEntry, setShareEntry] = useState<DecryptedEntry | null>(null);
@@ -864,12 +891,70 @@ function VaultPageInner() {
   useEffect(() => {
     if (!isUnlocked() || !sessionToken || !defaultVaultId) return;
     setLoading(true);
-    api.vault
-      .items(defaultVaultId, sessionToken)
-      .then((apiItems) => setItems(apiItems))
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load vault"))
-      .finally(() => setLoading(false));
+    (async () => {
+      try {
+        const vaultList = await api.vault.list(sessionToken);
+        setVaults(vaultList);
+        const perVault = await Promise.all(
+          vaultList.map((v) => api.vault.items(v.id, sessionToken)),
+        );
+        setItems(perVault.flat());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load vault");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [isUnlocked, sessionToken, defaultVaultId, setItems, setLoading]);
+
+  // Vault names are encrypted client-side; the registration default carries a
+  // plaintext placeholder that fails decryption — label it "Personal"
+  useEffect(() => {
+    if (!vaultEncKey || vaults.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const names = new Map<string, string>();
+      for (const v of vaults) {
+        try {
+          const bytes = await decryptBytes({ blob: v.nameBlob, blobIv: v.nameIv, blobMac: "" }, vaultEncKey);
+          names.set(v.id, new TextDecoder().decode(bytes));
+        } catch {
+          names.set(v.id, v.id === defaultVaultId ? "Personal" : "Vault");
+        }
+      }
+      if (!cancelled) setVaultNames(names);
+    })();
+    return () => { cancelled = true; };
+  }, [vaults, vaultEncKey, defaultVaultId]);
+
+  const handleCreateVault = useCallback(async () => {
+    if (!sessionToken || !vaultEncKey) return;
+    const name = prompt("Name for the new vault:");
+    if (!name?.trim()) return;
+    try {
+      const blob = await encryptBytes(new Uint8Array(new TextEncoder().encode(name.trim())), vaultEncKey);
+      const created = await api.vault.createVault({ nameBlob: blob.blob, nameIv: blob.blobIv }, sessionToken);
+      setVaults((v) => [...v, created]);
+      setActiveVaultId(created.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create vault");
+    }
+  }, [sessionToken, vaultEncKey]);
+
+  const handleMoveItem = useCallback(
+    async (item: EncryptedVaultItem, toVaultId: string) => {
+      if (!sessionToken) return;
+      try {
+        await api.vault.moveItem(item.vaultId, item.id, { toVaultId }, sessionToken);
+        upsertItem({ ...item, vaultId: toVaultId, version: item.version + 1 });
+        showToast("Item moved");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to move item");
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionToken, upsertItem],
+  );
 
   useEffect(() => {
     if (!vaultEncKey || !vaultMacKey) return;
@@ -904,7 +989,7 @@ function VaultPageInner() {
         const encrypted = await encryptItem(plaintext, vaultEncKey, vaultMacKey);
         if (modal?.mode === "create") {
           const created = await api.vault.create(
-            defaultVaultId,
+            activeVaultId ?? defaultVaultId,
             { itemType: plaintext.type, blob: encrypted.blob, blobIv: encrypted.blobIv, blobMac: encrypted.blobMac },
             sessionToken,
           );
@@ -913,7 +998,7 @@ function VaultPageInner() {
           showToast("Item saved");
         } else if (modal?.mode === "edit") {
           await api.vault.update(
-            defaultVaultId,
+            modal.entry.item.vaultId,
             modal.entry.item.id,
             { blob: encrypted.blob, blobIv: encrypted.blobIv, blobMac: encrypted.blobMac, version: modal.entry.item.version },
             sessionToken,
@@ -936,14 +1021,16 @@ function VaultPageInner() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [modal, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, upsertItem],
+    [modal, sessionToken, defaultVaultId, activeVaultId, vaultEncKey, vaultMacKey, upsertItem],
   );
 
   const handleDelete = useCallback(
     async (itemId: string) => {
-      if (!sessionToken || !defaultVaultId) return;
+      if (!sessionToken) return;
+      const target = items.find((i) => i.id === itemId);
+      if (!target) return;
       try {
-        await api.vault.delete(defaultVaultId, itemId, sessionToken);
+        await api.vault.delete(target.vaultId, itemId, sessionToken);
         markDeleted(itemId);
         setSelectedId(null);
         showToast("Item deleted");
@@ -952,7 +1039,7 @@ function VaultPageInner() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessionToken, defaultVaultId, markDeleted],
+    [sessionToken, items, markDeleted],
   );
 
   const handleLock = useCallback(() => {
@@ -987,6 +1074,7 @@ function VaultPageInner() {
   }, [tagFilter, allTags]);
 
   const filteredItems = activeItems.filter((item) => {
+    if (activeVaultId && item.vaultId !== activeVaultId) return false;
     if (filter === "favorites" && !favorites.has(item.id)) return false;
     if (filter !== "all" && filter !== "favorites" && item.itemType !== filter) return false;
     const plain = decrypted.get(item.id);
@@ -1040,6 +1128,52 @@ function VaultPageInner() {
 
         {sidebarTab === "vault" ? (
           <nav className="flex-1 overflow-y-auto p-2">
+            <p className="px-3 pt-1 pb-1.5 font-mono text-[10px] text-[#9C988D]/60 uppercase tracking-widest">
+              Vaults
+            </p>
+            <button
+              onClick={() => setActiveVaultId(null)}
+              className={`w-full text-left px-3 py-2 font-mono text-xs transition-colors flex items-center justify-between mb-0.5 ${
+                activeVaultId === null
+                  ? "text-[#D6FF3F] bg-[#D6FF3F]/10"
+                  : "text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713]"
+              }`}
+            >
+              <span>All vaults</span>
+              <span className={`tabular-nums ${activeVaultId === null ? "text-[#D6FF3F]" : "text-[#9C988D]/60"}`}>
+                {activeItems.length}
+              </span>
+            </button>
+            {vaults.map((v) => {
+              const isActive = activeVaultId === v.id;
+              const count = activeItems.filter((i) => i.vaultId === v.id).length;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => setActiveVaultId(isActive ? null : v.id)}
+                  className={`w-full text-left px-3 py-2 font-mono text-xs transition-colors flex items-center justify-between mb-0.5 ${
+                    isActive
+                      ? "text-[#D6FF3F] bg-[#D6FF3F]/10"
+                      : "text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713]"
+                  }`}
+                >
+                  <span className="truncate">{vaultNames.get(v.id) ?? "…"}</span>
+                  <span className={`tabular-nums shrink-0 ${isActive ? "text-[#D6FF3F]" : "text-[#9C988D]/60"}`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+            <button
+              onClick={handleCreateVault}
+              className="w-full text-left px-3 py-2 font-mono text-xs text-[#9C988D]/60 hover:text-[#D6FF3F] transition-colors mb-2"
+            >
+              + New vault
+            </button>
+
+            <p className="px-3 pt-2 pb-1.5 font-mono text-[10px] text-[#9C988D]/60 uppercase tracking-widest">
+              Filters
+            </p>
             {(["all", "favorites", "login", "note", "card", "identity", "ssh_key"] as Filter[]).map((f) => {
               const count =
                 f === "all"
@@ -1382,6 +1516,8 @@ function VaultPageInner() {
           isFavorite={favorites.has(selectedEntry.item.id)}
           onToggleFavorite={() => toggleFavorite(selectedEntry.item.id)}
           onTagClick={(tag) => setTagFilter(tag)}
+          vaultOptions={vaults.map((v) => ({ id: v.id, name: vaultNames.get(v.id) ?? "…" }))}
+          onMove={(toVaultId) => handleMoveItem(selectedEntry.item, toVaultId)}
         />
       )}
 

@@ -48,6 +48,8 @@ async fn register(
     let kdf_params_json = serde_json::to_value(&req.kdf_params)
         .map_err(|e| ApiError::Internal(e.into()))?;
 
+    // create_user creates the default vault internally — calling create_vault
+    // here as well used to give every new account a phantom second vault
     let user = db_auth::create_user(
         &state.db,
         &req.email_hash,
@@ -61,10 +63,6 @@ async fn register(
         req.protected_private_key_iv.as_deref(),
     )
     .await?;
-
-    db_vaults::create_vault(&state.db, user.id)
-        .await
-        .map_err(|e| ApiError::Internal(e))?;
 
     Ok((StatusCode::CREATED, Json(RegisterResponse { user_id: user.id })))
 }
