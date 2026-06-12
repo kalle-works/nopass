@@ -1,8 +1,22 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::models::vault::VaultItem;
+
+/// Typed failure for recovery completion — the route maps ItemMismatch to a
+/// fixed 400 (no internal IDs leaked) and Db to a 500.
+#[derive(Debug)]
+pub enum CompleteRecoveryError {
+    ItemMismatch,
+    Db(anyhow::Error),
+}
+
+impl From<sqlx::Error> for CompleteRecoveryError {
+    fn from(e: sqlx::Error) -> Self {
+        CompleteRecoveryError::Db(e.into())
+    }
+}
 
 pub async fn set_recovery(
     pool: &PgPool,
@@ -81,7 +95,7 @@ pub async fn complete_recovery(
     user_id: Uuid,
     completion: RecoveryCompletion<'_>,
     items: &[ReencryptedItemRow],
-) -> Result<()> {
+) -> std::result::Result<(), CompleteRecoveryError> {
     let mut tx = pool.begin().await?;
 
     sqlx::query(
@@ -126,7 +140,7 @@ pub async fn complete_recovery(
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(anyhow!("item {} does not belong to the recovering user", item.id));
+            return Err(CompleteRecoveryError::ItemMismatch);
         }
     }
 

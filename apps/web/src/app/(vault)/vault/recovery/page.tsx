@@ -55,6 +55,7 @@ export default function RecoveryPage() {
     if (!sessionToken || !email) return;
     setError(null);
     setPhase("working");
+    let subkeys: Awaited<ReturnType<typeof stretchMasterKeyAllRaw>> | null = null;
     try {
       // The vault keys in memory are non-extractable, so the kit is built from
       // the entered password — which also means we must prove it's the right
@@ -75,13 +76,10 @@ export default function RecoveryPage() {
       // The check above opened a session we don't need — close it
       api.auth.logout(verifyResp.sessionToken).catch(() => {});
 
-      const subkeys = await stretchMasterKeyAllRaw(masterKey, email);
+      subkeys = await stretchMasterKeyAllRaw(masterKey, email);
       const newCode = generateRecoveryCode();
       const { authKeyB64, wrapKey } = await deriveRecoveryKeys(newCode, email);
       const blob = await wrapVaultSubkeys(subkeys, wrapKey);
-      subkeys.smkBytes.fill(0);
-      subkeys.encKeyBytes.fill(0);
-      subkeys.macKeyBytes.fill(0);
 
       await api.recovery.set(
         { recoveryAuthKey: authKeyB64, recoveryBlob: blob.blob, recoveryBlobIv: blob.blobIv },
@@ -101,6 +99,11 @@ export default function RecoveryPage() {
           : msg,
       );
       setPhase("confirm-password");
+    } finally {
+      // Zero key material on every path, including failures
+      subkeys?.smkBytes.fill(0);
+      subkeys?.encKeyBytes.fill(0);
+      subkeys?.macKeyBytes.fill(0);
     }
   }
 

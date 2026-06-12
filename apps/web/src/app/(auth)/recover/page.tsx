@@ -105,6 +105,7 @@ export default function RecoverPage() {
     }
     setError(null);
     setLoading(true);
+    let newRaw: Awaited<ReturnType<typeof stretchMasterKeyAllRaw>> | null = null;
     try {
       setProgress("Importing old keys…");
       const importAes = (bytes: Uint8Array<ArrayBuffer>, usages: KeyUsage[]) =>
@@ -122,7 +123,7 @@ export default function RecoverPage() {
       setProgress("Deriving new keys (Argon2id)…");
       const newMasterKey = await deriveMasterKey(newPassword, email, DEFAULT_KDF_PARAMS);
       const newKeys = await stretchMasterKey(newMasterKey, email);
-      const newRaw = await stretchMasterKeyAllRaw(newMasterKey, email);
+      newRaw = await stretchMasterKeyAllRaw(newMasterKey, email);
       const { srpSalt, srpVerifier } = generateSrpRegistration(email, newPassword);
 
       setProgress(`Re-encrypting ${init.items.length} item${init.items.length === 1 ? "" : "s"}…`);
@@ -163,13 +164,6 @@ export default function RecoverPage() {
       const replacementKeys = await deriveRecoveryKeys(replacementCode, email);
       const replacementBlob = await wrapVaultSubkeys(newRaw, replacementKeys.wrapKey);
 
-      newRaw.smkBytes.fill(0);
-      newRaw.encKeyBytes.fill(0);
-      newRaw.macKeyBytes.fill(0);
-      oldSubkeys.smkBytes.fill(0);
-      oldSubkeys.encKeyBytes.fill(0);
-      oldSubkeys.macKeyBytes.fill(0);
-
       setProgress("Applying…");
       await api.recovery.complete({
         recoveryToken: init.recoveryToken,
@@ -184,6 +178,10 @@ export default function RecoverPage() {
         recoveryBlobIv: replacementBlob.blobIv,
       });
 
+      // Only on success — a failed attempt must stay retryable with the same keys
+      oldSubkeys.smkBytes.fill(0);
+      oldSubkeys.encKeyBytes.fill(0);
+      oldSubkeys.macKeyBytes.fill(0);
       setInit(null);
       setOldSubkeys(null);
       setNewCode(replacementCode);
@@ -191,6 +189,10 @@ export default function RecoverPage() {
     } catch (err) {
       setError(humanizeError(err));
     } finally {
+      // New-password subkeys are re-derivable — zero them on every path
+      newRaw?.smkBytes.fill(0);
+      newRaw?.encKeyBytes.fill(0);
+      newRaw?.macKeyBytes.fill(0);
       setLoading(false);
       setProgress(null);
     }

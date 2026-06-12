@@ -35,8 +35,9 @@ describe("normalizeRecoveryCode", () => {
     expect(normalizeRecoveryCode("abcd-2345 jkmn")).toBe("ABCD2345JKMN");
   });
 
-  it("maps confusable letters to Crockford canonical digits", () => {
+  it("maps confusable letters to Crockford canonical characters", () => {
     expect(normalizeRecoveryCode("OIlo")).toBe("0110");
+    expect(normalizeRecoveryCode("uV")).toBe("VV");
   });
 });
 

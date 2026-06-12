@@ -60,14 +60,16 @@ export function generateRecoveryCode(): string {
 
 /**
  * Normalize user input: uppercase, map easily-confused letters to their
- * Crockford canonical digit, strip separators.
+ * Crockford canonical character, strip separators. U never appears in
+ * generated codes, so a typed U can only be a misread V.
  */
 export function normalizeRecoveryCode(code: string): string {
   return code
     .toUpperCase()
     .replace(/[\s-]/g, "")
     .replace(/O/g, "0")
-    .replace(/[IL]/g, "1");
+    .replace(/[IL]/g, "1")
+    .replace(/U/g, "V");
 }
 
 export interface RecoveryKeys {

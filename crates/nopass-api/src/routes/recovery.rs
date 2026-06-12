@@ -162,14 +162,19 @@ async fn recovery_complete(
         .parse()
         .map_err(|_| ApiError::Unauthorized("invalid recovery token".into()))?;
 
+    // Peek without consuming: a transient failure (DB hiccup, bad field) must
+    // leave the token usable so the client can retry without restarting the
+    // whole code-entry flow. The token holder already has full recovery power,
+    // so single-use isn't load-bearing; it's consumed on success below.
     let pending = {
-        let mut sessions = state.recovery_sessions.lock().await;
+        let sessions = state.recovery_sessions.lock().await;
         sessions
-            .remove(&token)
+            .get(&token)
+            .cloned()
             .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?
     };
 
-    if pending.created_at.elapsed().as_secs() > RECOVERY_SESSION_TTL_SECS {
+    if pending.created_at.elapsed().as_secs() >= RECOVERY_SESSION_TTL_SECS {
         return Err(ApiError::Unauthorized("recovery session expired".into()));
     }
 
@@ -227,7 +232,18 @@ async fn recovery_complete(
         &items,
     )
     .await
-    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    .map_err(|e| match e {
+        db_recovery::CompleteRecoveryError::ItemMismatch => {
+            ApiError::BadRequest("one or more items do not belong to this account".into())
+        }
+        db_recovery::CompleteRecoveryError::Db(e) => ApiError::Internal(e),
+    })?;
+
+    // Success — burn the token
+    {
+        let mut sessions = state.recovery_sessions.lock().await;
+        sessions.remove(&token);
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
