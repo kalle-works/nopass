@@ -27,6 +27,7 @@ spec:
               command: ["/bin/sh", "-ec"]
               args:
                 - |
+                  apk add --no-cache openssl git openssh-client >/dev/null
                   TS=$(date -u +%Y%m%d-%H%M%S)
                   echo "dumping nopwd database…"
                   pg_dump "$DATABASE_URL" -Fc -f /tmp/nopwd-$TS.dump
@@ -39,7 +40,6 @@ spec:
                   ls -1t /backups/nopwd-*.dump.enc | tail -n +15 | xargs -r rm -f
 
                   echo "pushing offsite (rolling 7, constant-size repo)…"
-                  apk add --no-cache git openssh-client >/dev/null
                   export HOME=/tmp
                   mkdir -p /tmp/.ssh
                   cp /secrets/deploy-key /tmp/.ssh/id_ed25519
