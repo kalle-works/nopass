@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { CardItem } from "@nopass/types";
+import { TagsEditor } from "./TagsEditor";
 
 interface CardEditorProps {
   initial?: Partial<CardItem> | undefined;
@@ -12,6 +13,7 @@ interface CardEditorProps {
 
 export function CardEditor({ initial, onSave, onCancel, saving }: CardEditorProps) {
   const [name, setName] = useState(initial?.name ?? "");
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [cardholderName, setCardholderName] = useState(initial?.cardholderName ?? "");
   const [number, setNumber] = useState(initial?.number ?? "");
   const [expMonth, setExpMonth] = useState(initial?.expMonth ?? "");
@@ -21,7 +23,7 @@ export function CardEditor({ initial, onSave, onCancel, saving }: CardEditorProp
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ type: "card", name, cardholderName, number, expMonth, expYear, cvv });
+    onSave({ type: "card", name, cardholderName, number, expMonth, expYear, cvv, tags });
   }
 
   return (
@@ -55,6 +57,7 @@ export function CardEditor({ initial, onSave, onCancel, saving }: CardEditorProp
           </div>
         </Field>
       </div>
+      <TagsEditor tags={tags} onChange={setTags} />
       <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
         <button type="button" onClick={onCancel} className="px-4 py-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors">
           Cancel

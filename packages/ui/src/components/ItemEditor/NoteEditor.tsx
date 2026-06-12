@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { NoteItem } from "@nopass/types";
+import { TagsEditor } from "./TagsEditor";
 
 interface NoteEditorProps {
   initial?: Partial<NoteItem> | undefined;
@@ -13,10 +14,11 @@ interface NoteEditorProps {
 export function NoteEditor({ initial, onSave, onCancel, saving }: NoteEditorProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [content, setContent] = useState(initial?.content ?? "");
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ type: "note", name, content });
+    onSave({ type: "note", name, content, tags });
   }
 
   return (
@@ -44,6 +46,7 @@ export function NoteEditor({ initial, onSave, onCancel, saving }: NoteEditorProp
           className={`${inputClass} resize-y`}
         />
       </div>
+      <TagsEditor tags={tags} onChange={setTags} />
       <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
         <button type="button" onClick={onCancel} className={cancelClass}>
           Cancel

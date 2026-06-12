@@ -432,7 +432,14 @@ function mapGenericToNote(item: OnePuxItem): NoteItem {
 
 function mapItem(item: OnePuxItem): VaultItemPlaintext | null {
   if (item.trashed === "Y") return null;
+  const mapped = mapItemByCategory(item);
+  if (!mapped) return null;
 
+  const tags = (item.overview.tags ?? []).map((t) => t.trim()).filter(Boolean);
+  return tags.length > 0 ? { ...mapped, tags } : mapped;
+}
+
+function mapItemByCategory(item: OnePuxItem): VaultItemPlaintext | null {
   switch (item.categoryUuid) {
     case CATEGORY_LOGIN:
       return mapLogin(item);

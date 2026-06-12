@@ -62,3 +62,4 @@ export * from "./NoteEditor";
 export * from "./CardEditor";
 export * from "./IdentityEditor";
 export * from "./SshKeyEditor";
+export * from "./TagsEditor";

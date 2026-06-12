@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNopassStore, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
@@ -386,6 +386,7 @@ function DetailPane({
   onClose,
   isFavorite,
   onToggleFavorite,
+  onTagClick,
 }: {
   entry: DecryptedEntry;
   onEdit: () => void;
@@ -393,6 +394,7 @@ function DetailPane({
   onClose: () => void;
   isFavorite: boolean;
   onToggleFavorite: () => void;
+  onTagClick: (tag: string) => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { plaintext, item } = entry;
@@ -444,6 +446,21 @@ function DetailPane({
         {plaintext.type === "card" && <CardDetail card={plaintext as CardItem} />}
         {plaintext.type === "identity" && <IdentityDetail identity={plaintext as IdentityItem} />}
         {plaintext.type === "ssh_key" && <SshKeyDetail sshKey={plaintext as SshKeyItem} />}
+
+        {plaintext.tags && plaintext.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-2 border-t border-[#2B2923]">
+            {plaintext.tags.map((tag) => (
+              <button
+                key={tag}
+                onClick={() => onTagClick(tag)}
+                title={`Show all items tagged ${tag}`}
+                className="px-2 py-0.5 font-mono text-xs bg-[#181713] border border-[#2B2923] text-[#9C988D] hover:text-[#D6FF3F] hover:border-[#D6FF3F]/40 transition-colors"
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="font-mono text-[10px] text-[#9C988D]/40 pt-2 border-t border-[#2B2923]">
           <p>ID {item.id.slice(0, 8)}… · v{item.version}</p>
@@ -525,6 +542,7 @@ function VaultPageInner() {
 
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
   const [filter, setFilter] = useState<Filter>("all");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -756,14 +774,46 @@ function VaultPageInner() {
     router.replace("/login");
   }, [lock, router]);
 
-  const activeItems = items.filter((i) => i.deletedAt === null);
+  const activeItems = useMemo(() => items.filter((i) => i.deletedAt === null), [items]);
+
+  // Tag counts come from decrypted plaintexts — tags are zero-knowledge data
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of activeItems) {
+      const plain = decrypted.get(item.id);
+      for (const tag of plain?.tags ?? []) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [activeItems, decrypted]);
+  const allTags = useMemo(
+    () => [...tagCounts.keys()].sort((a, b) => a.localeCompare(b)),
+    [tagCounts],
+  );
+
+  // Deleting or editing away the last item with the active tag would leave an
+  // inexplicable empty list — drop the filter when its tag disappears
+  useEffect(() => {
+    if (tagFilter && !allTags.some((t) => t.toLowerCase() === tagFilter.toLowerCase())) {
+      setTagFilter(null);
+    }
+  }, [tagFilter, allTags]);
+
   const filteredItems = activeItems.filter((item) => {
     if (filter === "favorites" && !favorites.has(item.id)) return false;
     if (filter !== "all" && filter !== "favorites" && item.itemType !== filter) return false;
+    const plain = decrypted.get(item.id);
+    if (tagFilter) {
+      if (!plain?.tags?.some((t) => t.toLowerCase() === tagFilter.toLowerCase())) return false;
+    }
     if (search) {
-      const plain = decrypted.get(item.id);
       if (!plain) return false;
-      return plain.name.toLowerCase().includes(search.toLowerCase());
+      const q = search.toLowerCase();
+      return (
+        plain.name.toLowerCase().includes(q) ||
+        (plain.tags ?? []).some((t) => t.toLowerCase().includes(q))
+      );
     }
     return true;
   });
@@ -840,6 +890,33 @@ function VaultPageInner() {
                 </button>
               );
             })}
+
+            {allTags.length > 0 && (
+              <>
+                <p className="px-3 pt-4 pb-1.5 font-mono text-[10px] text-[#9C988D]/60 uppercase tracking-widest">
+                  Tags
+                </p>
+                {allTags.map((tag) => {
+                  const isActive = tagFilter?.toLowerCase() === tag.toLowerCase();
+                  return (
+                    <button
+                      key={tag}
+                      onClick={() => setTagFilter(isActive ? null : tag)}
+                      className={`w-full text-left px-3 py-2 font-mono text-xs transition-colors flex items-center justify-between mb-0.5 ${
+                        isActive
+                          ? "text-[#D6FF3F] bg-[#D6FF3F]/10"
+                          : "text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713]"
+                      }`}
+                    >
+                      <span className="truncate">{tag}</span>
+                      <span className={`tabular-nums shrink-0 ${isActive ? "text-[#D6FF3F]" : "text-[#9C988D]/60"}`}>
+                        {tagCounts.get(tag)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
           </nav>
         ) : (
           <div className="flex-1 overflow-y-auto">
@@ -1107,6 +1184,7 @@ function VaultPageInner() {
           onClose={() => setSelectedId(null)}
           isFavorite={favorites.has(selectedEntry.item.id)}
           onToggleFavorite={() => toggleFavorite(selectedEntry.item.id)}
+          onTagClick={(tag) => setTagFilter(tag)}
         />
       )}
 

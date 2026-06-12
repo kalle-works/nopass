@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { IdentityItem } from "@nopass/types";
+import { TagsEditor } from "./TagsEditor";
 
 interface IdentityEditorProps {
   initial?: Partial<IdentityItem> | undefined;
@@ -12,6 +13,7 @@ interface IdentityEditorProps {
 
 export function IdentityEditor({ initial, onSave, onCancel, saving }: IdentityEditorProps) {
   const [name, setName] = useState(initial?.name ?? "");
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [firstName, setFirstName] = useState(initial?.firstName ?? "");
   const [lastName, setLastName] = useState(initial?.lastName ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
@@ -22,7 +24,7 @@ export function IdentityEditor({ initial, onSave, onCancel, saving }: IdentityEd
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    onSave({ type: "identity", name, firstName, lastName, email, phone, address, city, country });
+    onSave({ type: "identity", name, firstName, lastName, email, phone, address, city, country, tags });
   }
 
   const inp =
@@ -67,6 +69,7 @@ export function IdentityEditor({ initial, onSave, onCancel, saving }: IdentityEd
           <input type="text" value={country} onChange={(e) => setCountry(e.target.value)} className={inp} />
         </div>
       </div>
+      <TagsEditor tags={tags} onChange={setTags} />
       <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
         <button type="button" onClick={onCancel} className="px-4 py-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors">
           Cancel

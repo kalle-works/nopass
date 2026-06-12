@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import type { LoginItem, CustomField } from "@nopass/types";
+import { TagsEditor } from "./TagsEditor";
 
 interface LoginEditorProps {
   initial?: Partial<LoginItem> | undefined;
@@ -256,6 +257,7 @@ function CustomFieldsEditor({
 
 export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorProps) {
   const [name, setName] = useState(initial?.name ?? "");
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [username, setUsername] = useState(initial?.username ?? "");
   const [password, setPassword] = useState(initial?.password ?? (!initial ? generatePassword(DEFAULT_OPTS) : ""));
   const [url, setUrl] = useState(initial?.urls?.[0] ?? "");
@@ -279,6 +281,7 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
       urls: url ? [url] : [],
       ...(totp && { totp }),
       ...(notes && { notes }),
+      tags,
       customFields,
     });
   }
@@ -454,6 +457,7 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
         )}
       </div>
 
+      <TagsEditor tags={tags} onChange={setTags} />
       <FormActions onCancel={onCancel} {...(saving !== undefined && { saving })} />
     </form>
   );
