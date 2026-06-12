@@ -39,7 +39,27 @@ function makeChromeMock() {
   };
 }
 
-function send(message: unknown, sender: chrome.runtime.MessageSender = { id: EXTENSION_ID }) {
+/** Sender shape of the real action popup: extension url, no tab. */
+const POPUP_SENDER: chrome.runtime.MessageSender = {
+  id: EXTENSION_ID,
+  url: `chrome-extension://${EXTENSION_ID}/src/popup/index.html`,
+};
+
+/** Extension page opened in a tab: extension url, tab present. */
+const EXTENSION_TAB_SENDER: chrome.runtime.MessageSender = {
+  id: EXTENSION_ID,
+  url: `chrome-extension://${EXTENSION_ID}/src/popup/index.html`,
+  tab: { id: 7 } as chrome.tabs.Tab,
+};
+
+/** Content script: web page url, tab present. */
+const CONTENT_SCRIPT_SENDER: chrome.runtime.MessageSender = {
+  id: EXTENSION_ID,
+  url: "https://evil.example/",
+  tab: { id: 1 } as chrome.tabs.Tab,
+};
+
+function send(message: unknown, sender: chrome.runtime.MessageSender = POPUP_SENDER) {
   return new Promise<any>((resolve) => {
     listeners[listeners.length - 1]!(message, sender, resolve);
   });
@@ -60,12 +80,12 @@ const UNLOCK_MSG = {
   vaultMacKeyB64: KEY_B64,
 };
 
-let itemsResponse: () => Response;
+let itemsResponse: () => Promise<Response>;
 
 beforeEach(async () => {
   listeners = [];
   sessionStore = {};
-  itemsResponse = () => new Response(JSON.stringify([]), { status: 200 });
+  itemsResponse = async () => new Response(JSON.stringify([]), { status: 200 });
   vi.stubGlobal("chrome", makeChromeMock());
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (String(url).includes("/items")) return itemsResponse();
@@ -99,20 +119,54 @@ describe("vault session persistence across SW restarts", () => {
   it("drops the persisted session when the server rejects it", async () => {
     await send(UNLOCK_MSG);
     await startServiceWorker();
-    itemsResponse = () => new Response("unauthorized", { status: 401 });
+    itemsResponse = async () => new Response("unauthorized", { status: 401 });
 
     expect(await send({ type: "IS_UNLOCKED" })).toEqual({ unlocked: false });
     expect(sessionStore["vaultSession"]).toBeUndefined();
   });
 
-  it("never lets a content script unlock or read the persisted session", async () => {
+  it("a LOCK during an in-flight restore wins — the vault stays locked", async () => {
     await send(UNLOCK_MSG);
-    const contentScriptSender = {
-      id: EXTENSION_ID,
-      tab: { id: 1 } as chrome.tabs.Tab,
-      url: "https://evil.example/",
+    await startServiceWorker();
+
+    // Make the restore's items fetch hang until we release it
+    let releaseFetch!: () => void;
+    const gate = new Promise<void>((r) => { releaseFetch = r; });
+    itemsResponse = async () => {
+      await gate;
+      return new Response(JSON.stringify([]), { status: 200 });
     };
-    expect(await send(UNLOCK_MSG, contentScriptSender)).toEqual({ error: "unauthorized" });
-    expect(await send({ type: "LOCK" }, contentScriptSender)).toEqual({ error: "unauthorized" });
+
+    const restoreTriggered = send({ type: "IS_UNLOCKED" }); // restore starts
+    await new Promise((r) => setTimeout(r, 10)); // let it reach the fetch
+    expect(await send({ type: "LOCK" })).toEqual({ ok: true });
+    releaseFetch();
+
+    expect(await restoreTriggered).toEqual({ unlocked: false });
+    expect(await send({ type: "IS_UNLOCKED" })).toEqual({ unlocked: false });
+    expect(sessionStore["vaultSession"]).toBeUndefined();
+  });
+
+  it("never lets a content script unlock, lock, or read vault data", async () => {
+    await send(UNLOCK_MSG);
+    expect(await send(UNLOCK_MSG, CONTENT_SCRIPT_SENDER)).toEqual({ error: "unauthorized" });
+    expect(await send({ type: "LOCK" }, CONTENT_SCRIPT_SENDER)).toEqual({ error: "unauthorized" });
+    expect(await send({ type: "IS_UNLOCKED" }, CONTENT_SCRIPT_SENDER)).toEqual({ unlocked: false });
+    expect(await send({ type: "GET_ITEMS" }, CONTENT_SCRIPT_SENDER)).toEqual({ error: "unauthorized" });
+    expect(await send({ type: "SEARCH_ITEMS", query: "" }, CONTENT_SCRIPT_SENDER)).toEqual({
+      error: "unauthorized",
+    });
+    expect(await send({ type: "GET_CREDENTIALS", itemId: "x" }, CONTENT_SCRIPT_SENDER)).toEqual({
+      error: "unauthorized",
+    });
+  });
+
+  it("extension pages hosted in a tab may read but not mutate", async () => {
+    await send(UNLOCK_MSG);
+    expect(await send({ type: "IS_UNLOCKED" }, EXTENSION_TAB_SENDER)).toEqual({ unlocked: true });
+    expect(await send({ type: "SEARCH_ITEMS", query: "" }, EXTENSION_TAB_SENDER)).toEqual({
+      results: [],
+    });
+    expect(await send({ type: "LOCK" }, EXTENSION_TAB_SENDER)).toEqual({ error: "unauthorized" });
   });
 });

@@ -231,14 +231,23 @@ fn write_askpass_script(passphrase: &str) -> Result<std::path::PathBuf, String> 
 // queue, so the whole interaction runs on a blocking thread.
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
-pub fn touch_id_available() -> bool {
+pub(crate) fn touch_id_available_blocking() -> bool {
     use objc2_local_authentication::{LAContext, LAPolicy};
     unsafe {
         LAContext::new()
             .canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics)
             .is_ok()
     }
+}
+
+// LAContext is not documented thread-safe, so both commands take the same
+// path: a fresh context used start-to-finish on one blocking thread.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn touch_id_available() -> bool {
+    tauri::async_runtime::spawn_blocking(touch_id_available_blocking)
+        .await
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
@@ -265,8 +274,12 @@ pub async fn touch_id_authenticate(reason: String) -> Result<bool, String> {
                 &reply,
             );
             // The context must outlive the system prompt; recv blocks until
-            // the user confirms, cancels, or the prompt times out.
+            // the user confirms, cancels, or the prompt times out. ns_reason
+            // is ARC-retained (Retained<NSString>), safe for the OS queue.
             let ok = rx.recv_timeout(Duration::from_secs(120)).unwrap_or(false);
+            // Dismiss the prompt if our timeout won the race — otherwise a
+            // zombie dialog outlives the command that already returned false
+            ctx.invalidate();
             drop(ctx);
             Ok(ok)
         }
@@ -294,7 +307,7 @@ mod biometric_tests {
     /// so only the call itself is asserted (no panic / no ObjC exception).
     #[test]
     fn touch_id_availability_probe() {
-        let available = super::touch_id_available();
+        let available = super::touch_id_available_blocking();
         println!("touch_id_available: {available}");
     }
 }

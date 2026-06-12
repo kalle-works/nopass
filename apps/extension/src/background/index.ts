@@ -71,13 +71,20 @@ async function importVaultKeys(encKeyB64: string, macKeyB64: string) {
 }
 
 // Single in-flight restore so concurrent messages after an SW restart don't
-// each refetch the vault.
+// each refetch the vault. (vaultState is assigned before the promise resolves
+// and `restoring` is cleared, so a later caller that misses the in-flight
+// promise short-circuits on the vaultState check instead of refetching.)
 let restoring: Promise<void> | null = null;
+
+// Bumped by LOCK so a restore that was already in flight when the user locked
+// cannot resurrect the session when its network call finally returns.
+let lockGeneration = 0;
 
 /** Rehydrates the unlocked session after an SW restart, if one was persisted. */
 function restoreVaultState(): Promise<void> {
   restoring ??= (async () => {
     if (vaultState) return;
+    const generation = lockGeneration;
     const stored = (await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY] as
       | PersistedSession
       | undefined;
@@ -85,6 +92,8 @@ function restoreVaultState(): Promise<void> {
     try {
       const { vaultEncKey, vaultMacKey } = await importVaultKeys(stored.encKeyB64, stored.macKeyB64);
       const items = await api.vault.items(stored.defaultVaultId, stored.sessionToken);
+      // A LOCK (or a fresh UNLOCK) that happened while we awaited wins
+      if (lockGeneration !== generation || vaultState) return;
       vaultState = {
         sessionToken: stored.sessionToken,
         defaultVaultId: stored.defaultVaultId,
@@ -93,8 +102,11 @@ function restoreVaultState(): Promise<void> {
         items,
       };
     } catch {
-      // Server rejected the session (expired/revoked) — drop it and stay locked
-      await chrome.storage.session.remove(SESSION_KEY);
+      // Server rejected the session (expired/revoked) — drop it and stay
+      // locked, unless a newer session was persisted while we awaited
+      if (lockGeneration === generation) {
+        await chrome.storage.session.remove(SESSION_KEY);
+      }
     }
   })().finally(() => {
     restoring = null;
@@ -139,6 +151,19 @@ function isExtensionPage(sender: chrome.runtime.MessageSender): boolean {
   return sender.id === chrome.runtime.id && sender.tab === undefined;
 }
 
+/**
+ * Returns true for any page served from this extension (popup, or an
+ * extension page hosted in a tab) — but never for content scripts, whose
+ * sender.url is the web page they run in. Vault reads use this; state
+ * mutations (UNLOCK/LOCK/AUTOFILL) require the stricter isExtensionPage.
+ */
+function isExtensionContext(sender: chrome.runtime.MessageSender): boolean {
+  return (
+    sender.id === chrome.runtime.id &&
+    (sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`) ?? false)
+  );
+}
+
 async function handleMessage(message: Message, sender: chrome.runtime.MessageSender): Promise<unknown> {
   // The SW may have been torn down since the vault was unlocked — rehydrate
   // from storage.session before treating any request as locked.
@@ -156,6 +181,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       );
 
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
+      lockGeneration++; // invalidate any restore still in flight
       vaultState = { sessionToken: message.sessionToken, defaultVaultId: message.defaultVaultId, vaultEncKey, vaultMacKey, items };
 
       const persisted: PersistedSession = {
@@ -170,21 +196,26 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
 
     case "LOCK": {
       if (!isExtensionPage(sender)) return { error: "unauthorized" };
+      lockGeneration++; // a restore in flight must not resurrect the session
       vaultState = null;
       await chrome.storage.session.remove(SESSION_KEY);
       return { ok: true };
     }
 
     case "IS_UNLOCKED": {
+      // Web pages must not learn the lock state — report locked to them
+      if (!isExtensionContext(sender)) return { unlocked: false };
       return { unlocked: vaultState !== null };
     }
 
     case "GET_ITEMS": {
+      if (!isExtensionContext(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
       return { items: vaultState.items };
     }
 
     case "SEARCH_ITEMS": {
+      if (!isExtensionContext(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
       const { query, url } = message;
       const { vaultEncKey, vaultMacKey, items } = vaultState;
@@ -216,6 +247,8 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
     }
 
     case "GET_CREDENTIALS": {
+      // Plaintext credentials — a content script must NEVER receive these
+      if (!isExtensionContext(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
