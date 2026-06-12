@@ -25,49 +25,53 @@ export function IdentityEditor({ initial, onSave, onCancel, saving }: IdentityEd
     onSave({ type: "identity", name, firstName, lastName, email, phone, address, city, country });
   }
 
-  const inp = "w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
+  const inp =
+    "w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D]/60 focus:outline-none focus:border-[#D6FF3F] transition-colors";
+  const lbl = "font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-1.5";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name *</label>
+        <label className={lbl}>Name <span className="text-[#E8321A]">*</span></label>
         <input type="text" value={name} onChange={(e) => setName(e.target.value)} required className={inp} />
       </div>
       <div className="flex gap-3">
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">First name</label>
+          <label className={lbl}>First name</label>
           <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inp} />
         </div>
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Last name</label>
+          <label className={lbl}>Last name</label>
           <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={inp} />
         </div>
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+        <label className={lbl}>Email</label>
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inp} />
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Phone</label>
+        <label className={lbl}>Phone</label>
         <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inp} />
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Address</label>
+        <label className={lbl}>Address</label>
         <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} className={inp} />
       </div>
       <div className="flex gap-3">
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">City</label>
+          <label className={lbl}>City</label>
           <input type="text" value={city} onChange={(e) => setCity(e.target.value)} className={inp} />
         </div>
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Country</label>
+          <label className={lbl}>Country</label>
           <input type="text" value={country} onChange={(e) => setCountry(e.target.value)} className={inp} />
         </div>
       </div>
-      <div className="flex justify-end gap-3 pt-2">
-        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">Cancel</button>
-        <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-medium">
+      <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
+        <button type="button" onClick={onCancel} className="px-4 py-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors">
+          Cancel
+        </button>
+        <button type="submit" disabled={saving} className="px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] disabled:opacity-50 text-[#070706] transition-colors">
           {saving ? "Saving…" : "Save"}
         </button>
       </div>

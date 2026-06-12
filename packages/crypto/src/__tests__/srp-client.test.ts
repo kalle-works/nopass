@@ -276,7 +276,7 @@ describe("srpStep2 — M1 = H(A|B|K) compatible with Rust srp 0.6.x", () => {
     const m1Bytes = hexToBytes(base64ToHex(step2.clientProofM1));
     const serverM2Bytes = rustM2(clientPublicAHex, m1Bytes, kBytes);
 
-    serverM2Bytes[serverM2Bytes.length - 1] ^= 0xff;
+    serverM2Bytes[serverM2Bytes.length - 1]! ^= 0xff;
     const tamperedM2B64 = hexToBase64(bytesToHex(serverM2Bytes));
 
     expect(() => step2.verifyServerProof(tamperedM2B64)).toThrow();

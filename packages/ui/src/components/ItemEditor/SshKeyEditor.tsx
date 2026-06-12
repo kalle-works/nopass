@@ -83,7 +83,7 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
           <button
             type="button"
             onClick={() => setShowPassphrase((s) => !s)}
-            className="absolute inset-y-0 right-0 px-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            className="absolute inset-y-0 right-0 px-3 text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
           >
             {showPassphrase ? (
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
@@ -122,8 +122,8 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
 
       <label className="flex items-center justify-between gap-3 py-1 cursor-pointer select-none">
         <div>
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Use in SSH agent</span>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          <span className="text-sm font-medium text-[#F4F1E8]">Use in SSH agent</span>
+          <p className="font-mono text-[10px] text-[#9C988D] mt-0.5">
             Expose this key via the nopass agent socket
           </p>
         </div>
@@ -132,10 +132,10 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
           role="switch"
           aria-checked={useInAgent}
           onClick={() => setUseInAgent((v) => !v)}
-          className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${useInAgent ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-600"}`}
+          className={`relative flex h-5 w-9 shrink-0 items-center border transition-colors focus:outline-none ${useInAgent ? "bg-[#D6FF3F] border-[#D6FF3F]" : "bg-transparent border-[#2B2923]"}`}
         >
           <span
-            className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${useInAgent ? "translate-x-4" : "translate-x-0"}`}
+            className={`pointer-events-none inline-block h-3 w-3 bg-[#070706] transition-transform ${useInAgent ? "translate-x-5" : "translate-x-0.5"}`}
           />
         </button>
       </label>
@@ -146,7 +146,7 @@ export function SshKeyEditor({ initial, onSave, onCancel, saving }: SshKeyEditor
 }
 
 const inputClass =
-  "w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition";
+  "w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D]/60 focus:outline-none focus:border-[#D6FF3F] transition-colors";
 
 function Field({
   label,
@@ -159,9 +159,9 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+      <label className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-1.5">
         {label}
-        {required && <span className="text-red-500 ml-0.5"> *</span>}
+        {required && <span className="text-[#E8321A] ml-0.5"> *</span>}
       </label>
       {children}
     </div>
@@ -170,18 +170,18 @@ function Field({
 
 function FormActions({ onCancel, saving }: { onCancel: () => void; saving?: boolean }) {
   return (
-    <div className="flex justify-end gap-3 pt-2 border-t border-gray-100 dark:border-gray-700">
+    <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
       <button
         type="button"
         onClick={onCancel}
-        className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+        className="px-4 py-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors"
       >
         Cancel
       </button>
       <button
         type="submit"
         disabled={saving}
-        className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-70 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+        className="px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] disabled:opacity-70 text-[#070706] transition-colors flex items-center gap-2"
       >
         {saving && (
           <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">

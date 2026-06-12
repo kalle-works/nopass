@@ -150,6 +150,7 @@ async fn srp_verify_wrong_password_returns_401(pool: PgPool) {
         .json(&SrpVerifyRequest {
             session_id: init_resp.session_id,
             client_proof_m1: B64.encode(&[0xde, 0xad, 0xbe, 0xef]),
+            device_id: None,
         })
         .await;
 
@@ -165,6 +166,7 @@ async fn srp_verify_invalid_session_returns_401(pool: PgPool) {
         .json(&SrpVerifyRequest {
             session_id: Uuid::new_v4(), // no such session
             client_proof_m1: B64.encode(&[0u8; 32]),
+            device_id: None,
         })
         .await;
 

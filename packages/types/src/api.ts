@@ -55,6 +55,8 @@ export interface SrpVerifyRequest {
   sessionId: string;
   /** base64 SRP client proof M1 */
   clientProofM1: string;
+  /** Optional: link this session to an existing trusted device. */
+  deviceId?: string;
 }
 
 export interface SrpVerifyResponse {
@@ -71,7 +73,13 @@ export interface SrpVerifyResponse {
 
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
-export type DeviceType = "desktop_mac" | "android" | "web" | "extension";
+export type DeviceType =
+  | "desktop_mac"
+  | "desktop_linux"
+  | "desktop_windows"
+  | "android"
+  | "web"
+  | "extension";
 
 export interface RegisterDeviceRequest {
   deviceName: string;
