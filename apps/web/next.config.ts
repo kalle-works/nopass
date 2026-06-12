@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV === "development";
@@ -67,6 +68,11 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Lean Docker images: server.js + traced node_modules only
+  output: "standalone",
+  // Pin tracing to the monorepo root — Next otherwise guesses from stray
+  // lockfiles above the repo and the standalone layout becomes path-dependent
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   allowedDevOrigins: ["127.0.0.1"],
   async headers() {
     return [
