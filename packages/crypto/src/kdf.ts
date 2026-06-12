@@ -92,6 +92,27 @@ export async function stretchMasterKeyRaw(
   };
 }
 
+/**
+ * All three raw subkeys, for flows that re-wrap key material (recovery kit
+ * setup, password change). Caller is responsible for zeroing buffers.
+ */
+export async function stretchMasterKeyAllRaw(
+  masterKey: Uint8Array,
+  email: string,
+): Promise<{
+  smkBytes: Uint8Array<ArrayBuffer>;
+  encKeyBytes: Uint8Array<ArrayBuffer>;
+  macKeyBytes: Uint8Array<ArrayBuffer>;
+}> {
+  const salt = enc.encode(email.toLowerCase());
+  const toAb = (bytes: Uint8Array): Uint8Array<ArrayBuffer> => new Uint8Array(bytes);
+  return {
+    smkBytes: toAb(hkdf(sha256, masterKey, salt, enc.encode("nopass-v1-smk"), 32)),
+    encKeyBytes: toAb(hkdf(sha256, masterKey, salt, enc.encode("nopass-v1-enc"), 32)),
+    macKeyBytes: toAb(hkdf(sha256, masterKey, salt, enc.encode("nopass-v1-mac"), 32)),
+  };
+}
+
 /** Compute the email hash sent to the server: SHA-256("nopass-v1-email:" + lowercase(email)) */
 export function computeEmailHash(email: string): string {
   const bytes = sha256(enc.encode(`nopass-v1-email:${email.toLowerCase()}`));

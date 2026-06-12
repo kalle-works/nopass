@@ -71,6 +71,63 @@ export interface SrpVerifyResponse {
   protectedPrivateKeyIv?: string | null;
 }
 
+// ─── Recovery ────────────────────────────────────────────────────────────────
+
+/** Enable or rotate the account recovery kit (authenticated). */
+export interface SetRecoveryRequest {
+  /** base64 auth key derived from the recovery code; server stores only its SHA-256 */
+  recoveryAuthKey: string;
+  /** base64 AES-GCM(smk || enc || mac) under the recovery wrap key */
+  recoveryBlob: string;
+  recoveryBlobIv: string;
+}
+
+export interface RecoveryStatusResponse {
+  enabled: boolean;
+  updatedAt: string | null;
+}
+
+export interface RecoveryInitRequest {
+  emailHash: string;
+  /** base64 auth key re-derived from the entered recovery code */
+  recoveryAuthKey: string;
+}
+
+export interface RecoveryInitResponse {
+  /** short-lived token authorizing the recovery completion */
+  recoveryToken: string;
+  recoveryBlob: string;
+  recoveryBlobIv: string;
+  protectedPrivateKey?: string | null;
+  protectedPrivateKeyIv?: string | null;
+  /** every encrypted item the client must re-encrypt under the new password */
+  items: EncryptedVaultItem[];
+}
+
+export interface ReencryptedItem {
+  id: string;
+  blob: string;
+  blobIv: string;
+  blobMac: string;
+}
+
+export interface RecoveryCompleteRequest {
+  recoveryToken: string;
+  /** new SRP credentials derived from the new master password */
+  srpSalt: string;
+  srpVerifier: string;
+  protectedSymmetricKey: string;
+  protectedSymmetricKeyIv: string;
+  /** RSA private key re-wrapped under the new stretched master key (when the user has one) */
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
+  items: ReencryptedItem[];
+  /** replacement recovery kit — the used code is burned */
+  recoveryAuthKey: string;
+  recoveryBlob: string;
+  recoveryBlobIv: string;
+}
+
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
 export type DeviceType =

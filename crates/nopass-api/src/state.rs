@@ -21,11 +21,24 @@ pub struct SrpPendingSession {
     pub created_at: std::time::Instant,
 }
 
+/// In-memory pending recovery sessions: a verified recovery-code holder gets a
+/// short-lived token authorizing the credential rotation. Swept with SRP sessions.
+#[derive(Debug, Clone)]
+pub struct RecoveryPendingSession {
+    pub user_id: Uuid,
+    pub created_at: std::time::Instant,
+}
+
+/// Recovery completion involves client-side re-encryption of the whole vault,
+/// so the window is longer than the SRP handshake's 5 minutes.
+pub const RECOVERY_SESSION_TTL_SECS: u64 = 600;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub config: Config,
     pub srp_sessions: Arc<Mutex<HashMap<Uuid, SrpPendingSession>>>,
+    pub recovery_sessions: Arc<Mutex<HashMap<Uuid, RecoveryPendingSession>>>,
     /// Per-IP rate limiter for auth endpoints (20 req/min, burst 10).
     pub auth_rate_limiter: Arc<DefaultKeyedRateLimiter<IpAddr>>,
     /// Stripe client — `None` when STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are not set.
@@ -55,6 +68,7 @@ impl AppState {
             db,
             config,
             srp_sessions: Arc::new(Mutex::new(HashMap::new())),
+            recovery_sessions: Arc::new(Mutex::new(HashMap::new())),
             auth_rate_limiter,
             stripe,
         }
@@ -64,16 +78,28 @@ impl AppState {
     /// Without this, an attacker who calls srp/init repeatedly can exhaust server memory.
     pub fn spawn_srp_cleanup(self: &Arc<Self>) {
         let sessions = self.srp_sessions.clone();
+        let recovery = self.recovery_sessions.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                let mut map = sessions.lock().await;
-                let before = map.len();
-                map.retain(|_, s| s.created_at.elapsed().as_secs() < 300);
-                let removed = before.saturating_sub(map.len());
-                if removed > 0 {
-                    tracing::debug!("evicted {removed} expired SRP sessions");
+                {
+                    let mut map = sessions.lock().await;
+                    let before = map.len();
+                    map.retain(|_, s| s.created_at.elapsed().as_secs() < 300);
+                    let removed = before.saturating_sub(map.len());
+                    if removed > 0 {
+                        tracing::debug!("evicted {removed} expired SRP sessions");
+                    }
+                }
+                {
+                    let mut map = recovery.lock().await;
+                    let before = map.len();
+                    map.retain(|_, s| s.created_at.elapsed().as_secs() < RECOVERY_SESSION_TTL_SECS);
+                    let removed = before.saturating_sub(map.len());
+                    if removed > 0 {
+                        tracing::debug!("evicted {removed} expired recovery sessions");
+                    }
                 }
             }
         });

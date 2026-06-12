@@ -184,7 +184,7 @@ async fn delete_item(
     }
 }
 
-fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
+pub(crate) fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
     match s {
         "login" => Ok(VaultItemType::Login),
         "note" => Ok(VaultItemType::Note),

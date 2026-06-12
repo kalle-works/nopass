@@ -16,6 +16,12 @@ pub struct User {
     pub public_key: Option<String>,
     pub protected_private_key: Option<String>,
     pub protected_private_key_iv: Option<String>,
+    /// SHA-256 of the recovery auth key — gates access to the recovery blob
+    pub recovery_auth_hash: Option<Vec<u8>>,
+    /// AES-GCM(smk || enc || mac) under the client-side recovery wrap key
+    pub recovery_blob: Option<Vec<u8>>,
+    pub recovery_blob_iv: Option<Vec<u8>>,
+    pub recovery_updated_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
