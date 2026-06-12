@@ -130,6 +130,42 @@ export interface RecoveryCompleteRequest {
   recoveryBlobIv: string;
 }
 
+// ─── Shares ──────────────────────────────────────────────────────────────────
+
+/** One-time/expiring share — blob key travels only in the URL fragment. */
+export interface CreateShareRequest {
+  blob: string;
+  blobIv: string;
+  /** item name encrypted under the owner's vault key, for the owner's list */
+  labelBlob: string;
+  labelIv: string;
+  /** 1–10 */
+  maxViews: number;
+  /** 1–168 */
+  expiresInHours: number;
+}
+
+export interface CreateShareResponse {
+  shareId: string;
+}
+
+export interface ShareInfo {
+  id: string;
+  labelBlob: string;
+  labelIv: string;
+  maxViews: number;
+  viewCount: number;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface ViewShareResponse {
+  blob: string;
+  blobIv: string;
+  remainingViews: number;
+  expiresAt: string;
+}
+
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
 export type DeviceType =

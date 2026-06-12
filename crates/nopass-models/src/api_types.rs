@@ -171,6 +171,51 @@ pub struct RecoveryCompleteRequest {
     pub recovery_blob_iv: String,
 }
 
+// ─── Shares ──────────────────────────────────────────────────────────────────
+
+/// Create a one-time/expiring share of a single item snapshot.
+/// The blob is encrypted under a random key that lives only in the share URL
+/// fragment; the label is encrypted under the owner's vault key for listing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateShareRequest {
+    pub blob: String,
+    pub blob_iv: String,
+    pub label_blob: String,
+    pub label_iv: String,
+    /// 1–10 views before the share stops resolving
+    pub max_views: i32,
+    /// 1–168 hours (7 days max)
+    pub expires_in_hours: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateShareResponse {
+    pub share_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareInfo {
+    pub id: Uuid,
+    pub label_blob: String,
+    pub label_iv: String,
+    pub max_views: i32,
+    pub view_count: i32,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewShareResponse {
+    pub blob: String,
+    pub blob_iv: String,
+    pub remaining_views: i32,
+    pub expires_at: DateTime<Utc>,
+}
+
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

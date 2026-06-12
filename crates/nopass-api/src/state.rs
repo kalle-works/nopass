@@ -79,10 +79,22 @@ impl AppState {
     pub fn spawn_srp_cleanup(self: &Arc<Self>) {
         let sessions = self.srp_sessions.clone();
         let recovery = self.recovery_sessions.clone();
+        let db = self.db.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            let mut ticks: u64 = 0;
             loop {
                 interval.tick().await;
+                ticks += 1;
+                // Expired-share cleanup is cheap but doesn't need to run every
+                // minute — once an hour keeps the table tidy off the hot path
+                if ticks % 60 == 0 {
+                    match crate::db::shares::delete_expired(&db).await {
+                        Ok(n) if n > 0 => tracing::debug!("deleted {n} expired shares"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("expired-share cleanup failed: {e}"),
+                    }
+                }
                 {
                     let mut map = sessions.lock().await;
                     let before = map.len();
