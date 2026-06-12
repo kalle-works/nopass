@@ -26,7 +26,8 @@
       "matches": ["https://*/*", "http://*/*"],
       "js": ["webauthn-inject.js"],
       "run_at": "document_start",
-      "world": "MAIN"
+      "world": "MAIN",
+      "all_frames": false
     }
   ],
   "action": {

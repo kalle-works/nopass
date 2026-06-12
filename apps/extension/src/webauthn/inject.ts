@@ -42,21 +42,42 @@ interface RelayResponse {
   };
 
   let nextReqId = 0;
-  function relay(kind: "create" | "get", payload: unknown): Promise<RelayResponse> {
-    return new Promise((resolve) => {
+  function relay(
+    kind: "create" | "get",
+    payload: unknown,
+    signal?: AbortSignal | null,
+  ): Promise<RelayResponse> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+        return;
+      }
       const reqId = `nopwd-${Date.now()}-${nextReqId++}`;
-      const timeout = window.setTimeout(() => {
+
+      const cleanup = () => {
+        window.clearTimeout(timeout);
         window.removeEventListener("message", onMessage);
+        signal?.removeEventListener("abort", onAbort);
+      };
+
+      const timeout = window.setTimeout(() => {
+        cleanup();
         resolve({ ok: false, fallback: true });
       }, 120_000);
+
+      // Spec: an aborted WebAuthn call rejects with AbortError, no fallback
+      const onAbort = () => {
+        cleanup();
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
 
       function onMessage(e: MessageEvent) {
         const d = e.data;
         if (e.source !== window || !d || d.__nopwd !== true || d.dir !== "response" || d.reqId !== reqId) {
           return;
         }
-        window.clearTimeout(timeout);
-        window.removeEventListener("message", onMessage);
+        cleanup();
         resolve(d as RelayResponse);
       }
 
@@ -159,19 +180,24 @@ interface RelayResponse {
     if (!algOk) return nativeCreate(options);
 
     try {
-      const resp = await relay("create", {
-        rpId: pk.rp.id ?? window.location.hostname,
-        rpName: pk.rp.name ?? "",
-        userName: pk.user.name ?? "",
-        userDisplayName: pk.user.displayName ?? "",
-        userHandleB64u: toB64u(pk.user.id as ArrayBuffer),
-        excludeCredentialIdsB64u: (pk.excludeCredentials ?? []).map((c) =>
-          toB64u(c.id as ArrayBuffer),
-        ),
-      });
+      const resp = await relay(
+        "create",
+        {
+          rpId: pk.rp.id ?? window.location.hostname,
+          rpName: pk.rp.name ?? "",
+          userName: pk.user.name ?? "",
+          userDisplayName: pk.user.displayName ?? "",
+          userHandleB64u: toB64u(pk.user.id as ArrayBuffer),
+          excludeCredentialIdsB64u: (pk.excludeCredentials ?? []).map((c) =>
+            toB64u(c.id as ArrayBuffer),
+          ),
+        },
+        options?.signal,
+      );
       if (!resp.ok || !resp.data) return nativeCreate(options);
       return makeCredential(resp.data, clientDataJson("webauthn.create", pk.challenge), "create");
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
       return nativeCreate(options);
     }
   };
@@ -186,16 +212,21 @@ interface RelayResponse {
 
     const cdj = clientDataJson("webauthn.get", pk.challenge);
     try {
-      const resp = await relay("get", {
-        rpId: pk.rpId ?? window.location.hostname,
-        clientDataJSONB64u: toB64u(new TextEncoder().encode(cdj)),
-        allowCredentialIdsB64u: (pk.allowCredentials ?? []).map((c) =>
-          toB64u(c.id as ArrayBuffer),
-        ),
-      });
+      const resp = await relay(
+        "get",
+        {
+          rpId: pk.rpId ?? window.location.hostname,
+          clientDataJSONB64u: toB64u(new TextEncoder().encode(cdj)),
+          allowCredentialIdsB64u: (pk.allowCredentials ?? []).map((c) =>
+            toB64u(c.id as ArrayBuffer),
+          ),
+        },
+        options?.signal,
+      );
       if (!resp.ok || !resp.data) return nativeGet(options);
       return makeCredential(resp.data, cdj, "get");
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
       return nativeGet(options);
     }
   };

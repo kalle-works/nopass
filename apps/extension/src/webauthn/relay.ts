@@ -80,10 +80,20 @@ function askConsent(title: string, detail: string): Promise<boolean> {
   });
 }
 
+// One request at a time per frame — a hostile page could otherwise spam
+// postMessage and stack consent overlays
+let requestInFlight = false;
+
 export function initWebauthnRelay(): void {
   window.addEventListener("message", async (e: MessageEvent) => {
     const d = e.data as RelayRequest;
     if (e.source !== window || !d || d.__nopwd !== true || d.dir !== "request") return;
+
+    if (requestInFlight) {
+      respond(d.reqId, { ok: false, fallback: true });
+      return;
+    }
+    requestInFlight = true;
 
     const host = window.location.hostname;
     try {
@@ -131,6 +141,8 @@ export function initWebauthnRelay(): void {
       }
     } catch {
       respond(d.reqId, { ok: false, fallback: true });
+    } finally {
+      requestInFlight = false;
     }
   });
 }

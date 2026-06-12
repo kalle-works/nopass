@@ -181,8 +181,10 @@ export function buildAttestationObject(authData: Uint8Array): Uint8Array {
 
 // ─── Assertion signing ────────────────────────────────────────────────────────
 
-/** Convert WebCrypto's raw r||s ECDSA signature to ASN.1 DER. */
+/** Convert WebCrypto's raw r||s ECDSA signature to ASN.1 DER. P-256 only —
+ *  larger curves would need multi-byte DER lengths this writer doesn't emit. */
 export function rawSigToDer(raw: Uint8Array): Uint8Array {
+  if (raw.length !== 64) throw new Error("rawSigToDer expects a 64-byte P-256 signature");
   const half = raw.length / 2;
   const encodeInt = (bytes: Uint8Array): number[] => {
     let i = 0;

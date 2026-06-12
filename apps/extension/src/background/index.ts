@@ -24,6 +24,7 @@ import {
   SYNCED_FLAGS,
 } from "@nopass/crypto";
 import { createApiClient } from "@nopass/ui";
+import { parse as parseDomain } from "tldts";
 import type { EncryptedVaultItem, LoginItem } from "@nopass/types";
 import { base64ToBytes } from "../lib/base64";
 import { urlMatches, nameMatches } from "../lib/url-match";
@@ -184,7 +185,9 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const origin = senderOrigin(sender);
       if (!origin) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
-      if (!rpIdMatchesOrigin(message.rpId, origin)) return { error: "rpId does not match origin" };
+      if (!rpIdMatchesOrigin(message.rpId, origin) || !isRegistrableRpId(message.rpId)) {
+        return { error: "rpId does not match origin" };
+      }
 
       // The RP excludes credentials it already knows — re-registering would
       // orphan the existing one
@@ -247,7 +250,9 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const origin = senderOrigin(sender);
       if (!origin) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
-      if (!rpIdMatchesOrigin(message.rpId, origin)) return { error: "rpId does not match origin" };
+      if (!rpIdMatchesOrigin(message.rpId, origin) || !isRegistrableRpId(message.rpId)) {
+        return { error: "rpId does not match origin" };
+      }
 
       const candidates = await findPasskeyLogins(message.rpId, message.allowCredentialIdsB64u);
       if (candidates.length === 0) return { error: "no matching credential" };
@@ -259,7 +264,22 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const { item, plain } = candidates[0]!;
       const passkey = plain.passkey!;
 
+      // Sign FIRST — persisting an incremented signCount before a failed
+      // signature would make the RP see a counter jump and flag the
+      // credential as cloned, bricking it permanently
       const newCount = passkey.signCount + 1;
+      const authData = await buildAuthenticatorData(
+        message.rpId,
+        FLAG_UP | FLAG_UV | SYNCED_FLAGS,
+        newCount,
+      );
+      const clientDataHash = new Uint8Array(
+        await crypto.subtle.digest("SHA-256", b64uToBytes(message.clientDataJSONB64u)),
+      );
+      const pkcs8 = new Uint8Array(base64ToBytes(passkey.privateKeyPkcs8B64));
+      const signature = await signAssertion(pkcs8, authData, clientDataHash);
+      pkcs8.fill(0);
+
       const updatedPlain: LoginItem = {
         ...plain,
         passkey: { ...passkey, signCount: newCount },
@@ -272,19 +292,6 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         vaultState.sessionToken,
       );
       Object.assign(item, blob, { version: updated.version, updatedAt: updated.updatedAt });
-
-      const authData = await buildAuthenticatorData(
-        message.rpId,
-        FLAG_UP | FLAG_UV | SYNCED_FLAGS,
-        newCount,
-      );
-      const clientDataHash = new Uint8Array(
-        await crypto.subtle.digest("SHA-256", b64uToBytes(message.clientDataJSONB64u)),
-      );
-
-      const pkcs8 = new Uint8Array(base64ToBytes(passkey.privateKeyPkcs8B64));
-      const signature = await signAssertion(pkcs8, authData, clientDataHash);
-      pkcs8.fill(0);
 
       return {
         data: {
@@ -309,6 +316,16 @@ function senderOrigin(sender: chrome.runtime.MessageSender): string | undefined 
   } catch {
     return undefined;
   }
+}
+
+/**
+ * rpIdMatchesOrigin checks label boundaries, but per WebAuthn §5.1.3 the rp.id
+ * must also be a REGISTRABLE domain — "com", "co.uk", or "github.io" would
+ * otherwise let one site mint credentials every sibling site can discover.
+ */
+function isRegistrableRpId(rpId: string): boolean {
+  if (rpId === "localhost") return true; // dev convenience, matches browsers
+  return parseDomain(rpId).domain !== null;
 }
 
 async function findPasskeyLogins(
