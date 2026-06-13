@@ -108,7 +108,7 @@ function restoreVaultState(): Promise<void> {
       // locked, unless a newer session was persisted while we awaited
       if (lockGeneration === generation) {
         await chrome.storage.session.remove(SESSION_KEY);
-        log.warn("session restore failed, dropping session", { err: String(err) });
+        log.error("session restore failed, dropping session", { err: String(err) });
       } else {
         log.debug("session restore failed but superseded by newer generation, ignoring");
       }
@@ -268,8 +268,9 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
     }
 
     case "GET_CREDENTIALS": {
-      // Plaintext credentials — a content script must NEVER receive these
-      if (!isExtensionContext(sender)) return { error: "unauthorized" };
+      // Plaintext credentials — only the popup may receive these, not
+      // extension pages hosted in a tab (which have a sender.tab).
+      if (!isExtensionPage(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };

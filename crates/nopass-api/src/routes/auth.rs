@@ -161,7 +161,7 @@ async fn srp_verify(
 
     let vaults = db_vaults::list_vaults_for_user(&state.db, user.id)
         .await
-        .map_err(|e| ApiError::Internal(e))?;
+        .map_err(ApiError::Internal)?;
     let default_vault_id = vaults
         .first()
         .map(|v| v.id)
