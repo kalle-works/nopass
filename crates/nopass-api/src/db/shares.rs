@@ -17,6 +17,7 @@ pub struct Share {
     pub created_at: DateTime<Utc>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_share(
     pool: &PgPool,
     user_id: Uuid,

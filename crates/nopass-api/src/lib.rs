@@ -145,7 +145,7 @@ pub fn build_router(state: AppState) -> Router {
         // The map_request layer strips any client-supplied x-request-id header so
         // log injection is not possible — server always generates the UUID.
         .layer(PropagateRequestIdLayer::x_request_id())
-        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid::default()))
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(axum::middleware::from_fn(strip_client_request_id))
         .layer(cors)
         .with_state(state)

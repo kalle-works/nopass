@@ -13,6 +13,7 @@ pub async fn find_user_by_email_hash(pool: &PgPool, email_hash: &str) -> Result<
     Ok(user)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_user(
     pool: &PgPool,
     email_hash: &str,
