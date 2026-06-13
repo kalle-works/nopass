@@ -35,7 +35,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: api
-          image: ghcr.io/kalle-works/nopwd-api:v0.1.3
+          image: ghcr.io/kalle-works/nopwd-api:v0.1.4
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3001
