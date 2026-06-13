@@ -5,6 +5,7 @@ use ssh_agent::SharedKeys;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Tauri-managed wrapper so commands can access the shared key store.
 pub struct AgentState(pub SharedKeys);
@@ -32,7 +33,7 @@ fn ssh_agent_load_vault_keys(
         }
     }
 
-    eprintln!("[nopass-agent] loaded {} key(s) from vault", store.len());
+    tracing::info!(count = store.len(), "ssh agent: vault keys loaded");
     Ok(store.len())
 }
 
@@ -40,7 +41,7 @@ fn ssh_agent_load_vault_keys(
 fn ssh_agent_clear_vault_keys(state: tauri::State<'_, AgentState>) -> Result<(), String> {
     let mut store = state.0.lock().map_err(|e| e.to_string())?;
     store.clear();
-    eprintln!("[nopass-agent] keys cleared (vault locked)");
+    tracing::info!("ssh agent: keys cleared (vault locked)");
     Ok(())
 }
 
@@ -64,6 +65,14 @@ fn ssh_agent_shell_config() -> String {
 }
 
 pub fn run() {
+    tracing_subscriber::registry()
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "nopass_desktop=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .init();
+
     let shared_keys: SharedKeys = Arc::new(Mutex::new(vec![]));
     let agent_keys = shared_keys.clone();
 

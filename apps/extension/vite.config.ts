@@ -9,6 +9,8 @@ export default defineConfig({
     // Injected at build time so the background script knows the API endpoint.
     // Override in production: VITE_API_BASE=https://api.nopass.app pnpm build
     __API_BASE__: JSON.stringify(process.env["VITE_API_BASE"] ?? "http://localhost:3001"),
+    // Enable SW console logging in dev or when VITE_LOG=1 is set.
+    __LOG__: process.env["VITE_LOG"] === "1" || process.env["NODE_ENV"] !== "production",
   },
   build: {
     outDir: "dist",

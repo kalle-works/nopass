@@ -10,12 +10,13 @@ pub mod stripe;
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
-use axum::{Router, http::{HeaderName, HeaderValue}, routing::get};
+use axum::{Router, http::{HeaderName, HeaderValue, Request}, routing::get};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceBuilder;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     limit::RequestBodyLimitLayer,
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
@@ -107,13 +108,34 @@ pub fn build_router(state: AppState) -> Router {
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
         ));
 
+    // TraceLayer customised to stamp every span with the request ID so all
+    // log lines for a single request share a common field.
+    let trace_layer = TraceLayer::new_for_http().make_span_with(|req: &Request<_>| {
+        let request_id = req
+            .extensions()
+            .get::<RequestId>()
+            .and_then(|id| id.header_value().to_str().ok())
+            .unwrap_or("-");
+        tracing::info_span!(
+            "request",
+            request_id,
+            method  = %req.method(),
+            uri     = %req.uri(),
+        )
+    });
+
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .nest("/v1", routes::router(state.clone()))
         // 2 MiB max body — AES-GCM vault blobs are small; this limits abuse.
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
         .layer(security_headers)
-        .layer(TraceLayer::new_for_http())
+        .layer(trace_layer)
+        // Layers below run outside TraceLayer (last added = outermost).
+        // SetRequestId generates a UUID first; PropagateRequestId copies it
+        // to the response header so clients can quote it in bug reports.
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid::default()))
         .layer(cors)
         .with_state(state)
 }
