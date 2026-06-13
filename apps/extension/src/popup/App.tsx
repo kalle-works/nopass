@@ -213,12 +213,13 @@ export function App() {
       <header className="flex items-center justify-between px-4 py-3 border-b border-edge bg-surface">
         <span className="font-brand font-semibold text-cream text-sm">nopwd</span>
         <div className="flex items-center gap-2">
-          <a
-            href="nopass://open"
+          <button
+            type="button"
+            onClick={() => { window.open("nopass://open"); }}
             className="font-brand text-xs text-faded border border-edge px-2 py-1 hover:border-cream hover:text-cream"
           >
             Open app
-          </a>
+          </button>
           <button
             onClick={handleLock}
             className="font-brand text-xs text-faded border border-edge px-2 py-1 hover:border-cream hover:text-cream"

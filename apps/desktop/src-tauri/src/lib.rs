@@ -71,7 +71,8 @@ pub fn run() {
                 .unwrap_or_else(|_| "nopass_desktop=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .init();
+        .try_init()
+        .ok();
 
     let shared_keys: SharedKeys = Arc::new(Mutex::new(vec![]));
     let agent_keys = shared_keys.clone();

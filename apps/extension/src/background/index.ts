@@ -109,6 +109,8 @@ function restoreVaultState(): Promise<void> {
       if (lockGeneration === generation) {
         await chrome.storage.session.remove(SESSION_KEY);
         log.warn("session restore failed, dropping session", { err: String(err) });
+      } else {
+        log.debug("session restore failed but superseded by newer generation, ignoring");
       }
     }
   })().finally(() => {

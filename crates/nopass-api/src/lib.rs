@@ -54,6 +54,14 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
+async fn strip_client_request_id(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    req.headers_mut().remove("x-request-id");
+    next.run(req).await
+}
+
 pub fn build_router(state: AppState) -> Router {
     // ── CORS ─────────────────────────────────────────────────────────────────
     // Explicit allowlist — never wildcards. No allow_credentials: API uses
@@ -134,8 +142,11 @@ pub fn build_router(state: AppState) -> Router {
         // Layers below run outside TraceLayer (last added = outermost).
         // SetRequestId generates a UUID first; PropagateRequestId copies it
         // to the response header so clients can quote it in bug reports.
+        // The map_request layer strips any client-supplied x-request-id header so
+        // log injection is not possible — server always generates the UUID.
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid::default()))
+        .layer(axum::middleware::from_fn(strip_client_request_id))
         .layer(cors)
         .with_state(state)
 }
