@@ -39,10 +39,12 @@ describe("content script field injection", () => {
     expect(btn!.title).toBe("Fill with nopwd");
   });
 
-  it("removes the overlay button when the field leaves the DOM", () => {
+  it("removes the overlay button when the field leaves the DOM", async () => {
     const pass = document.getElementById("pass") as HTMLInputElement;
     pass.remove();
     window.dispatchEvent(new Event("scroll"));
+    // Scroll triggers a requestAnimationFrame-deferred repositionAll — flush it.
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
     expect(document.querySelector("button[data-nopass-button]")).toBeNull();
   });
 

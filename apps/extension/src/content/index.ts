@@ -125,7 +125,19 @@ function repositionAll(): void {
   }
 }
 
-window.addEventListener("scroll", repositionAll, { capture: true, passive: true });
+// Scroll fires many times per second; batching via rAF eliminates redundant
+// getBoundingClientRect() calls that would otherwise force layout reflow on
+// every event. Resize is infrequent enough to run synchronously.
+let _rafId: number | null = null;
+function scheduleReposition(): void {
+  if (_rafId !== null) return;
+  _rafId = requestAnimationFrame(() => {
+    _rafId = null;
+    repositionAll();
+  });
+}
+
+window.addEventListener("scroll", scheduleReposition, { capture: true, passive: true });
 window.addEventListener("resize", repositionAll, { passive: true });
 
 let activePasswordField: HTMLInputElement | null = null;

@@ -161,12 +161,17 @@ describe("vault session persistence across SW restarts", () => {
     });
   });
 
-  it("extension pages hosted in a tab may read but not mutate", async () => {
+  it("extension pages hosted in a tab may read but not mutate or get plaintext credentials", async () => {
     await send(UNLOCK_MSG);
     expect(await send({ type: "IS_UNLOCKED" }, EXTENSION_TAB_SENDER)).toEqual({ unlocked: true });
     expect(await send({ type: "SEARCH_ITEMS", query: "" }, EXTENSION_TAB_SENDER)).toEqual({
       results: [],
     });
+    // LOCK and GET_CREDENTIALS require the popup (no sender.tab) — extension
+    // tabs are read-only and must not receive plaintext credentials.
     expect(await send({ type: "LOCK" }, EXTENSION_TAB_SENDER)).toEqual({ error: "unauthorized" });
+    expect(await send({ type: "GET_CREDENTIALS", itemId: "x" }, EXTENSION_TAB_SENDER)).toEqual({
+      error: "unauthorized",
+    });
   });
 });
