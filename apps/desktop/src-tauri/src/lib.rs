@@ -3,6 +3,9 @@ mod ssh_agent;
 
 use ssh_agent::SharedKeys;
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
+use tauri_plugin_deep_link::DeepLinkExt;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Tauri-managed wrapper so commands can access the shared key store.
 pub struct AgentState(pub SharedKeys);
@@ -30,7 +33,7 @@ fn ssh_agent_load_vault_keys(
         }
     }
 
-    eprintln!("[nopass-agent] loaded {} key(s) from vault", store.len());
+    tracing::info!(count = store.len(), "ssh agent: vault keys loaded");
     Ok(store.len())
 }
 
@@ -38,7 +41,7 @@ fn ssh_agent_load_vault_keys(
 fn ssh_agent_clear_vault_keys(state: tauri::State<'_, AgentState>) -> Result<(), String> {
     let mut store = state.0.lock().map_err(|e| e.to_string())?;
     store.clear();
-    eprintln!("[nopass-agent] keys cleared (vault locked)");
+    tracing::info!("ssh agent: keys cleared (vault locked)");
     Ok(())
 }
 
@@ -62,6 +65,15 @@ fn ssh_agent_shell_config() -> String {
 }
 
 pub fn run() {
+    tracing_subscriber::registry()
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "nopass_desktop=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .try_init()
+        .ok();
+
     let shared_keys: SharedKeys = Arc::new(Mutex::new(vec![]));
     let agent_keys = shared_keys.clone();
 
@@ -73,7 +85,18 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(AgentState(shared_keys))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |_event| {
+                if let Some(w) = handle.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::keychain_save,
             commands::keychain_load,

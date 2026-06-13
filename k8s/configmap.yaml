@@ -11,3 +11,4 @@ data:
   # X-Forwarded-For resolves real client IPs for rate limiting + activity log
   NOPASS_TRUSTED_PROXIES: "10.42.0.0/16"
   RUST_LOG: "info"
+  LOG_FORMAT: "json"

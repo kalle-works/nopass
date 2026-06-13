@@ -32,6 +32,7 @@ import { parse as parseDomain } from "tldts";
 import type { EncryptedVaultItem, LoginItem } from "@nopass/types";
 import { base64ToBytes } from "../lib/base64";
 import { urlMatches, nameMatches } from "../lib/url-match";
+import { log } from "../lib/logger";
 
 // Configurable at build time via Vite define; falls back to dev server.
 const API_BASE: string =
@@ -101,11 +102,15 @@ function restoreVaultState(): Promise<void> {
         vaultMacKey,
         items,
       };
-    } catch {
+      log.info("session restored after SW restart", { items: items.length });
+    } catch (err) {
       // Server rejected the session (expired/revoked) — drop it and stay
       // locked, unless a newer session was persisted while we awaited
       if (lockGeneration === generation) {
         await chrome.storage.session.remove(SESSION_KEY);
+        log.warn("session restore failed, dropping session", { err: String(err) });
+      } else {
+        log.debug("session restore failed but superseded by newer generation, ignoring");
       }
     }
   })().finally(() => {
@@ -140,9 +145,23 @@ type Message =
     };
 
 chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
-  handleMessage(message, sender).then(sendResponse).catch((err) => {
-    sendResponse({ error: err instanceof Error ? err.message : "Unknown error" });
-  });
+  const t0 = performance.now();
+  handleMessage(message, sender)
+    .then((result) => {
+      const ms = Math.round(performance.now() - t0);
+      const hasError = result && typeof result === "object" && "error" in result;
+      if (hasError) {
+        log.warn(`${message.type} → error`, { ms, error: (result as { error: unknown }).error });
+      } else {
+        log.debug(`${message.type} → ok`, { ms });
+      }
+      sendResponse(result);
+    })
+    .catch((err) => {
+      const ms = Math.round(performance.now() - t0);
+      log.error(`${message.type} → throw`, { ms, err: String(err) });
+      sendResponse({ error: err instanceof Error ? err.message : "Unknown error" });
+    });
   return true; // keep the message channel open for the async response
 });
 
@@ -183,6 +202,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
       lockGeneration++; // invalidate any restore still in flight
       vaultState = { sessionToken: message.sessionToken, defaultVaultId: message.defaultVaultId, vaultEncKey, vaultMacKey, items };
+      log.info("vault unlocked", { items: items.length });
 
       const persisted: PersistedSession = {
         sessionToken: message.sessionToken,
@@ -199,6 +219,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       lockGeneration++; // a restore in flight must not resurrect the session
       vaultState = null;
       await chrome.storage.session.remove(SESSION_KEY);
+      log.info("vault locked");
       return { ok: true };
     }
 

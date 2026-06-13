@@ -169,6 +169,12 @@ export default function DevicesPage() {
               <p className="text-xs text-[#9C988D]/60 mt-1">
                 Devices are registered automatically when you log in from the CLI or desktop app.
               </p>
+              <a
+                href="nopass://open"
+                className="mt-3 inline-block font-mono text-xs text-[#9C988D] border border-[#2B2923] px-3 py-1.5 hover:text-[#F4F1E8] hover:border-[#9C988D] transition-colors"
+              >
+                Open desktop app
+              </a>
             </div>
           ) : (
             <ul className="divide-y divide-[#2B2923]">
