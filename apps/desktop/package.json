@@ -13,6 +13,7 @@
     "@nopass/types": "workspace:*",
     "@nopass/ui": "workspace:*",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-deep-link": "^2",
     "@tauri-apps/plugin-sql": "^2",
     "react": "19.2.4",
     "react-dom": "19.2.4",

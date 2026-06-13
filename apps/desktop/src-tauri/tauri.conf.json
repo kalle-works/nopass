@@ -23,6 +23,13 @@
       "entitlements": "entitlements.plist"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["nopass"]
+      }
+    }
+  },
   "app": {
     "windows": [
       {

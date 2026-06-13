@@ -3,6 +3,8 @@ mod ssh_agent;
 
 use ssh_agent::SharedKeys;
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
+use tauri_plugin_deep_link::DeepLinkExt;
 
 /// Tauri-managed wrapper so commands can access the shared key store.
 pub struct AgentState(pub SharedKeys);
@@ -73,7 +75,18 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(AgentState(shared_keys))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |_event| {
+                if let Some(w) = handle.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::keychain_save,
             commands::keychain_load,
