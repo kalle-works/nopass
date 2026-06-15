@@ -74,7 +74,7 @@ impl AppState {
                     Err(e) => tracing::warn!("pending-session prune failed: {e}"),
                 }
                 // Hourly housekeeping off the hot path
-                if ticks.is_multiple_of(60) {
+                if ticks % 60 == 0 {
                     match crate::db::shares::delete_expired(&db).await {
                         Ok(n) if n > 0 => tracing::debug!("deleted {n} expired shares"),
                         Ok(_) => {}
@@ -84,6 +84,11 @@ impl AppState {
                         Ok(n) if n > 0 => tracing::debug!("pruned {n} old activity events"),
                         Ok(_) => {}
                         Err(e) => tracing::warn!("activity prune failed: {e}"),
+                    }
+                    match crate::db::sessions::prune_expired(&db).await {
+                        Ok(n) if n > 0 => tracing::debug!("pruned {n} expired sessions"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("session prune failed: {e}"),
                     }
                 }
             }

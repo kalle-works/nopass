@@ -65,13 +65,26 @@ export const getCommand = new Command("get")
     await withSession(async (session) => {
       const items = await fetchAndDecryptItems(session);
       const query = name.toLowerCase();
-      const match = items.find((i) => i.name.toLowerCase() === query)
-        ?? items.find((i) => i.name.toLowerCase().includes(query));
+      const exactMatches = items.filter((i) => i.name.toLowerCase() === query);
+      const partialMatches = exactMatches.length > 0
+        ? exactMatches
+        : items.filter((i) => i.name.toLowerCase().includes(query));
 
-      if (!match) {
+      if (partialMatches.length === 0) {
         process.stderr.write(`Not found: "${name}"\n`);
         process.exit(2);
       }
+
+      if (partialMatches.length > 1) {
+        process.stderr.write(
+          `Ambiguous: "${name}" matches ${partialMatches.length} items:\n` +
+          partialMatches.map((i) => `  ${i.name}`).join("\n") + "\n" +
+          `Use an exact name to disambiguate.\n`,
+        );
+        process.exit(2);
+      }
+
+      const match = partialMatches[0]!;
 
       if (opts.json) {
         process.stdout.write(JSON.stringify(match, null, 2) + "\n");

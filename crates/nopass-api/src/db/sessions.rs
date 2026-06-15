@@ -66,3 +66,13 @@ pub async fn delete_sessions_for_user(pool: &PgPool, user_id: Uuid) -> Result<()
         .await?;
     Ok(())
 }
+
+/// Remove sessions that have passed their expiry. Called from the hourly
+/// housekeeping task — without this they accumulate indefinitely since
+/// `find_session_by_token` filters them out but never deletes them.
+pub async fn prune_expired(pool: &PgPool) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM sessions WHERE expires_at <= NOW()")
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}

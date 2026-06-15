@@ -21,6 +21,11 @@ use crate::{
     state::AppState,
 };
 
+/// Upper bound on the encrypted blob stored per vault item.
+/// 512 KiB covers any realistic credential payload with room to spare while
+/// blocking obvious storage-abuse attempts.
+const MAX_ITEM_BLOB_BYTES: usize = 512 * 1024;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_vaults).post(create_vault))
@@ -190,6 +195,9 @@ async fn create_item(
     if blob.is_empty() {
         return Err(ApiError::BadRequest("blob must not be empty".into()));
     }
+    if blob.len() > MAX_ITEM_BLOB_BYTES {
+        return Err(ApiError::BadRequest("blob exceeds maximum size".into()));
+    }
 
     let item_type_str = item_type_to_str(&req.item_type);
     let item =
@@ -237,6 +245,9 @@ async fn update_item(
     }
     if blob.is_empty() {
         return Err(ApiError::BadRequest("blob must not be empty".into()));
+    }
+    if blob.len() > MAX_ITEM_BLOB_BYTES {
+        return Err(ApiError::BadRequest("blob exceeds maximum size".into()));
     }
 
     let updated =

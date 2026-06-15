@@ -28,7 +28,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
       - run: cargo clippy --workspace -- -D warnings
-        continue-on-error: true
 
   web:
     name: TypeScript typecheck, tests, build
