@@ -11,6 +11,8 @@
     "test:e2e": "vite build && vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
     "@nopass/crypto": "workspace:*",
     "@nopass/types": "workspace:*",
     "@nopass/ui": "workspace:*",

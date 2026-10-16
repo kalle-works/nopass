@@ -1,28 +1,23 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans, Martian_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
+import { THEME_BOOT_SCRIPT } from "@nopass/ui";
 import "./globals.css";
 
-const ibmPlexSans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-ibm-plex-sans",
-});
-
-const martianMono = Martian_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-martian-mono",
-});
+const geist = Geist({ subsets: ["latin"], variable: "--font-geist" });
+const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 
 export const metadata: Metadata = {
   title: "nopwd",
-  description: "Zero-knowledge password manager",
+  description: "Zero-knowledge vault for passwords, API keys and TOTP codes.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${ibmPlexSans.variable} ${martianMono.variable} h-full antialiased`}>
-      <body className="min-h-full">{children}</body>
+    <html lang="en" className={`${geist.variable} ${geistMono.variable} h-full`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
+      <body className="min-h-full bg-bg text-fg">{children}</body>
     </html>
   );
 }
