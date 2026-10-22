@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { LoginItem } from "@nopass/types";
+import type { LoginItem, VaultItemPlaintext } from "@nopass/types";
 import { adoptSecret } from "../adopt.js";
+import { selectInjectedItems } from "../commands/run.js";
 import { parseDotenv, resolveReference } from "../secret-refs.js";
 
 function writeTemp(name: string, content: string): string {
@@ -13,13 +14,12 @@ function writeTemp(name: string, content: string): string {
 }
 
 const SECRET = "sk-proj-a1b2#c3 d4\"e5";
-const DOTENV = [
-  "# api keys",
-  "PORT=3000",
-  `export OPENAI_API_KEY="${SECRET.replace(/"/g, '\\"')}"`,
-  "DEBUG=true",
-  "",
-].join("\r\n");
+// BOM, mixed line endings and an inline comment: a rewrite must keep all of them
+const DOTENV =
+  "\uFEFF# api keys\r\n" +
+  "PORT=3000\n" +
+  `export OPENAI_API_KEY="${SECRET.replace(/"/g, '\\"')}" # rotated monthly\r\n` +
+  "DEBUG=true\n";
 
 describe("adoptSecret", () => {
   it("leaves the file byte-for-byte unchanged when saving to the vault fails", async () => {
@@ -52,12 +52,7 @@ describe("adoptSecret", () => {
 
     expect(result.rewritten).toBe(true);
     const after = readFileSync(path, "utf-8");
-    // Every other line, and the CRLF line endings, survive
-    const before = DOTENV.split("\r\n");
-    const lines = after.split("\r\n");
-    expect(lines).toHaveLength(before.length);
-    lines.forEach((l, i) => i !== 2 && expect(l).toBe(before[i]));
-    expect(after).not.toContain("sk-proj");
+    expect(after).toBe(DOTENV.replace(/export OPENAI_API_KEY=.*(?= # rotated)/, `export OPENAI_API_KEY='${result.reference}'`));
 
     const entry = parseDotenv(after).find((e) => e.key === "OPENAI_API_KEY")!;
     expect(resolveReference(saved, entry.value)).toEqual({ ok: true, value: SECRET });
@@ -97,5 +92,45 @@ describe("adoptSecret", () => {
     ).rejects.toThrow(/already exists/);
     expect(saves).toBe(0);
     expect(readFileSync(path, "utf-8")).toBe(DOTENV);
+  });
+
+  it("refuses a multi-line value instead of saving the first line of it", async () => {
+    const content = 'KEY="-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----"\n';
+    const path = writeTemp(".env", content);
+    let saves = 0;
+    await expect(
+      adoptSecret({ path, line: 1, existingNames: [], saveItem: async () => { saves++; } }),
+    ).rejects.toThrow(/multi-line/);
+    expect(saves).toBe(0);
+    expect(readFileSync(path, "utf-8")).toBe(content);
+  });
+
+  it("rewrites the file a symlinked .env points at and keeps the link", async () => {
+    const target = writeTemp(".env.shared", "TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n");
+    const link = join(dirname(target), ".env");
+    symlinkSync(target, link);
+    await adoptSecret({ path: link, line: 1, name: "gh", existingNames: [], saveItem: async () => {} });
+    expect(readlinkSync(link)).toBe(target);
+    expect(readFileSync(target, "utf-8")).toBe("TOKEN='nopwd://gh/password'\n");
+  });
+
+  it("refuses a source line with several candidate secrets unless --match picks one", async () => {
+    const path = writeTemp("db.ts", `connect("postgres://db.internal/app", "s3cr3t-pa55word");\n`);
+    const saved: LoginItem[] = [];
+    const save = async (item: LoginItem) => { saved.push(item); };
+    await expect(adoptSecret({ path, line: 1, existingNames: [], saveItem: save })).rejects.toThrow(/several/);
+    expect(saved).toHaveLength(0);
+    await adoptSecret({ path, line: 1, match: "s3cr", existingNames: [], saveItem: save });
+    expect(saved[0]!.password).toBe("s3cr3t-pa55word");
+  });
+});
+
+describe("selectInjectedItems", () => {
+  const vault: VaultItemPlaintext[] = [
+    { type: "login", name: "Bank", username: "me", password: "hunter2", urls: [], customFields: [] },
+  ];
+
+  it("hands no vault items to the app when --dotenv names what it needs", () => {
+    expect(selectInjectedItems(vault, { dotenv: ".env" })).toEqual([]);
   });
 });

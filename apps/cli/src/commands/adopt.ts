@@ -11,16 +11,17 @@ export const adoptCommand = new Command("adopt")
   .argument("<file>", "file that contains the secret")
   .requiredOption("-l, --line <n>", "1-based line number of the secret", (v) => Number.parseInt(v, 10))
   .option("-n, --name <name>", "vault item name (default: <directory> <KEY> or <directory> <file>:<line>)")
+  .option("-m, --match <start>", "in a source line with several quoted strings, the start of the secret")
   .option("--json", "print the result as JSON")
   .addHelpText(
     "after",
     `
-In a .env file the line is rewritten to KEY="nopwd://<name>/password" once the
+In a .env file the line is rewritten to KEY='nopwd://<name>/password' once the
 item is saved; run the app with: nopwd run --dotenv .env -- <command>
 In other files nothing is edited; the reference is printed so you can replace
 the literal with an environment variable yourself.`,
   )
-  .action(async (file: string, opts: { line: number; name?: string; json?: boolean }) => {
+  .action(async (file: string, opts: { line: number; name?: string; match?: string; json?: boolean }) => {
     if (!Number.isInteger(opts.line) || opts.line < 1) {
       process.stderr.write("nopwd adopt: --line must be a positive integer\n");
       process.exit(1);
@@ -36,6 +37,7 @@ the literal with an environment variable yourself.`,
           path: resolve(file),
           line: opts.line,
           name: opts.name,
+          match: opts.match,
           existingNames: existing.map((i) => i.name),
           saveItem: async (item) => {
             const encrypted = await encryptItem(item, vaultEncKey, vaultMacKey);
@@ -50,10 +52,10 @@ the literal with an environment variable yourself.`,
       if (opts.json) {
         process.stdout.write(`${JSON.stringify(result)}\n`);
       } else if (result.rewritten) {
-        process.stdout.write(`Saved "${result.itemName}" to the vault and replaced the value with ${result.reference}\n`);
+        process.stdout.write(`Saved "${result.itemName}" (${result.preview}) to the vault and replaced the value with ${result.reference}\n`);
         process.stdout.write(`Run with: nopwd run --dotenv ${file} -- <command>\n`);
       } else {
-        process.stdout.write(`Saved "${result.itemName}" to the vault. ${file} was not edited.\n`);
+        process.stdout.write(`Saved "${result.itemName}" (${result.preview}) to the vault. ${file} was not edited.\n`);
         process.stdout.write(`Read it from an environment variable and set that to ${result.reference}\n`);
       }
     });

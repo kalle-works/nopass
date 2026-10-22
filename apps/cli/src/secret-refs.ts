@@ -45,7 +45,7 @@ export type ResolveResult = { ok: true; value: string } | { ok: false; error: st
 /** Looks up a single `nopwd://item-name/field` reference. Item and field names match case-insensitively. */
 export function resolveReference(vault: VaultItemPlaintext[], ref: string): ResolveResult {
   const rest = ref.slice(REF_PREFIX.length);
-  const slashIdx = rest.lastIndexOf("/");
+  const slashIdx = rest.indexOf("/");
   if (!isReference(ref) || slashIdx <= 0) return { ok: false, error: `malformed reference ${ref}` };
 
   const itemName = rest.slice(0, slashIdx).toLowerCase();
@@ -73,29 +73,45 @@ export interface DotenvEntry {
 
 const DOTENV_LINE = /^\s*(export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)$/;
 
+export interface ParsedDotenvLine {
+  exportPrefix: boolean;
+  key: string;
+  value: string;
+  /** Whatever follows the value on the line, such as an inline comment */
+  trailing: string;
+  /** The value opens a quote that the line never closes (a multi-line value) */
+  unterminatedQuote: boolean;
+}
+
 /** Parses one `.env` line. Returns null for blank lines, comments and anything that isn't an assignment. */
-export function parseDotenvLine(line: string): { exportPrefix: boolean; key: string; value: string } | null {
+export function parseDotenvLine(line: string): ParsedDotenvLine | null {
   const m = DOTENV_LINE.exec(line);
   if (!m) return null;
-  const raw = m[3]!.trim();
-  let value: string;
-  const quoted = raw[0] === '"' ? /^"((?:\\.|[^"\\])*)"/.exec(raw) : raw[0] === "'" ? /^'([^']*)'/.exec(raw) : null;
-  if (quoted) {
-    value = quoted[1]!;
+  const raw = m[3]!.trimEnd();
+  const base = { exportPrefix: Boolean(m[1]), key: m[2]! };
+  const quote = raw[0];
+  if (quote === '"' || quote === "'") {
+    const quoted = quote === '"' ? /^"((?:\\.|[^"\\])*)"/.exec(raw) : /^'([^']*)'/.exec(raw);
+    if (!quoted) return { ...base, value: raw, trailing: "", unterminatedQuote: true };
     // Double-quoted values honour escapes; single-quoted ones are literal
-    if (raw[0] === '"') value = value.replace(/\\(.)/g, (_, c: string) => (c === "n" ? "\n" : c));
-  } else {
-    // Unquoted values end at an inline comment
-    value = raw.replace(/\s+#.*$/, "");
+    const value = quote === '"' ? quoted[1]!.replace(/\\(.)/g, (_, c: string) => (c === "n" ? "\n" : c)) : quoted[1]!;
+    return { ...base, value, trailing: raw.slice(quoted[0].length), unterminatedQuote: false };
   }
-  return { exportPrefix: Boolean(m[1]), key: m[2]!, value };
+  // Unquoted values end at an inline comment
+  const comment = /\s+#.*$/.exec(raw);
+  return {
+    ...base,
+    value: comment ? raw.slice(0, comment.index) : raw,
+    trailing: comment ? comment[0] : "",
+    unterminatedQuote: false,
+  };
 }
 
 export function parseDotenv(content: string): DotenvEntry[] {
   const entries: DotenvEntry[] = [];
   content.split(/\r?\n/).forEach((line, i) => {
     const parsed = parseDotenvLine(line);
-    if (parsed) entries.push({ key: parsed.key, value: parsed.value, line: i + 1 });
+    if (parsed && !parsed.unterminatedQuote) entries.push({ key: parsed.key, value: parsed.value, line: i + 1 });
   });
   return entries;
 }

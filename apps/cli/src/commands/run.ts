@@ -97,12 +97,29 @@ function spawnViaSocket(
   }
 }
 
+/**
+ * Items whose fields are injected wholesale: the ones named with -i, otherwise
+ * every login. With --dotenv the file names exactly what the app needs, so
+ * nothing else from the vault is handed over unless -i asks for it.
+ */
+export function selectInjectedItems(
+  all: VaultItemPlaintext[],
+  opts: { item?: string | undefined; dotenv?: string | undefined },
+): VaultItemPlaintext[] {
+  if (opts.item) {
+    const names = opts.item.split(",").map((n) => n.trim().toLowerCase());
+    return all.filter((i) => names.some((n) => i.name.toLowerCase() === n || i.name.toLowerCase().includes(n)));
+  }
+  if (opts.dotenv) return [];
+  return all.filter((i) => i.type === "login");
+}
+
 export const runCommand = new Command("run")
   .description("run a command with vault secrets injected as environment variables")
   .argument("<command...>", "command and arguments to run")
   .option(
     "-i, --item <names>",
-    "comma-separated list of vault item names to inject (default: all login items)",
+    "comma-separated list of vault item names to inject (default: all login items, or none with --dotenv)",
   )
   .option("--env-file", "print env vars to stdout instead of running a command (for .env generation)")
   .option(
@@ -111,7 +128,7 @@ export const runCommand = new Command("run")
   )
   .option(
     "--dotenv <path>",
-    "load variables from a .env file; nopwd:// values in it are resolved from the vault (variables already set in the environment win)",
+    "load variables from a .env file and resolve its nopwd:// values; only those secrets are injected unless -i is given (variables already set in the environment win)",
   )
   .addHelpText(
     "after",
@@ -139,16 +156,10 @@ Examples:
     await withSession(async (session) => {
       const all = await fetchAndDecryptItems(session);
 
-      let selected: VaultItemPlaintext[];
-      if (opts.item) {
-        const names = opts.item.split(",").map((n) => n.trim().toLowerCase());
-        selected = all.filter((i) => names.some((n) => i.name.toLowerCase() === n || i.name.toLowerCase().includes(n)));
-        if (selected.length === 0) {
-          process.stderr.write(`No items found matching: ${opts.item}\n`);
-          process.exit(2);
-        }
-      } else {
-        selected = all.filter((i) => i.type === "login");
+      const selected = selectInjectedItems(all, opts);
+      if (opts.item && selected.length === 0) {
+        process.stderr.write(`No items found matching: ${opts.item}\n`);
+        process.exit(2);
       }
 
       const injected: Record<string, string> = {};
