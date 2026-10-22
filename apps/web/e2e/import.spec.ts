@@ -3,6 +3,7 @@
  * Requires the web app + API to be running.
  */
 import { test, expect, Page } from "@playwright/test";
+import { itemRow, openImportPage, registerAccount } from "./helpers";
 import { zipSync, strToU8 } from "fflate";
 import * as path from "path";
 import * as fs from "fs";
@@ -15,11 +16,7 @@ function uniqueEmail() {
 }
 
 async function registerAndLogin(page: Page, email: string) {
-  await page.goto("/register");
-  await page.fill('input[type="email"]', email);
-  await page.fill('input[type="password"]', PASSWORD);
-  await page.click('button[type="submit"]');
-  await expect(page).toHaveURL(/\/vault/, { timeout: 30_000 });
+  await registerAccount(page, email, PASSWORD);
 }
 
 function makeOnePuxFile(items: object[]): string {
@@ -52,15 +49,14 @@ test.describe("1Password import", () => {
   });
 
   test("import button navigates to import page", async ({ page }) => {
-    await page.click('button:has-text("Import")');
-    await expect(page).toHaveURL(/\/vault\/import/, { timeout: 10_000 });
+    await openImportPage(page);
     await expect(page.getByText("Import from 1Password")).toBeVisible();
   });
 
   test("import page shows instructions", async ({ page }) => {
-    await page.goto("/vault/import");
+    await openImportPage(page);
     await expect(page.getByText("File → Export → All Vaults")).toBeVisible();
-    await expect(page.getByText(".1pux")).toBeVisible();
+    await expect(page.getByText(".1pux", { exact: true })).toBeVisible();
   });
 
   test("uploading a valid .1pux file shows preview with item counts", async ({ page }) => {
@@ -93,14 +89,14 @@ test.describe("1Password import", () => {
     ]);
 
     try {
-      await page.goto("/vault/import");
+      await openImportPage(page);
       const fileInput = page.locator('input[type="file"]');
       await fileInput.setInputFiles(tmpFile);
 
       await expect(page.getByText("Ready to import")).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText("2")).toBeVisible();
-      await expect(page.getByText("Logins")).toBeVisible();
-      await expect(page.getByText("Notes")).toBeVisible();
+      await expect(page.getByText("Found 2 items")).toBeVisible();
+      await expect(page.locator("dl > div").filter({ hasText: "Logins" })).toContainText("1");
+      await expect(page.locator("dl > div").filter({ hasText: "Notes" })).toContainText("1");
     } finally {
       fs.unlinkSync(tmpFile);
     }
@@ -126,7 +122,7 @@ test.describe("1Password import", () => {
     ]);
 
     try {
-      await page.goto("/vault/import");
+      await openImportPage(page);
       const fileInput = page.locator('input[type="file"]');
       await fileInput.setInputFiles(tmpFile);
 
@@ -138,7 +134,7 @@ test.describe("1Password import", () => {
 
       await page.click('button:has-text("Go to vault")');
       await expect(page).toHaveURL(/\/vault/, { timeout: 10_000 });
-      await expect(page.getByText("Imported Login")).toBeVisible({ timeout: 10_000 });
+      await expect(itemRow(page, "Imported Login")).toBeVisible({ timeout: 10_000 });
     } finally {
       fs.unlinkSync(tmpFile);
     }
@@ -169,13 +165,13 @@ test.describe("1Password import", () => {
     ]);
 
     try {
-      await page.goto("/vault/import");
+      await openImportPage(page);
       const fileInput = page.locator('input[type="file"]');
       await fileInput.setInputFiles(tmpFile);
 
       await expect(page.getByText("Ready to import")).toBeVisible({ timeout: 10_000 });
       // Shows 1 item (trashed one skipped), with a "trashed items skipped" note
-      await expect(page.getByText("1")).toBeVisible();
+      await expect(page.getByText("Found 1 items")).toBeVisible();
       await expect(page.getByText(/trashed.*skipped/i)).toBeVisible();
     } finally {
       fs.unlinkSync(tmpFile);
@@ -197,7 +193,7 @@ test.describe("1Password import", () => {
     ]);
 
     try {
-      await page.goto("/vault/import");
+      await openImportPage(page);
       const fileInput = page.locator('input[type="file"]');
       await fileInput.setInputFiles(tmpFile);
 

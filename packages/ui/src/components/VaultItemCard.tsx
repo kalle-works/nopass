@@ -1,5 +1,7 @@
 "use client";
 
+import type { ComponentType } from "react";
+import { CreditCard, FileText, Globe, KeyRound, UserRound, type LucideProps } from "lucide-react";
 import type { EncryptedVaultItem, VaultItemType } from "@nopass/types";
 
 interface VaultItemCardProps {
@@ -7,12 +9,12 @@ interface VaultItemCardProps {
   onClick: (item: EncryptedVaultItem) => void;
 }
 
-const TYPE_ICONS: Record<VaultItemType, string> = {
-  login: "🔑",
-  note: "📝",
-  card: "💳",
-  identity: "🪪",
-  ssh_key: "🗝",
+const TYPE_ICONS: Record<VaultItemType, ComponentType<LucideProps>> = {
+  login: Globe,
+  note: FileText,
+  card: CreditCard,
+  identity: UserRound,
+  ssh_key: KeyRound,
 };
 
 const TYPE_LABELS: Record<VaultItemType, string> = {
@@ -20,35 +22,29 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
   note: "Secure note",
   card: "Credit card",
   identity: "Identity",
-  ssh_key: "SSH Key",
+  ssh_key: "SSH key",
 };
 
-export function VaultItemCard({ item, onClick }: VaultItemCardProps) {
+function CardRow({ item, title, onClick }: VaultItemCardProps & { title: string }) {
+  const Icon = TYPE_ICONS[item.itemType];
   return (
     <button
+      type="button"
       onClick={() => onClick(item)}
-      className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left group"
+      className="flex min-h-[52px] w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors duration-[120ms] hover:bg-surface-hover"
     >
-      <span className="text-xl w-8 shrink-0 text-center" aria-hidden>
-        {TYPE_ICONS[item.itemType]}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-          {/* Name is encrypted — show placeholder until decrypted */}
-          {item.id.slice(0, 8)}…
-        </p>
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          {TYPE_LABELS[item.itemType]}
-        </p>
-      </div>
-      <span
-        className="text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
-        aria-hidden
-      >
-        →
+      <Icon aria-hidden className="size-4 shrink-0 text-icon" strokeWidth={1.5} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-ui font-medium text-fg">{title}</span>
+        <span className="block truncate text-meta text-muted">{TYPE_LABELS[item.itemType]}</span>
       </span>
     </button>
   );
+}
+
+export function VaultItemCard({ item, onClick }: VaultItemCardProps) {
+  // Name is encrypted: show a short id until the item is decrypted
+  return <CardRow item={item} onClick={onClick} title={`${item.id.slice(0, 8)}…`} />;
 }
 
 /** Shows a decrypted item name once available */
@@ -57,28 +53,5 @@ export function DecryptedVaultItemCard({
   decryptedName,
   onClick,
 }: VaultItemCardProps & { decryptedName: string }) {
-  return (
-    <button
-      onClick={() => onClick(item)}
-      className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-left group"
-    >
-      <span className="text-xl w-8 shrink-0 text-center" aria-hidden>
-        {TYPE_ICONS[item.itemType]}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-          {decryptedName}
-        </p>
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          {TYPE_LABELS[item.itemType]}
-        </p>
-      </div>
-      <span
-        className="text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
-        aria-hidden
-      >
-        →
-      </span>
-    </button>
-  );
+  return <CardRow item={item} onClick={onClick} title={decryptedName} />;
 }

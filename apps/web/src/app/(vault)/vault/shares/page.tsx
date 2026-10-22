@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useNopassStore } from "@nopass/ui";
+import { useEffect, useState } from "react";
+import { X } from "lucide-react";
+import { Banner, Button, Dialog, EmptyState, IconButton, useNopassStore } from "@nopass/ui";
 import { decryptBytes } from "@nopass/crypto";
 import type { ShareInfo } from "@nopass/types";
 import { api } from "@/lib/api";
+import { DataTable, PageShell, RelativeTime, TBODY, TD, TH } from "@/components/vault/PageShell";
+import { RowMenu } from "@/components/vault/RowMenu";
 
 interface ShareRow extends ShareInfo {
   label: string;
@@ -13,7 +15,7 @@ interface ShareRow extends ShareInfo {
 
 function timeLeft(expiresAt: string): string {
   const ms = new Date(expiresAt).getTime() - Date.now();
-  if (ms <= 0) return "expired";
+  if (ms <= 0) return "Expired";
   const hours = Math.floor(ms / 3_600_000);
   if (hours >= 24) return `${Math.floor(hours / 24)}d left`;
   if (hours >= 1) return `${hours}h left`;
@@ -21,140 +23,152 @@ function timeLeft(expiresAt: string): string {
 }
 
 export default function SharesPage() {
-  const router = useRouter();
-  const { isUnlocked, sessionToken, vaultEncKey } = useNopassStore();
+  const { sessionToken, vaultEncKey } = useNopassStore();
   const [shares, setShares] = useState<ShareRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [revoking, setRevoking] = useState<string | null>(null);
+  const [toRevoke, setToRevoke] = useState<ShareRow | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
-    document.title = "Shares — nopwd";
-    if (!isUnlocked()) router.replace("/login");
-  }, [isUnlocked, router]);
+    document.title = "Shared links — nopwd";
+  }, []);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
     if (!sessionToken || !vaultEncKey) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const list = await api.shares.list(sessionToken);
-      const rows = await Promise.all(
-        list.map(async (s) => {
-          let label = "(unreadable label)";
-          try {
-            const bytes = await decryptBytes(
-              { blob: s.labelBlob, blobIv: s.labelIv, blobMac: "" },
-              vaultEncKey,
-            );
-            label = new TextDecoder().decode(bytes);
-          } catch {
-            // label was encrypted under an older vault key (e.g. pre-recovery)
-          }
-          return { ...s, label };
-        }),
-      );
-      setShares(rows);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load shares");
-    } finally {
-      setLoading(false);
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api.shares.list(sessionToken);
+        const rows = await Promise.all(
+          list.map(async (s) => {
+            let label = "(unreadable label)";
+            try {
+              const bytes = await decryptBytes({ blob: s.labelBlob, blobIv: s.labelIv, blobMac: "" }, vaultEncKey);
+              label = new TextDecoder().decode(bytes);
+            } catch {
+              // label was encrypted under an older vault key (e.g. pre-recovery)
+            }
+            return { ...s, label };
+          }),
+        );
+        if (!cancelled) setShares(rows);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load shares");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [sessionToken, vaultEncKey]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  async function handleRevoke(id: string) {
-    if (!sessionToken) return;
-    setRevoking(id);
+  async function handleRevoke() {
+    if (!sessionToken || !toRevoke) return;
+    setRevoking(true);
     try {
-      await api.shares.revoke(id, sessionToken);
-      setShares((s) => s.filter((row) => row.id !== id));
+      await api.shares.revoke(toRevoke.id, sessionToken);
+      setShares((s) => s.filter((row) => row.id !== toRevoke.id));
+      setToRevoke(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to revoke share");
+      setToRevoke(null);
     } finally {
-      setRevoking(null);
+      setRevoking(false);
     }
   }
 
-  if (!isUnlocked()) return null;
-
   return (
-    <div className="min-h-screen bg-[#070706]">
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => router.push("/vault")}
-            className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] transition-colors"
-            title="Back to vault"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 5l-7 7 7 7" />
-            </svg>
-          </button>
-          <div>
-            <h1 className="font-mono text-sm font-semibold text-[#F4F1E8] uppercase tracking-widest">Active Shares</h1>
-            <p className="text-xs text-[#9C988D] mt-0.5">
-              Links you have created. Revoking one kills the link immediately.
-            </p>
-          </div>
-        </div>
+    <PageShell
+      title="Shared links"
+      description="Links you have created. Revoking one disables it immediately."
+    >
+      {error && (
+        <Banner
+          tone="danger"
+          className="mb-4"
+          action={
+            <IconButton label="Dismiss error" onClick={() => setError(null)} className="-my-1 -mr-2">
+              <X aria-hidden className="size-4" />
+            </IconButton>
+          }
+        >
+          {error}
+        </Banner>
+      )}
 
-        {error && (
-          <div className="mb-4 flex items-center gap-2.5 p-3 bg-[#E8321A]/10 border border-[#E8321A]/30 text-sm text-[#E8321A]">
-            {error}
-            <button onClick={() => setError(null)} className="ml-auto p-0.5 hover:text-[#F4F1E8]">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        )}
-
-        <div className="bg-[#11110F] border border-[#2B2923] overflow-hidden">
-          {loading ? (
-            <div className="divide-y divide-[#2B2923]">
-              {[...Array(2)].map((_, i) => (
-                <div key={i} className="flex items-center gap-4 px-5 py-4 animate-pulse">
-                  <div className="flex-1 space-y-2">
-                    <div className="h-3.5 bg-[#2B2923] w-40" />
-                    <div className="h-2.5 bg-[#181713] w-24" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : shares.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center px-4">
-              <p className="text-sm text-[#9C988D]">No active shares.</p>
-              <p className="text-xs text-[#9C988D]/60 mt-1.5">
-                Open any vault item and press Share to create a one-time link.
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-[#2B2923]">
-              {shares.map((share) => (
-                <div key={share.id} className="flex items-center gap-4 px-5 py-4">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[#F4F1E8] truncate">{share.label}</p>
-                    <p className="font-mono text-xs text-[#9C988D] mt-0.5">
-                      {share.viewCount}/{share.maxViews} views · {timeLeft(share.expiresAt)}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleRevoke(share.id)}
-                    disabled={revoking === share.id}
-                    className="px-3 py-1.5 font-mono text-xs text-[#E8321A]/80 hover:text-[#E8321A] hover:bg-[#E8321A]/10 border border-[#E8321A]/30 disabled:opacity-50 transition-colors shrink-0"
-                  >
-                    {revoking === share.id ? "Revoking…" : "Revoke"}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+      {loading ? (
+        <div aria-busy="true" aria-label="Loading shared links" className="space-y-px overflow-hidden rounded-lg border border-divider">
+          {[...Array(2)].map((_, i) => (
+            <div key={i} className="h-11 animate-pulse bg-surface-hover" />
+          ))}
         </div>
-      </div>
-    </div>
+      ) : shares.length === 0 ? (
+        <div className="rounded-lg border border-divider">
+          <EmptyState
+            title="No active shared links."
+            description="Open an item and choose Share to create a link that expires."
+          />
+        </div>
+      ) : (
+        <DataTable label="Shared links">
+          <thead>
+            <tr>
+              <th scope="col" className={TH}>Item</th>
+              <th scope="col" className={TH}>Views</th>
+              <th scope="col" className={TH}>Expires</th>
+              <th scope="col" className={TH}>Created</th>
+              <th scope="col" className={`${TH} w-12`}>
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className={TBODY}>
+            {shares.map((share) => (
+              <tr key={share.id}>
+                <td className={TD}>
+                  <span className="font-medium text-fg">{share.label}</span>
+                </td>
+                <td className={`${TD} font-mono text-mono-sm tabular-nums text-muted`}>
+                  {share.viewCount}/{share.maxViews}
+                </td>
+                <td className={`${TD} text-muted`}>
+                  <time dateTime={share.expiresAt} title={new Date(share.expiresAt).toLocaleString()}>
+                    {timeLeft(share.expiresAt)}
+                  </time>
+                </td>
+                <td className={TD}>
+                  <RelativeTime iso={share.createdAt} />
+                </td>
+                <td className={`${TD} text-right`}>
+                  <RowMenu
+                    label={`Actions for ${share.label}`}
+                    actions={[{ label: "Revoke…", onSelect: () => setToRevoke(share) }]}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
+
+      <Dialog
+        open={toRevoke !== null}
+        onClose={() => setToRevoke(null)}
+        title={`Revoke the link to “${toRevoke?.label ?? ""}”?`}
+        description="Anyone holding the link can no longer open it. This can't be undone."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setToRevoke(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleRevoke} pending={revoking} pendingLabel="Revoking…">
+              Revoke link
+            </Button>
+          </>
+        }
+      />
+    </PageShell>
   );
 }

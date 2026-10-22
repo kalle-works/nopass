@@ -16,6 +16,7 @@
     "@nopass/crypto": "workspace:*",
     "@nopass/types": "workspace:*",
     "@nopass/ui": "workspace:*",
+    "lucide-react": "1.58.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "tldts": "^7.4.2",

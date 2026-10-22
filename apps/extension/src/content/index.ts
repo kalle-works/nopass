@@ -47,11 +47,48 @@ function findUsernameField(passwordField: HTMLInputElement): HTMLInputElement | 
 // breaks `width: 100%` sizing and detaches React refs on framework pages.
 
 const ATTR = "data-nopass-injected";
-const BTN_SIZE = 22;
+const BTN_SIZE = 24;
 
-const KEY_ICON_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">' +
-  '<circle cx="5" cy="11" r="3"/><path d="M7.5 8.5 L13.5 2.5 M11 5 L13 7"/></svg>';
+// Inline-menu button styling. It lives in the page's light DOM (the field
+// overlay must stay a direct <body> child), so every style is set inline on
+// the element rather than through page-affectable stylesheets or classes.
+// Values mirror the nopwd design tokens in packages/ui/src/theme.css for both
+// themes; the page's own theme is unknown, so the system preference decides.
+interface OverlayPalette {
+  bg: string;
+  bgHover: string;
+  border: string;
+  icon: string;
+  accent: string;
+}
+
+const LIGHT_PALETTE: OverlayPalette = {
+  bg: "#ffffff",
+  bgHover: "#eff0f3",
+  border: "#c9cdd5",
+  icon: "#6f7682",
+  accent: "#d2491b",
+};
+
+const DARK_PALETTE: OverlayPalette = {
+  bg: "#1b1d21",
+  bgHover: "#22252a",
+  border: "#3a3f46",
+  icon: "#8b929d",
+  accent: "#ff7a45",
+};
+
+const darkQuery =
+  typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function palette(): OverlayPalette {
+  return darkQuery?.matches ? DARK_PALETTE : LIGHT_PALETTE;
+}
+
+// Fill-in-field glyph: a field outline with a text caret, 1.5px stroke
+const FILL_ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<rect x="1.75" y="4" width="12.5" height="8" rx="1.5"/><path d="M5.5 6.5v3"/></svg>';
 
 interface InjectedButton {
   field: HTMLInputElement;
@@ -60,6 +97,13 @@ interface InjectedButton {
 
 const injected: InjectedButton[] = [];
 
+function paintButton(btn: HTMLButtonElement, state: { hover: boolean; focus: boolean }): void {
+  const p = palette();
+  btn.style.background = state.hover ? p.bgHover : p.bg;
+  btn.style.color = state.hover || state.focus ? p.accent : p.icon;
+  btn.style.borderColor = state.focus ? p.accent : p.border;
+}
+
 function injectButton(passwordField: HTMLInputElement): void {
   if (passwordField.hasAttribute(ATTR)) return;
   passwordField.setAttribute(ATTR, "1");
@@ -67,6 +111,7 @@ function injectButton(passwordField: HTMLInputElement): void {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.title = "Fill with nopwd";
+  btn.setAttribute("aria-label", "Fill with nopwd");
   btn.setAttribute("data-nopass-button", "1");
   btn.style.cssText = [
     // fixed + viewport coords: immune to a positioned <body> (common on
@@ -74,21 +119,29 @@ function injectButton(passwordField: HTMLInputElement): void {
     "position:fixed",
     `width:${BTN_SIZE}px`,
     `height:${BTN_SIZE}px`,
+    "box-sizing:border-box",
     "display:flex",
     "align-items:center",
     "justify-content:center",
     "padding:0",
-    "border:none",
-    "border-radius:0",
-    "background:transparent",
-    "color:#9C988D",
+    "margin:0",
+    "border:1px solid transparent",
+    "border-radius:4px",
     "cursor:pointer",
     "z-index:2147483647",
     "line-height:1",
+    "transition:background-color 120ms ease-out,color 120ms ease-out",
   ].join(";");
-  btn.innerHTML = KEY_ICON_SVG;
-  btn.addEventListener("mouseenter", () => { btn.style.color = "#D6FF3F"; });
-  btn.addEventListener("mouseleave", () => { btn.style.color = "#9C988D"; });
+  btn.innerHTML = FILL_ICON_SVG;
+
+  const state = { hover: false, focus: false };
+  const repaint = () => paintButton(btn, state);
+  repaint();
+  btn.addEventListener("mouseenter", () => { state.hover = true; repaint(); });
+  btn.addEventListener("mouseleave", () => { state.hover = false; repaint(); });
+  btn.addEventListener("focus", () => { state.focus = true; repaint(); });
+  btn.addEventListener("blur", () => { state.focus = false; repaint(); });
+  darkQuery?.addEventListener("change", repaint);
 
   btn.addEventListener("click", (e) => {
     e.preventDefault();
@@ -151,9 +204,12 @@ function openPopupForField(field: HTMLInputElement): void {
 
 // ─── Incoming messages from background ───────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((message: FillMessage) => {
+chrome.runtime.onMessage.addListener((message: FillMessage, _sender, sendResponse?: (response: unknown) => void) => {
   if (message.type !== "FILL_CREDENTIALS") return;
 
+  // Frames without a password field stay silent: the first response wins, so
+  // answering { filled: false } would mask a fill that succeeded in another
+  // frame. No answer from any frame reads as "nothing filled" to the caller.
   const pwField = activePasswordField ?? findPasswordFields()[0] ?? null;
   if (!pwField) return;
 
@@ -164,6 +220,7 @@ chrome.runtime.onMessage.addListener((message: FillMessage) => {
   }
   setNativeValue(pwField, message.password);
   activePasswordField = null;
+  sendResponse?.({ filled: true });
 });
 
 /**

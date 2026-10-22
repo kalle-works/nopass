@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useNopassStore } from "@nopass/ui";
+import { Badge, Banner, Button, Spinner, useNopassStore } from "@nopass/ui";
 import type { BillingStatus, SubscriptionPlan } from "@nopass/types";
 import { api } from "@/lib/api";
+import { PageShell } from "@/components/vault/PageShell";
 
 const PLAN_LABELS: Record<SubscriptionPlan, string> = {
   free: "Free",
@@ -20,17 +21,13 @@ const PLAN_DESCRIPTIONS: Record<SubscriptionPlan, string> = {
   enterprise: "Everything in Teams with custom contracts, SLAs, and on-premise options.",
 };
 
-function PlanBadge({ plan }: { plan: SubscriptionPlan }) {
-  const styles: Record<SubscriptionPlan, string> = {
-    free: "text-[#9C988D] border border-[#2B2923]",
-    pro: "text-[#D6FF3F] border border-[#D6FF3F]/30",
-    teams: "text-[#F4F1E8] border border-[#F4F1E8]/20",
-    enterprise: "text-[#D6FF3F] border border-[#D6FF3F]/30",
-  };
+function FeatureList({ items }: { items: string[] }) {
   return (
-    <span className={`font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 ${styles[plan]}`}>
-      {PLAN_LABELS[plan]}
-    </span>
+    <ul className="list-disc space-y-1 pl-4 text-meta text-muted marker:text-faint">
+      {items.map((f) => (
+        <li key={f}>{f}</li>
+      ))}
+    </ul>
   );
 }
 
@@ -46,24 +43,30 @@ export default function BillingPage() {
   const proAnnualPriceId = process.env.NEXT_PUBLIC_STRIPE_PRO_ANNUAL_PRICE_ID ?? "";
   const teamsPriceId = process.env.NEXT_PUBLIC_STRIPE_TEAMS_PRICE_ID ?? "";
 
-  const fetchStatus = useCallback(async () => {
+  useEffect(() => {
+    document.title = "Billing — nopwd";
+  }, []);
+
+  useEffect(() => {
     if (!sessionToken) {
       router.replace("/login");
       return;
     }
-    try {
-      const data = await api.billing.status(sessionToken);
-      setStatus(data);
-    } catch {
-      setError("Failed to load billing status");
-    } finally {
-      setLoading(false);
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.billing.status(sessionToken);
+        if (!cancelled) setStatus(data);
+      } catch {
+        if (!cancelled) setError("Failed to load billing status");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [sessionToken, router]);
-
-  useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
 
   const startCheckout = async (priceId: string) => {
     if (!sessionToken) return;
@@ -81,8 +84,7 @@ export default function BillingPage() {
       );
       window.location.href = url;
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to start checkout";
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Failed to start checkout");
       setActionLoading(false);
     }
   };
@@ -92,194 +94,117 @@ export default function BillingPage() {
     setActionLoading(true);
     setError(null);
     try {
-      const { url } = await api.billing.portal(
-        { returnUrl: window.location.href },
-        sessionToken,
-      );
+      const { url } = await api.billing.portal({ returnUrl: window.location.href }, sessionToken);
       window.location.href = url;
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Failed to open billing portal";
-      setError(msg);
+      setError(e instanceof Error ? e.message : "Failed to open billing portal");
       setActionLoading(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#070706] flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-[#2B2923] border-t-[#D6FF3F] animate-spin" />
-      </div>
-    );
-  }
-
   const plan = status?.plan ?? "free";
   const isActive = status?.status === "active" || status?.status === "trialing";
-  const periodEnd = status?.currentPeriodEnd
-    ? new Date(status.currentPeriodEnd).toLocaleDateString()
-    : null;
+  const periodEnd = status?.currentPeriodEnd ? new Date(status.currentPeriodEnd).toLocaleDateString() : null;
 
   return (
-    <div className="min-h-screen bg-[#070706]">
-      <div className="max-w-2xl mx-auto px-6 py-12">
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-1.5 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] mb-8 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to vault
-        </button>
-
-        <h1 className="font-mono text-2xl font-bold text-[#F4F1E8] mb-1">Billing</h1>
-        <p className="text-sm text-[#9C988D] mb-8">
-          Manage your nopwd subscription
-        </p>
-
-        {error && (
-          <div className="mb-6 px-4 py-3 bg-[#E8321A]/10 border border-[#E8321A]/30 text-sm text-[#E8321A]">
-            {error}
-          </div>
-        )}
-
-        {/* Current plan */}
-        <div className="bg-[#11110F] border border-[#2B2923] p-6 mb-6">
-          <div className="flex items-start justify-between mb-3">
-            <div>
-              <p className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest mb-1">
-                Current plan
-              </p>
-              <div className="flex items-center gap-2.5">
-                <h2 className="font-mono text-lg font-semibold text-[#F4F1E8]">
-                  {PLAN_LABELS[plan]}
-                </h2>
-                <PlanBadge plan={plan} />
-              </div>
-            </div>
-            {plan !== "free" && isActive && (
-              <button
-                onClick={openPortal}
-                disabled={actionLoading}
-                className="font-mono text-xs text-[#D6FF3F] hover:underline disabled:opacity-50"
-              >
-                Manage billing
-              </button>
-            )}
-          </div>
-          <p className="text-sm text-[#9C988D] mb-4">
-            {PLAN_DESCRIPTIONS[plan]}
-          </p>
-          {periodEnd && (
-            <p className="font-mono text-xs text-[#9C988D]/60">
-              {status?.status === "canceled" ? "Access until" : "Renews"}: {periodEnd}
-            </p>
-          )}
+    <PageShell title="Billing" description="Your plan and payment details.">
+      {loading ? (
+        <div className="flex items-center gap-2 py-8 text-ui text-muted" role="status">
+          <Spinner /> Loading billing status…
         </div>
+      ) : (
+        <>
+          {error && (
+            <Banner tone="danger" className="mb-4">
+              {error}
+            </Banner>
+          )}
 
-        {/* Upgrade options */}
-        {plan === "free" && (
-          <>
-            <h3 className="font-mono text-xs text-[#9C988D] uppercase tracking-widest mb-3">
-              Upgrade your plan
-            </h3>
-            <div className="grid sm:grid-cols-2 gap-px bg-[#2B2923]">
-              {/* Pro */}
-              <div className="bg-[#11110F] p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="font-mono text-sm font-semibold text-[#F4F1E8]">Pro</span>
-                  <span className="font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 text-[#D6FF3F] border border-[#D6FF3F]/30">
-                    Popular
-                  </span>
-                </div>
-                <div className="mb-4">
-                  <span className="font-mono text-2xl font-bold text-[#F4F1E8]">€4</span>
-                  <span className="text-sm text-[#9C988D]"> /month</span>
-                  <p className="font-mono text-xs text-[#9C988D]/60 mt-0.5">
-                    or €36/year (save 25%)
-                  </p>
-                </div>
-                <ul className="space-y-1.5 mb-5">
-                  {["File attachments (1 GB)", "Hardware key 2FA", "Emergency access", "REST API access"].map((f) => (
-                    <li key={f} className="flex items-center gap-1.5 text-xs text-[#9C988D]">
-                      <span className="font-mono text-[#D6FF3F] shrink-0">✓</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex flex-col gap-2">
-                  {proMonthlyPriceId && (
-                    <button
-                      onClick={() => startCheckout(proMonthlyPriceId)}
-                      disabled={actionLoading}
-                      className="w-full py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] transition-colors disabled:opacity-50"
-                    >
-                      {actionLoading ? "Loading…" : "Subscribe monthly"}
-                    </button>
-                  )}
-                  {proAnnualPriceId && (
-                    <button
-                      onClick={() => startCheckout(proAnnualPriceId)}
-                      disabled={actionLoading}
-                      className="w-full py-2 font-mono text-xs border border-[#2B2923] text-[#9C988D] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors disabled:opacity-50"
-                    >
-                      {actionLoading ? "Loading…" : "Subscribe yearly — €36"}
-                    </button>
-                  )}
-                  {!proMonthlyPriceId && !proAnnualPriceId && (
-                    <p className="font-mono text-xs text-[#9C988D]/60 text-center">Coming soon</p>
-                  )}
+          <section aria-labelledby="current-plan" className="mb-8 rounded-lg border border-divider bg-surface p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-meta text-muted">Current plan</p>
+                <div className="mt-1 flex items-center gap-2">
+                  <h2 id="current-plan" className="text-h2 font-semibold text-fg">
+                    {PLAN_LABELS[plan]}
+                  </h2>
+                  {isActive && plan !== "free" && <Badge tone="success">Active</Badge>}
                 </div>
               </div>
-
-              {/* Teams */}
-              <div className="bg-[#11110F] p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="font-mono text-sm font-semibold text-[#F4F1E8]">Teams</span>
-                </div>
-                <div className="mb-4">
-                  <span className="font-mono text-2xl font-bold text-[#F4F1E8]">€5</span>
-                  <span className="text-sm text-[#9C988D]"> /user/month</span>
-                  <p className="font-mono text-xs text-[#9C988D]/60 mt-0.5">
-                    Minimum 3 seats · annual billing
-                  </p>
-                </div>
-                <ul className="space-y-1.5 mb-5">
-                  {["Everything in Pro", "Unlimited org members", "SSO / SAML", "Audit logs"].map((f) => (
-                    <li key={f} className="flex items-center gap-1.5 text-xs text-[#9C988D]">
-                      <span className="font-mono text-[#9C988D] shrink-0">—</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                {teamsPriceId ? (
-                  <button
-                    onClick={() => startCheckout(teamsPriceId)}
-                    disabled={actionLoading}
-                    className="w-full py-2 font-mono text-xs border border-[#2B2923] text-[#9C988D] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors disabled:opacity-50"
-                  >
-                    {actionLoading ? "Loading…" : "Start Teams trial"}
-                  </button>
-                ) : (
-                  <p className="font-mono text-xs text-[#9C988D]/60 text-center">Coming soon</p>
-                )}
-              </div>
+              {plan !== "free" && isActive && (
+                <Button onClick={openPortal} pending={actionLoading} pendingLabel="Opening…">
+                  Manage billing
+                </Button>
+              )}
             </div>
-          </>
-        )}
+            <p className="mt-3 max-w-prose text-ui text-muted">{PLAN_DESCRIPTIONS[plan]}</p>
+            {periodEnd && (
+              <p className="mt-3 text-meta text-muted">
+                {status?.status === "canceled" ? "Access until" : "Renews"}: <span className="tabular-nums">{periodEnd}</span>
+              </p>
+            )}
+          </section>
 
-        {/* Downgrade option */}
-        {plan !== "free" && (
-          <div className="mt-6 text-center">
-            <button
-              onClick={openPortal}
-              disabled={actionLoading}
-              className="font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] disabled:opacity-50 transition-colors"
-            >
+          {plan === "free" && (
+            <section aria-labelledby="upgrade">
+              <h2 id="upgrade" className="mb-3 text-h2 font-semibold text-fg">
+                Upgrade
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex flex-col rounded-lg border border-divider bg-surface p-5">
+                  <h3 className="text-h3 font-semibold text-fg">Pro</h3>
+                  <p className="mt-2">
+                    <span className="text-h1 font-semibold tabular-nums text-fg">€4</span>
+                    <span className="text-ui text-muted"> / month</span>
+                  </p>
+                  <p className="mb-4 text-meta text-muted">or €36 / year (save 25%)</p>
+                  <FeatureList items={["File attachments (1 GB)", "Hardware key 2FA", "Emergency access", "REST API access"]} />
+                  <div className="mt-5 flex flex-col gap-2">
+                    {proMonthlyPriceId && (
+                      <Button variant="primary" onClick={() => startCheckout(proMonthlyPriceId)} pending={actionLoading} pendingLabel="Loading…">
+                        Subscribe monthly
+                      </Button>
+                    )}
+                    {proAnnualPriceId && (
+                      <Button onClick={() => startCheckout(proAnnualPriceId)} pending={actionLoading} pendingLabel="Loading…">
+                        Subscribe yearly — €36
+                      </Button>
+                    )}
+                    {!proMonthlyPriceId && !proAnnualPriceId && (
+                      <p className="text-meta text-muted">Coming soon</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col rounded-lg border border-divider bg-surface p-5">
+                  <h3 className="text-h3 font-semibold text-fg">Teams</h3>
+                  <p className="mt-2">
+                    <span className="text-h1 font-semibold tabular-nums text-fg">€5</span>
+                    <span className="text-ui text-muted"> / user / month</span>
+                  </p>
+                  <p className="mb-4 text-meta text-muted">Minimum 3 seats, billed annually</p>
+                  <FeatureList items={["Everything in Pro", "Unlimited org members", "SSO / SAML", "Audit logs"]} />
+                  <div className="mt-5 flex flex-col gap-2">
+                    {teamsPriceId ? (
+                      <Button onClick={() => startCheckout(teamsPriceId)} pending={actionLoading} pendingLabel="Loading…">
+                        Start Teams trial
+                      </Button>
+                    ) : (
+                      <p className="text-meta text-muted">Coming soon</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {plan !== "free" && (
+            <Button variant="ghost" onClick={openPortal} disabled={actionLoading}>
               Cancel subscription or change plan
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+            </Button>
+          )}
+        </>
+      )}
+    </PageShell>
   );
 }

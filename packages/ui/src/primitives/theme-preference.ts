@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { THEME_STORAGE_KEY as STORAGE_KEY } from "../theme-boot";
+
+export { THEME_BOOT_SCRIPT } from "../theme-boot";
 
 export type ThemePreference = "system" | "light" | "dark";
-
-const STORAGE_KEY = "nopwd-theme";
 
 export function readThemePreference(): ThemePreference {
   try {
@@ -18,9 +19,6 @@ export function applyThemePreference(pref: ThemePreference) {
   if (pref === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", pref);
 }
-
-/** Inline script for <head> so the stored theme applies before first paint. */
-export const THEME_BOOT_SCRIPT = `try{var t=localStorage.getItem("${STORAGE_KEY}");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}`;
 
 export function useThemePreference(): [ThemePreference, (p: ThemePreference) => void] {
   const [pref, setPref] = useState<ThemePreference>("system");
