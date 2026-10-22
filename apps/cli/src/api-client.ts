@@ -1,4 +1,5 @@
 import type {
+  CreateVaultItemRequest,
   DeviceInfo,
   EncryptedVaultItem,
   RecoveryCompleteRequest,
@@ -71,6 +72,8 @@ export function createApiClient(baseUrl: string) {
       list: (token: string) => get<VaultInfo[]>("/vaults", token),
       items: (vaultId: string, token: string) =>
         get<EncryptedVaultItem[]>(`/vaults/${vaultId}/items`, token),
+      createItem: (vaultId: string, req: CreateVaultItemRequest, token: string) =>
+        post<EncryptedVaultItem>(`/vaults/${vaultId}/items`, req, token),
     },
   };
 }
