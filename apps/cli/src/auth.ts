@@ -87,15 +87,20 @@ export async function loginWithCredentials(
   saveSession(session);
 }
 
+/**
+ * Imports the vault keys from the session. They are read-only unless `write`
+ * is set, so commands that only fetch secrets can't produce new ciphertext.
+ */
 export async function importKeys(
   session: Session,
+  { write = false }: { write?: boolean } = {},
 ): Promise<{ vaultEncKey: CryptoKey; vaultMacKey: CryptoKey }> {
   const encKeyBytes = Buffer.from(session.vaultEncKeyB64, "base64");
   const macKeyBytes = Buffer.from(session.vaultMacKeyB64, "base64");
 
   const [vaultEncKey, vaultMacKey] = await Promise.all([
-    crypto.subtle.importKey("raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, ["decrypt"]),
-    crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]),
+    crypto.subtle.importKey("raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, write ? ["encrypt", "decrypt"] : ["decrypt"]),
+    crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, write ? ["sign", "verify"] : ["verify"]),
   ]);
 
   encKeyBytes.fill(0);
