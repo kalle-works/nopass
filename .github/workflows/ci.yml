@@ -86,6 +86,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: shellcheck ops/*.sh scripts/*.sh
       - run: ops/test.sh
+      - run: scripts/bump-images.test.sh
+      # Manifests must render and validate, with the release pins applied
+      - run: kubectl kustomize k8s > /dev/null
 
   web:
     name: TypeScript typecheck, tests, build
