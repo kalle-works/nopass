@@ -44,6 +44,54 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo run typecheck test build --filter='!@nopass/desktop'
 
+  web-e2e:
+    name: Web e2e (production build)
+    runs-on: kalle-works-amd64
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: nopass_e2e
+          POSTGRES_USER: nopass
+          POSTGRES_PASSWORD: nopass_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nopass -d nopass_e2e"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      E2E_PRODUCTION: "1"
+      E2E_API_URL: http://localhost:4010
+      NEXT_PUBLIC_API_URL: http://localhost:4010
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build -p nopass-api
+      - name: Start API
+        run: |
+          ./target/debug/nopass-api > api.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:4010/health && exit 0; sleep 1; done
+          cat api.log; exit 1
+        env:
+          DATABASE_URL: postgres://nopass:nopass_e2e@localhost:5432/nopass_e2e
+          NOPASS_PORT: "4010"
+          NOPASS_ALLOWED_ORIGINS: http://localhost:4020
+          # Every test signs in from one IP; the production limit (20/min) would 429 them
+          NOPASS_AUTH_RATE_LIMIT_PER_MIN: "1000"
+      - run: pnpm --filter @nopass/web build
+      - run: pnpm --filter @nopass/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @nopass/web test:e2e
+      - if: failure()
+        run: cat api.log
+
   extension-package:
     name: Extension package (store artifact)
     runs-on: ubuntu-latest

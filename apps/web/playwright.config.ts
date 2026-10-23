@@ -5,6 +5,10 @@ import { defineConfig, devices } from "@playwright/test";
 // auth limit (20/min) and makes registration fail with 429 at random.
 // Override when another dev server (e.g. from a second checkout) holds 4020
 const port = process.env.PLAYWRIGHT_PORT ?? "4020";
+// CI sets E2E_PRODUCTION=1 and runs `next build` first, so the nonce CSP and
+// Trusted Types (both production-only) are exercised. NEXT_PUBLIC_API_URL is
+// baked in at build time and must point at the API under test.
+const production = process.env.E2E_PRODUCTION === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -23,7 +27,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `pnpm dev --port ${port}`,
+    command: production ? `pnpm start --port ${port}` : `pnpm dev --port ${port}`,
     url: `http://localhost:${port}`,
     reuseExistingServer: !process.env.CI,
     env: {
