@@ -65,6 +65,7 @@ pub async fn list_items(
 
 pub async fn create_item(
     pool: &PgPool,
+    item_id: Option<Uuid>,
     vault_id: Uuid,
     user_id: Uuid,
     item_type: &str,
@@ -74,11 +75,12 @@ pub async fn create_item(
 ) -> Result<VaultItem> {
     let item = sqlx::query_as::<_, VaultItem>(
         r#"
-        INSERT INTO vault_items (vault_id, user_id, item_type, blob, blob_iv, blob_mac)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO vault_items (id, vault_id, user_id, item_type, blob, blob_iv, blob_mac)
+        VALUES (COALESCE($1, gen_random_uuid()), $2, $3, $4, $5, $6, $7)
         RETURNING *
         "#,
     )
+    .bind(item_id)
     .bind(vault_id)
     .bind(user_id)
     .bind(item_type)
