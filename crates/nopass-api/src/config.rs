@@ -26,7 +26,9 @@ pub struct Config {
     pub trusted_proxies: Vec<ipnet::IpNet>,
     /// Per-IP request budget per minute for the auth endpoints; the burst is
     /// half of it. The default (20) is the production setting; browser e2e
-    /// runs raise it because every test signs in from 127.0.0.1.
+    /// runs raise it because every test signs in from 127.0.0.1. Limiters
+    /// live in process memory: each replica enforces its own budget, so N
+    /// replicas allow up to N times this per IP.
     pub auth_rate_limit_per_minute: u32,
 
     /// Serialized OPAQUE ServerSetup (OPRF seed + server keypair). Losing or

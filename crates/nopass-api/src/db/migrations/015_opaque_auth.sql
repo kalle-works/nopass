@@ -13,10 +13,13 @@ ALTER TABLE users
     -- The default stays FALSE so rows written by a not-yet-upgraded replica during a
     -- rolling deploy get picked up by the periodic backfill instead of being mislabelled.
     ADD COLUMN email_hash_keyed BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD CONSTRAINT users_srp_pair CHECK ((srp_salt IS NULL) = (srp_verifier IS NULL)),
-    ADD CONSTRAINT users_has_credential CHECK (opaque_record IS NOT NULL OR srp_verifier IS NOT NULL);
+    -- CHECKs are NOT VALID so adding them does not scan users under a long lock;
+    -- 018 validates them without blocking writes.
+    ADD CONSTRAINT users_srp_pair CHECK ((srp_salt IS NULL) = (srp_verifier IS NULL)) NOT VALID,
+    ADD CONSTRAINT users_has_credential CHECK (opaque_record IS NOT NULL OR srp_verifier IS NOT NULL) NOT VALID;
 
-CREATE INDEX users_email_hash_unkeyed ON users(id) WHERE NOT email_hash_keyed;
+-- users_email_hash_unkeyed and pending_srp_user are built CONCURRENTLY (020, 021)
+-- so they don't block writes to existing tables.
 
 -- Server AKE state between login start and finish. user_id is NULL for unknown or
 -- not-yet-migrated accounts, which get a fake (but indistinguishable) response.
@@ -30,7 +33,6 @@ CREATE TABLE pending_opaque_logins (
 
 CREATE INDEX pending_opaque_created ON pending_opaque_logins(created_at);
 CREATE INDEX pending_opaque_account ON pending_opaque_logins(account_key, created_at);
-CREATE INDEX pending_srp_user ON pending_srp_sessions(user_id, created_at);
 
 -- Per-account login throttle, keyed by the keyed email hash (whether or not the account
 -- exists, so throttling reveals nothing). `failures` counts login starts not followed by a

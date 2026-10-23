@@ -6,5 +6,6 @@
 ALTER TABLE users
     ADD COLUMN wrapped_account_key    BYTEA,
     ADD COLUMN wrapped_account_key_iv BYTEA,
+    -- NOT VALID: validated by 018 without blocking writes
     ADD CONSTRAINT users_account_key_pair
-        CHECK ((wrapped_account_key IS NULL) = (wrapped_account_key_iv IS NULL));
+        CHECK ((wrapped_account_key IS NULL) = (wrapped_account_key_iv IS NULL)) NOT VALID;
