@@ -64,7 +64,7 @@ describe("safety numbers", () => {
 });
 
 describe("verifyMemberKey", () => {
-  it("rejects an RSA key the identity key did not sign", async () => {
+  it("rejects another user's bundle whose RSA key their identity key did not sign", async () => {
     const alice = await makeUser(1);
     const mallory = await makeUser(2);
     const swapped = { ...alice.bundle, publicKey: mallory.bundle.publicKey };

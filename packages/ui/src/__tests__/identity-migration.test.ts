@@ -42,7 +42,7 @@ describe("ensureIdentityPublished", () => {
     expect(verifyKeyBundle({ ...published, ...uploads[0]! })).toBe(true);
   });
 
-  it("refuses to vouch for a public key the server substituted", async () => {
+  it("refuses to sign its own bundle over a public key the server substituted", async () => {
     const { stretchedMasterKey } = await stretchMasterKey(new Uint8Array(32).fill(2), "m@example.com");
     const mallory = await generateUserKeyPair(stretchedMasterKey);
     const { api, own, uploads } = await setup(mallory.publicKeyB64);

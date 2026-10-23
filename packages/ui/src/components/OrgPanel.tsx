@@ -21,7 +21,7 @@ import {
 import { useNopassStore } from "../store/vault-store";
 import { ensureIdentityPublished } from "../lib/identity-migration";
 import { openKeyPinStore, openOrgEpochStore } from "../lib/local-trust-state";
-import { buildResignedWraps, checkOrgKey, type OrgKeyCheck } from "../lib/org-trust";
+import { buildResignedWraps, checkOrgKey, openOrgKey, type OrgKeyCheck } from "../lib/org-trust";
 import { Button, IconButton } from "../primitives/Button";
 import { Field, inputClass } from "../primitives/Field";
 import { Badge, Banner, Dialog } from "../primitives/Feedback";
@@ -222,17 +222,17 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     setError(null);
     try {
       const details = await apiClient.orgs.get(orgId, sessionToken);
-      const check = checkOrgKey(details.id, details.wrapChain, { userId, role: details.role }, trust.pins, trust.epochs);
+      // The org key is used only once its whole signing chain checks out
+      const { check, orgKey } = await openOrgKey(
+        details.id,
+        details.wrapChain,
+        { userId, role: details.role },
+        trust,
+        decryptOwnOrgKey,
+      );
       setSelectedOrg(details);
       setOrgCheck(check);
-
-      // The org key is used only once its whole signing chain checks out
-      if (check.status === "ok") {
-        trust.epochs.record(details.id, check.wrap.epoch);
-        onOrgVaultKeyChange?.(orgId, await decryptOwnOrgKey(details.encryptedOrgKey));
-      } else {
-        onOrgVaultKeyChange?.(orgId, null);
-      }
+      onOrgVaultKeyChange?.(orgId, orgKey);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load org");
     } finally {

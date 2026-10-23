@@ -53,6 +53,26 @@ export function checkOrgKey(
   }
 }
 
+/**
+ * The only way the UI obtains an org key: verify the chain, and decrypt our
+ * wrap only if it checks out. `decrypt` is never called for an unsigned,
+ * unconfirmed or refused wrap. On success the epoch is recorded so older
+ * wraps are refused from now on.
+ */
+export async function openOrgKey(
+  orgId: string,
+  chain: WrapLink[],
+  me: { userId: string; role: string },
+  stores: { pins: KeyPinStore; epochs: OrgEpochStore },
+  decrypt: (encryptedOrgKey: string) => Promise<CryptoKey>,
+): Promise<{ check: OrgKeyCheck; orgKey: CryptoKey | null }> {
+  const check = checkOrgKey(orgId, chain, me, stores.pins, stores.epochs);
+  if (check.status !== "ok") return { check, orgKey: null };
+  const orgKey = await decrypt(check.wrap.encryptedOrgKey);
+  stores.epochs.record(orgId, check.wrap.epoch);
+  return { check, orgKey };
+}
+
 export interface ResignInput {
   orgId: string;
   ownerUserId: string;

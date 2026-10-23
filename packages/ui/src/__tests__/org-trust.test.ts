@@ -12,7 +12,7 @@ import {
   verifyOrgKeyChain,
 } from "@nopass/crypto";
 import type { KeyBundle, OrgMember, WrapLink } from "@nopass/types";
-import { buildResignedWraps, checkOrgKey } from "../lib/org-trust";
+import { buildResignedWraps, checkOrgKey, openOrgKey } from "../lib/org-trust";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
 const OWNER = "11111111-1111-4111-8111-111111111111";
@@ -70,6 +70,31 @@ describe("checkOrgKey", () => {
     expect(
       checkOrgKey(ORG, [unsigned(BOB, "member", OWNER)], { userId: BOB, role: "member" }, pins, memoryEpochs()),
     ).toEqual({ status: "unsigned", canResign: false });
+  });
+});
+
+describe("openOrgKey", () => {
+  it("never decrypts or hands out an unsigned wrap", async () => {
+    const owner = await makeUser(1, OWNER);
+    const pins = memoryPins();
+    confirmKey(owner.bundle, pins);
+    const unsigned: WrapLink = {
+      recipientUserId: BOB,
+      role: "member",
+      encryptedOrgKey: btoa("server-chosen-key"),
+      wrapSignature: null,
+      keyEpoch: null,
+      signerUserId: OWNER,
+      signer: owner.bundle,
+    };
+    let decrypted = 0;
+
+    const { orgKey } = await openOrgKey(ORG, [unsigned], { userId: BOB, role: "member" }, { pins, epochs: memoryEpochs() }, async () => {
+      decrypted++;
+      return generateOrgKey();
+    });
+    expect(orgKey).toBeNull();
+    expect(decrypted).toBe(0);
   });
 });
 
