@@ -248,3 +248,33 @@ async fn logins_started_before_a_password_change_cannot_finish(pool: PgPool) {
         .await
         .assert_status(StatusCode::UNAUTHORIZED);
 }
+
+/// A session that has been open a while can't change the password, even with
+/// the password; the record and the session's own access stay as they were.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn an_aged_session_cannot_change_the_password(pool: PgPool) {
+    let server = build_test_server(pool.clone());
+    let (current, _) = setup(&server).await;
+    let age = || async {
+        sqlx::query("UPDATE sessions SET created_at = NOW() - INTERVAL '1 hour'")
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+
+    // Started while fresh, finished after aging: refused at finish.
+    let started = start_change(&server, &current, OLD).await;
+    age().await;
+    let proof = started.finish_login_request.clone().unwrap();
+    server
+        .post("/v1/auth/password/finish")
+        .authorization_bearer(&current)
+        .json(&finish_body(&started, &proof))
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+    // And refused at start.
+    start_change_raw(&server, &current).await.assert_status(StatusCode::FORBIDDEN);
+
+    login(&server, EMAIL, OLD).await;
+    assert!(opaque_login_start(&server, EMAIL, NEW).await.finish_request.is_none());
+}

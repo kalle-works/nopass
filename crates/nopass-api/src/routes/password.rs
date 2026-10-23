@@ -9,12 +9,15 @@ use nopass_models::{
 };
 
 use crate::{
-    db::{activity, recovery as db_recovery, sessions},
+    db::{activity, recovery as db_recovery},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     routes::{
         auth::{decode_opaque, user_kdf_params},
-        proof::{session_user, start_proof, verify_password_proof},
+        proof::{
+            require_recent_session, session_user, start_proof, verify_password_proof,
+            PASSWORD_CHANGE_MAX_SESSION_AGE_SECS,
+        },
         recovery::rotation_error,
         ClientIp,
     },
@@ -46,6 +49,7 @@ async fn start(
     Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<PasswordChangeStartRequest>,
 ) -> ApiResult<Json<PasswordChangeStartResponse>> {
+    require_recent_session(&state, &auth, PASSWORD_CHANGE_MAX_SESSION_AGE_SECS).await?;
     let (user, email_hash) = session_user(&state, &auth, &req.email_hash).await?;
     let registration_request = decode_opaque(&req.registration_request, "registrationRequest")?;
     // Every unlock upgrades legacy-key accounts first, so this only fails if that did.
@@ -75,6 +79,7 @@ async fn finish(
     Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<PasswordChangeFinishRequest>,
 ) -> ApiResult<StatusCode> {
+    let session_id = require_recent_session(&state, &auth, PASSWORD_CHANGE_MAX_SESSION_AGE_SECS).await?;
     let upload = decode_opaque(&req.registration_record, "registrationRecord")?;
     let record = opaque::registration_finish(&upload)
         .map_err(|_| ApiError::BadRequest("invalid registrationRecord".into()))?;
@@ -89,13 +94,10 @@ async fn finish(
     )
     .await?;
 
-    let session = sessions::find_session_by_token(&state.db, &auth.raw_token)
-        .await?
-        .ok_or_else(|| ApiError::Unauthorized("invalid or expired session".into()))?;
 
     db_recovery::rotate_master_password(
         &state.db,
-        db_recovery::RotationAuthority::Session(session.id),
+        db_recovery::RotationAuthority::Session(session_id),
         auth.user_id,
         db_recovery::PasswordRotation {
             credential: &db_recovery::NewCredential::Opaque(record),

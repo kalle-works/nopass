@@ -8,11 +8,20 @@ use crate::models::user::User;
 // `account_key` throughout is the keyed email hash (AppState::account_key),
 // never the client's raw email hash.
 
-pub async fn find_user_by_account_key(pool: &PgPool, account_key: &str) -> Result<Option<User>> {
+/// The account for an email: by its keyed hash, or by the raw client hash on
+/// a row not yet rekeyed (written by an older replica during a rolling
+/// deploy). The keyed row wins if both exist.
+pub async fn find_user(pool: &PgPool, account_key: &str, email_hash: &str) -> Result<Option<User>> {
     let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE email_hash = $1 AND email_hash_keyed",
+        r#"
+        SELECT * FROM users
+        WHERE (email_hash = $1 AND email_hash_keyed) OR (email_hash = $2 AND NOT email_hash_keyed)
+        ORDER BY email_hash_keyed DESC
+        LIMIT 1
+        "#,
     )
     .bind(account_key)
+    .bind(email_hash)
     .fetch_optional(pool)
     .await?;
     Ok(user)
@@ -161,27 +170,53 @@ pub async fn set_account_key(
     Ok(result.rows_affected() == 1)
 }
 
+/// Advisory lock id for the email-hash rekey, so replicas take turns.
+const REKEY_LOCK: i64 = 0x6e6f_7061_7373_6b79; // "nopasskey"
+
 /// Rewrite raw client email hashes (pre-OPAQUE rows, or rows written by an
-/// older replica during a rolling deploy) into keyed account keys. Idempotent
-/// and safe to race: each row is only rewritten while still unkeyed.
+/// older replica during a rolling deploy) into keyed account keys.
+///
+/// Replicas take turns through an advisory lock. Each row is rewritten in
+/// its own savepoint: if its keyed form already exists (an older replica
+/// registered the same address again during the rollout), that row is
+/// logged as `email_rekey_conflict` for a manual merge and skipped, and the
+/// rest still get keyed. Until then, lookups also match the raw form
+/// (`find_user`), so the account stays reachable.
 pub async fn key_email_hashes(pool: &PgPool, key: impl Fn(&str) -> String) -> Result<u64> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(REKEY_LOCK)
+        .execute(&mut *tx)
+        .await?;
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, email_hash FROM users WHERE NOT email_hash_keyed",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
 
     let mut keyed = 0;
     for (id, email_hash) in rows {
-        keyed += sqlx::query(
+        let mut row = sqlx::Acquire::begin(&mut *tx).await?;
+        let result = sqlx::query(
             "UPDATE users SET email_hash = $2, email_hash_keyed = TRUE WHERE id = $1 AND NOT email_hash_keyed",
         )
         .bind(id)
         .bind(key(&email_hash))
-        .execute(pool)
-        .await?
-        .rows_affected();
+        .execute(&mut *row)
+        .await;
+        match result {
+            Ok(done) => {
+                row.commit().await?;
+                keyed += done.rows_affected();
+            }
+            Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+                row.rollback().await?;
+                tracing::error!(event = "email_rekey_conflict", user_id = %id, "two accounts for one email; merge manually");
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
+    tx.commit().await?;
     Ok(keyed)
 }
 

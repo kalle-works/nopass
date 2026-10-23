@@ -445,3 +445,88 @@ async fn recovery_with_the_account_key_leaves_items_untouched(pool: PgPool) {
         .json();
     assert_eq!((items[0].blob.clone(), items[0].version), (item.blob, item.version));
 }
+
+/// A recovery token is authority from the kit it was issued for; replacing
+/// the kit must end it.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn replacing_the_kit_ends_outstanding_recovery_tokens(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+    let session = login(&server, EMAIL, PASSWORD).await;
+    let auth_key = random_b64(32);
+    let set_kit = |key: String| {
+        server
+            .put("/v1/auth/recovery")
+            .authorization_bearer(&session.session_token)
+            .json(&json!({ "recoveryAuthKey": key, "recoveryBlob": random_b64(112), "recoveryBlobIv": random_b64(12) }))
+    };
+    set_kit(auth_key.clone()).await.assert_status(StatusCode::NO_CONTENT);
+    let init: RecoveryInitResponse = server
+        .post("/v1/auth/recovery/init")
+        .json(&json!({ "emailHash": compute_email_hash(EMAIL), "recoveryAuthKey": auth_key }))
+        .await
+        .json();
+
+    set_kit(random_b64(32)).await.assert_status(StatusCode::NO_CONTENT);
+
+    server
+        .post("/v1/auth/recovery/opaque/start")
+        .json(&json!({ "recoveryToken": init.recovery_token, "emailHash": compute_email_hash(EMAIL), "registrationRequest": "AAAA" }))
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+}
+
+/// The legacy path must re-encrypt every item: sending one item twice in
+/// place of another passes a plain count but leaves the other under the old keys.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn legacy_recovery_rejects_duplicate_item_ids(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+    let session = login(&server, EMAIL, PASSWORD).await;
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let item: nopass_models::EncryptedVaultItem = server
+            .post(&format!("/v1/vaults/{}/items", session.default_vault_id))
+            .authorization_bearer(&session.session_token)
+            .json(&CreateVaultItemRequest {
+                id: None,
+                item_type: VaultItemType::Note,
+                blob: random_b64(64),
+                blob_iv: random_b64(12),
+                blob_mac: random_b64(32),
+            })
+            .await
+            .json();
+        ids.push(item.id);
+    }
+    let auth_key = random_b64(32);
+    server
+        .put("/v1/auth/recovery")
+        .authorization_bearer(&session.session_token)
+        .json(&json!({ "recoveryAuthKey": auth_key, "recoveryBlob": random_b64(112), "recoveryBlobIv": random_b64(12) }))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+    let init: RecoveryInitResponse = server
+        .post("/v1/auth/recovery/init")
+        .json(&json!({ "emailHash": compute_email_hash(EMAIL), "recoveryAuthKey": auth_key }))
+        .await
+        .json();
+    let (new_salt, new_verifier) = generate_srp_verifier(EMAIL, NEW_PASSWORD);
+    let item = json!({ "id": ids[0], "blob": random_b64(64), "blobIv": random_b64(12), "blobMac": random_b64(32) });
+    server
+        .post("/v1/auth/recovery/complete")
+        .json(&json!({
+            "recoveryToken": init.recovery_token,
+            "srpSalt": B64.encode(&new_salt),
+            "srpVerifier": B64.encode(&new_verifier),
+            "protectedSymmetricKey": random_b64(32),
+            "protectedSymmetricKeyIv": random_b64(12),
+            "items": [item.clone(), item],
+            "recoveryAuthKey": random_b64(32),
+            "recoveryBlob": random_b64(112),
+            "recoveryBlobIv": random_b64(12),
+        }))
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+    login(&server, EMAIL, PASSWORD).await;
+}

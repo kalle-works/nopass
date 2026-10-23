@@ -230,7 +230,7 @@ async fn register_start(
 ) -> ApiResult<Json<OpaqueRegisterStartResponse>> {
     let email_hash = parse_email_hash(&req.email_hash)?;
     let request = decode_opaque(&req.registration_request, "registrationRequest")?;
-    let exists = db_auth::find_user_by_account_key(&state.db, &state.account_key(&email_hash))
+    let exists = db_auth::find_user(&state.db, &state.account_key(&email_hash), &email_hash)
         .await?
         .is_some();
     let credential_id = if exists { register_decoy_id(&state, &email_hash) } else { email_hash };
@@ -261,6 +261,11 @@ async fn register_finish(
     // A 409 here is the one place an existing account is revealed; without the
     // plaintext email the server can't send a "you already have an account"
     // mail instead. Registration is per-IP rate limited.
+    // The keyed UNIQUE constraint can't see a raw-hash row an older replica
+    // wrote during a rolling deploy, so check both forms first.
+    if db_auth::find_user(&state.db, &account_key, &email_hash).await?.is_some() {
+        return Err(ApiError::Conflict("email already registered".into()));
+    }
     let user = db_auth::create_user(
         &state.db,
         db_auth::NewUser {
@@ -293,7 +298,7 @@ async fn login_start(
     let account_key = state.account_key(&email_hash);
     throttle_account(&state, &account_key, client_ip).await?;
 
-    let user = db_auth::find_user_by_account_key(&state.db, &account_key)
+    let user = db_auth::find_user(&state.db, &account_key, &email_hash)
         .await?
         .filter(|u| u.opaque_record.is_some());
     let kdf_params = match &user {
@@ -377,7 +382,7 @@ async fn srp_init(
     let account_key = state.account_key(&email_hash);
     throttle_account(&state, &account_key, client_ip).await?;
 
-    let user = db_auth::find_user_by_account_key(&state.db, &account_key).await?;
+    let user = db_auth::find_user(&state.db, &account_key, &email_hash).await?;
     let srp_user = user.and_then(|u| match (u.srp_salt.clone(), u.srp_verifier.clone()) {
         (Some(salt), Some(verifier)) => Some((u, salt, verifier)),
         _ => None,

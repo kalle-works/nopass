@@ -7,7 +7,7 @@ use nopass_models::{PasswordProof, PasswordProofStartRequest, PasswordProofStart
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, pending},
+    db::{auth as db_auth, pending, sessions},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     models::user::User,
@@ -36,6 +36,21 @@ pub(crate) async fn session_user(state: &AppState, auth: &AuthUser, email_hash: 
         return Err(ApiError::BadRequest("emailHash does not match this account".into()));
     }
     Ok((user, email_hash))
+}
+
+/// Sessions older than this can't change the password, even with the
+/// password: a forgotten, still-open session (or a stolen long-lived token
+/// combined with a phished password) should not be enough. Sign in again.
+pub(crate) const PASSWORD_CHANGE_MAX_SESSION_AGE_SECS: i64 = 15 * 60;
+
+pub(crate) async fn require_recent_session(state: &AppState, auth: &AuthUser, max_age_secs: i64) -> ApiResult<Uuid> {
+    let session = sessions::find_session_by_token(&state.db, &auth.raw_token)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("invalid or expired session".into()))?;
+    if (chrono::Utc::now() - session.created_at).num_seconds() > max_age_secs {
+        return Err(ApiError::Forbidden("sign in again to change your password".into()));
+    }
+    Ok(session.id)
 }
 
 /// OPAQUE login round 1 bound to this session's account; the returned id is

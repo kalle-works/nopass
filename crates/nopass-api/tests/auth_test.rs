@@ -188,7 +188,10 @@ async fn a_stranger_trips_only_their_own_network_and_the_owner_still_logs_in(poo
 
     // Same /24, different hosts: one location.
     for host in 0..PER_NETWORK.free {
-        start_from(&server, "/v1/auth/opaque/login/start", &format!("203.0.113.{host}")).await;
+        // Charged, then rejected as malformed — never throttled yet.
+        start_from(&server, "/v1/auth/opaque/login/start", &format!("203.0.113.{host}"))
+            .await
+            .assert_status(StatusCode::BAD_REQUEST);
     }
     let blocked = start_from(&server, "/v1/auth/opaque/login/start", "203.0.113.200").await;
     blocked.assert_status(StatusCode::TOO_MANY_REQUESTS);
@@ -227,8 +230,10 @@ async fn the_owners_known_network_survives_the_account_wide_ceiling(pool: PgPool
     register_user(&server, EMAIL, PASSWORD).await;
     login_from_ip(&server, EMAIL, PASSWORD, "192.0.2.10").await.assert_status_ok();
 
-    for n in 0..=PER_ACCOUNT.free {
-        start_from(&server, "/v1/auth/opaque/login/start", &format!("198.{}.{}.1", n / 256, n % 256)).await;
+    for n in 0..PER_ACCOUNT.free {
+        start_from(&server, "/v1/auth/opaque/login/start", &format!("198.{}.{}.1", n / 256, n % 256))
+            .await
+            .assert_status(StatusCode::BAD_REQUEST);
     }
     start_from(&server, "/v1/auth/opaque/login/start", "198.51.100.1")
         .await
@@ -242,7 +247,9 @@ async fn guesses_spread_over_networks_hit_the_account_wide_ceiling(pool: PgPool)
     register_user(&server, EMAIL, PASSWORD).await;
 
     for n in 0..PER_ACCOUNT.free {
-        start_from(&server, "/v1/auth/opaque/login/start", &format!("198.{}.{}.1", n / 256, n % 256)).await;
+        start_from(&server, "/v1/auth/opaque/login/start", &format!("198.{}.{}.1", n / 256, n % 256))
+            .await
+            .assert_status(StatusCode::BAD_REQUEST);
     }
     start_from(&server, "/v1/auth/opaque/login/start", "192.0.2.1")
         .await
