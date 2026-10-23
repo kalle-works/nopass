@@ -122,7 +122,7 @@ pub struct LoginResponse {
 }
 
 // Legacy SRP login — only for accounts that haven't logged in since OPAQUE
-// shipped. See DESIGN.md "SRP removal" for the plan to delete it.
+// shipped. See docs/auth.md "Removing SRP" for the plan to delete it.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -11,7 +11,8 @@ docker build -f crates/nopass-api/Dockerfile -t nopwd-api:$(git rev-parse --shor
 
 # Required environment
 DATABASE_URL=postgres://…                 # managed Postgres, TLS on
-NOPASS_SESSION_SECRET=$(openssl rand -base64 32)
+NOPASS_OPAQUE_SERVER_SETUP=$(docker run --rm nopwd-api:<tag> generate-opaque-setup)
+NOPASS_EMAIL_LOOKUP_KEY=$(openssl rand -base64 32)   # both: set once, back up, never rotate
 NOPASS_HOST=0.0.0.0
 NOPASS_PORT=3001
 NOPASS_ALLOWED_ORIGINS=https://nopwd.dev  # exact origins, never *
@@ -20,8 +21,9 @@ NOPASS_TRUSTED_PROXIES=<ingress IPs>      # required for correct rate limiting +
 ```
 
 Migrations run automatically on startup. The container is non-root and
-stateless — scale horizontally behind TLS (the in-memory SRP/recovery session
-maps mean a single replica OR sticky sessions until those move to Postgres).
+stateless — scale horizontally behind TLS; login handshakes and recovery
+tokens live in Postgres. Auth design, secrets and alerting events:
+[docs/auth.md](docs/auth.md).
 
 **Pre-launch checklist**
 - [ ] TLS terminated at the ingress; HSTS already set by the app

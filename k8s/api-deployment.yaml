@@ -49,11 +49,20 @@ spec:
                 secretKeyRef:
                   name: nopwd-secrets
                   key: database-url
-            - name: NOPASS_SESSION_SECRET
+            # OPAQUE server setup: `nopass-api generate-opaque-setup`. Set once;
+            # replacing it invalidates every account's login.
+            - name: NOPASS_OPAQUE_SERVER_SETUP
               valueFrom:
                 secretKeyRef:
                   name: nopwd-secrets
-                  key: session-secret
+                  key: opaque-server-setup
+            # HMAC key for stored email hashes: `openssl rand -base64 32`. Set
+            # once; replacing it orphans every account.
+            - name: NOPASS_EMAIL_LOOKUP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nopwd-secrets
+                  key: email-lookup-key
           resources:
             requests:
               memory: "128Mi"

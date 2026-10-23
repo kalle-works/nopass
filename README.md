@@ -4,8 +4,9 @@ A zero-knowledge password manager for individuals. Logins, passkeys, cards,
 notes, and SSH keys are encrypted on your device before they leave it — the
 server stores ciphertext it cannot read. Not as a promise: as math.
 
-**Crypto**: Argon2id → HKDF subkeys → AES-256-GCM + HMAC-SHA256, SRP-6a
-authentication (your password never crosses the wire). The full design,
+**Crypto**: Argon2id → HKDF subkeys → AES-256-GCM + HMAC-SHA256, OPAQUE
+(RFC 9807) login: your password never crosses the wire, and a stolen server
+database can't be used to test password guesses ([docs/auth.md](docs/auth.md)). The full design,
 including what nopwd deliberately *cannot* protect you from, is on the
 [landing page threat model](apps/web/src/app/(marketing)/page.tsx) and in
 [DESIGN.md](DESIGN.md).
@@ -36,7 +37,7 @@ including what nopwd deliberately *cannot* protect you from, is on the
 
 ```bash
 cp .env.example .env
-# set NOPASS_SESSION_SECRET:  openssl rand -base64 32
+# set NOPASS_OPAQUE_SERVER_SETUP and NOPASS_EMAIL_LOOKUP_KEY (see .env.example)
 docker compose up -d            # Postgres + API on :3001
 ```
 
@@ -86,5 +87,5 @@ cleanly when it isn't running.
 | `apps/cli` | `nopwd` CLI |
 | `apps/extension` | Chrome MV3 extension (autofill + WebAuthn authenticator) |
 | `apps/desktop` | Tauri desktop app |
-| `packages/crypto` | client crypto: KDF, SRP, AES-GCM, recovery, shares, WebAuthn |
+| `packages/crypto` | client crypto: KDF, OPAQUE login, AES-GCM, recovery, shares, WebAuthn |
 | `packages/types`, `packages/ui` | shared TypeScript types and React components |
