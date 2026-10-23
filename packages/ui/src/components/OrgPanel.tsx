@@ -172,7 +172,8 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   // Bumped after the user confirms keys, so derived key statuses recompute
   const [pinVersion, setPinVersion] = useState(0);
 
-  const { userId, vaultMacKey, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
+  const { userId, defaultVaultId, vaultMacKey, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } =
+    useNopassStore();
   const memberKeys = useMemo(
     () =>
       new Map(selectedOrg?.members.map((m) => [m.userId, memberKeyStatus(m, userId, trust?.pins ?? null)]) ?? []),
@@ -185,10 +186,10 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     if (!vaultMacKey) return;
     let cancelled = false;
     Promise.all([
-      openKeyPinStore(vaultMacKey),
+      openKeyPinStore(vaultMacKey, { vaultId: defaultVaultId, userId }),
       openOrgEpochStore(vaultMacKey),
       openOrgLedger(vaultMacKey),
-      openRevisionStore(vaultMacKey, apiClient, sessionToken),
+      openRevisionStore(vaultMacKey, apiClient, sessionToken, { vaultId: defaultVaultId, userId }),
     ]).then(([pins, epochs, ledger, revisions]) => {
       if (!cancelled) setTrust({ pins, epochs, ledger, revisions });
     });

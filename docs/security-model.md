@@ -41,12 +41,12 @@ so it cannot point a device at an empty store.
 Earlier versions named the revision store and the key pins by ids the server
 supplied (`nopass:item-revisions:<vault id>`, `nopass:key-pins:<user id>`;
 `itemRevisions:<vault id>` in the extension; `item-revisions-<vault id>.json`
-for the CLI). On first open, those records are folded into the new stores
-(highest revision per item; existing pins win) and deleted. The browser and
-extension migrate only when exactly one such record exists, because its name
-is the only local evidence of which account it belonged to. With several, they
-are left untouched. The CLI uses the default vault id in its saved session
-file.
+for the CLI). At every unlock, each client records locally which of those ids belong to
+the account (keyed by its `trustStateId`). A legacy record is folded into the
+new stores (highest revision per item; existing pins win) and deleted only if
+this account recorded its id and no other account on the device did. Records
+belonging to other accounts on a shared browser are left in place for them.
+The CLI uses the default vault id in its saved session file.
 
 Limits:
 

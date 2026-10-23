@@ -23,7 +23,10 @@ import {
   MemoryRevisionStore,
   type DecryptedItem,
   type RevisionSnapshot,
+  type TrustIndex,
   applyV2OnlyMarker,
+  ownLegacyKeys,
+  recordLegacyIds,
   bindingForItem,
   trustStateId,
   decryptVaultItem,
@@ -89,23 +92,35 @@ async function importVaultKeys(encKeyB64: string, macKeyB64: string) {
  * the account key, not a server-supplied id, and primed with the account's
  * v2-only marker when the server has one.
  */
-async function loadRevisions(vaultMacKey: CryptoKey, sessionToken: string): Promise<MemoryRevisionStore> {
-  const key = `itemRevisions:v2:${await trustStateId(vaultMacKey)}`;
+const TRUST_INDEX_KEY = "trustIndex";
+
+async function loadRevisions(
+  vaultMacKey: CryptoKey,
+  sessionToken: string,
+  defaultVaultId: string,
+): Promise<MemoryRevisionStore> {
+  const trustId = await trustStateId(vaultMacKey);
+  const key = `itemRevisions:v2:${trustId}`;
   const stored = (await chrome.storage.local.get(key))[key] as Partial<RevisionSnapshot> | undefined;
   const store = new MemoryRevisionStore(stored ?? {}, (snapshot) => {
     void chrome.storage.local.set({ [key]: snapshot });
   });
-  // Before the upgrade the store was named by the server-supplied default
-  // vault id. Exactly one such record means it belongs to the account that
-  // used this browser; fold it in (max per item) and drop it. With several,
-  // nothing local says which is ours, so they are left alone.
+  // Before the upgrade the store was named by the default vault id. Each
+  // unlock records locally which vault ids belong to this account; only a
+  // legacy record this account recorded, and no other account did, is folded
+  // in (max per item) and removed. Other accounts' records stay in place.
+  const index = recordLegacyIds(
+    ((await chrome.storage.local.get(TRUST_INDEX_KEY))[TRUST_INDEX_KEY] as TrustIndex | undefined) ?? {},
+    trustId,
+    [defaultVaultId],
+  );
+  await chrome.storage.local.set({ [TRUST_INDEX_KEY]: index });
   const all = await chrome.storage.local.get(null);
-  const legacy = Object.keys(all).filter((k) => k.startsWith("itemRevisions:") && !k.startsWith("itemRevisions:v2:"));
-  if (legacy.length === 1) {
-    for (const [itemId, revision] of Object.entries(all[legacy[0]!] as Record<string, number>)) {
+  for (const legacyKey of ownLegacyKeys(index, trustId, Object.keys(all), "itemRevisions:")) {
+    for (const [itemId, revision] of Object.entries(all[legacyKey] as Record<string, number>)) {
       store.record(itemId, revision);
     }
-    await chrome.storage.local.remove(legacy[0]!);
+    await chrome.storage.local.remove(legacyKey);
   }
   try {
     const { marker } = await api.keys.vaultFormat(sessionToken);
@@ -195,7 +210,7 @@ function restoreVaultState(): Promise<void> {
     try {
       const { vaultEncKey, vaultMacKey } = await importVaultKeys(stored.encKeyB64, stored.macKeyB64);
       const items = await api.vault.items(stored.defaultVaultId, stored.sessionToken);
-      const revisions = await loadRevisions(vaultMacKey, stored.sessionToken);
+      const revisions = await loadRevisions(vaultMacKey, stored.sessionToken, stored.defaultVaultId);
       // A LOCK (or a fresh UNLOCK) that happened while we awaited wins
       if (lockGeneration !== generation || vaultState) return;
       vaultState = {
@@ -310,7 +325,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
 
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
       lockGeneration++; // invalidate any restore still in flight
-      const revisions = await loadRevisions(vaultMacKey, message.sessionToken);
+      const revisions = await loadRevisions(vaultMacKey, message.sessionToken, message.defaultVaultId);
       vaultState = {
         sessionToken: message.sessionToken,
         defaultVaultId: message.defaultVaultId,

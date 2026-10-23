@@ -224,18 +224,18 @@ function VaultScreen({
 }: VaultScreenProps) {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
+  const { userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
   // Keyed by the account key and primed with the account's v2-only marker
   const [revisions, setRevisions] = useState<MemoryRevisionStore | null>(null);
   useEffect(() => {
     let cancelled = false;
-    openRevisionStore(vaultMacKey, api, sessionToken).then((store) => {
+    openRevisionStore(vaultMacKey, api, sessionToken, { vaultId: defaultVaultId, userId }).then((store) => {
       if (!cancelled) setRevisions(store);
     });
     return () => {
       cancelled = true;
     };
-  }, [vaultMacKey, api, sessionToken]);
-  const { userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
+  }, [vaultMacKey, api, sessionToken, defaultVaultId, userId]);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<
