@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Badge, Banner, Button, Dialog, Field, IconButton, SecretText, useNopassStore } from "@nopass/ui";
+import { Badge, Banner, Button, browserAccountState, Dialog, Field, IconButton, SecretText, useNopassStore } from "@nopass/ui";
 import { X } from "lucide-react";
 import { PageShell } from "@/components/vault/PageShell";
 import {
@@ -73,8 +73,9 @@ export default function RecoveryPage() {
       // The vault keys in memory are non-extractable, so the kit is built from
       // the account key opened with the entered password — after proving the
       // password with a login, since a future recovery depends on this blob.
-      const check = await loginWithPassword(api.auth, { email, password });
-      subkeys = await unlockAccount(api.auth, { email, password, session: check });
+      const accountState = browserAccountState();
+      const check = await loginWithPassword(api.auth, { email, password, accountState });
+      subkeys = await unlockAccount(api.auth, { email, password, session: check, accountState });
       // The check above opened a session we don't need — close it
       api.auth.logout(check.sessionToken).catch(() => {});
 

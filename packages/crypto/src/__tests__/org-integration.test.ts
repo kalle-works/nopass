@@ -6,6 +6,7 @@ import {
   stretchMasterKey,
   createOpaqueRegistration,
   loginWithPassword,
+  memoryAccountState,
   generateUserKeyPair,
   generateOrgKey,
   encryptOrgKeyForMember,
@@ -66,7 +67,7 @@ async function registerAndLogin(email: string, password: string) {
     protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
   });
 
-  const session = await loginWithPassword(auth, { email, password });
+  const session = await loginWithPassword(auth, { email, password, accountState: memoryAccountState() });
   return { token: session.sessionToken, keys, keyPair };
 }
 

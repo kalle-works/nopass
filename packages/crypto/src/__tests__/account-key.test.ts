@@ -1,35 +1,28 @@
 // @vitest-environment node
 /**
- * The account-key lifecycle against an in-memory server: a legacy account
- * unlocks and migrates, changes its password, and recovers with a kit made
- * before both. Items written at the start must decrypt at every step.
+ * The account-key lifecycle against an in-memory server: a legacy SRP
+ * account logs in, upgrades (fresh SRP proof + OPAQUE + wrapped account key),
+ * changes its password, and recovers with a kit made before all of it. Items
+ * written at the start must decrypt at every step.
  */
-import * as opaque from "@serenity-kit/opaque";
-import { expect, it, vi } from "vitest";
-import {
-  DEFAULT_KDF_PARAMS,
-  type KdfParams,
-  type LoginItem,
-  type LoginResponse,
-  type RecoveryCompleteRequest,
-  type RecoveryInitResponse,
-} from "@nopass/types";
+import { describe, expect, it } from "vitest";
+import { DEFAULT_KDF_PARAMS, type LoginItem, type RecoveryCompleteRequest, type RecoveryInitResponse } from "@nopass/types";
 
-import { AccountKeyError, importAccountKeys, unlockAccount, type AccountKeyApi } from "../account-key";
+import { AccountKeyError, importAccountKeys, unlockAccount, unwrapAccountKey, wrapAccountKey } from "../account-key";
 import { completeAccountRecovery } from "../account-recovery";
+import { memoryAccountState } from "../account-state";
 import { decryptItem, encryptItem } from "../aes-gcm";
 import { computeEmailHash, deriveMasterKey, stretchMasterKey, stretchMasterKeyAllRaw } from "../kdf";
 import { decryptUserPrivateKey, generateUserKeyPair } from "../org-crypto";
-import { changeMasterPassword, IncorrectPasswordError, type PasswordChangeApi } from "../password-change";
-import { createOpaqueRegistration } from "../password-login";
+import { changeMasterPassword } from "../password-change";
+import { IncorrectPasswordError, loginWithPassword } from "../password-login";
 import { deriveRecoveryKeys, generateRecoveryCode, unwrapVaultSubkeys, wrapVaultSubkeys } from "../recovery";
+import { fakeServer, HttpError } from "./support/fake-server";
 
 const EMAIL = "alice@example.com";
-const USER_ID = "7d5c2f9e-3a41-4c3e-9d7b-5f2a1e8c6b40";
 const P1 = "first long passphrase";
 const P2 = "second long passphrase";
 const P3 = "third long passphrase";
-const KSF: KdfParams = { type: "argon2id", memoryKib: 1024, iterations: 1, parallelism: 1 };
 const ITEM: LoginItem = {
   type: "login",
   name: "Bank",
@@ -41,177 +34,98 @@ const ITEM: LoginItem = {
   customFields: [],
 };
 
-/** The server's view of one account. */
-interface Account {
-  record: string;
-  wrappedAccountKey?: string;
-  wrappedAccountKeyIv?: string;
-  protectedPrivateKey: string;
-  protectedPrivateKeyIv: string;
-}
-
-const userIdentifier = computeEmailHash(EMAIL);
-
-function session(a: Account): LoginResponse {
-  return {
-    sessionToken: "t",
-    userId: USER_ID,
-    defaultVaultId: "v",
-    protectedSymmetricKey: "",
-    protectedSymmetricKeyIv: "",
-    protectedPrivateKey: a.protectedPrivateKey,
-    protectedPrivateKeyIv: a.protectedPrivateKeyIv,
-    wrappedAccountKey: a.wrappedAccountKey ?? null,
-    wrappedAccountKeyIv: a.wrappedAccountKeyIv ?? null,
-  };
-}
-
-async function decryptsItem(keys: Awaited<ReturnType<typeof importAccountKeys>>, blob: Awaited<ReturnType<typeof encryptItem>>) {
-  return decryptItem(blob, keys.vaultEncKey, keys.vaultMacKey);
-}
-
-it("legacy account migrates, changes password and recovers with an old kit; items decrypt throughout", async () => {
-  await opaque.ready;
-  const serverSetup = opaque.server.createSetup();
-  const register = (password: string) =>
-    createOpaqueRegistration(password, KSF, async (registrationRequest) =>
-      opaque.server.createRegistrationResponse({ serverSetup, userIdentifier, registrationRequest }),
-    );
-
-  // ── A pre-account-key account: items and private key under P1's derived keys, plus a kit.
-  const legacyMaster = await deriveMasterKey(P1, EMAIL, DEFAULT_KDF_PARAMS);
-  const legacyKeys = await stretchMasterKey(legacyMaster, EMAIL);
-  const legacySubkeys = await stretchMasterKeyAllRaw(legacyMaster, EMAIL);
-  const item = await encryptItem(ITEM, legacyKeys.vaultEncKey, legacyKeys.vaultMacKey);
-  const keyPair = await generateUserKeyPair(legacyKeys.stretchedMasterKey);
+/** A pre-OPAQUE, pre-account-key account: items and private key under P1's derived keys, plus a kit. */
+async function legacyAccount() {
+  const server = await fakeServer(EMAIL);
+  server.makeSrpAccount(EMAIL, P1);
+  const master = await deriveMasterKey(P1, EMAIL, DEFAULT_KDF_PARAMS);
+  const keys = await stretchMasterKey(master, EMAIL);
+  const subkeys = await stretchMasterKeyAllRaw(master, EMAIL);
+  const item = await encryptItem(ITEM, keys.vaultEncKey, keys.vaultMacKey);
+  const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
+  server.account.protectedPrivateKey = keyPair.protectedPrivateKey;
+  server.account.protectedPrivateKeyIv = keyPair.protectedPrivateKeyIv;
   const kitCode = generateRecoveryCode();
-  const kitKeys = await deriveRecoveryKeys(kitCode, EMAIL);
-  const kit = await wrapVaultSubkeys(legacySubkeys, kitKeys.wrapKey);
-  const account: Account = {
-    record: await register(P1),
-    protectedPrivateKey: keyPair.protectedPrivateKey,
-    protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
-  };
+  const kit = await wrapVaultSubkeys(subkeys, (await deriveRecoveryKeys(kitCode, EMAIL)).wrapKey);
+  return { server, item, kit, kitCode };
+}
 
-  const keyApi: AccountKeyApi = {
-    setAccountKey: vi.fn(async (req) => {
-      account.wrappedAccountKey = req.wrappedAccountKey;
-      account.wrappedAccountKeyIv = req.wrappedAccountKeyIv;
-      account.protectedPrivateKey = req.protectedPrivateKey!;
-      account.protectedPrivateKeyIv = req.protectedPrivateKeyIv!;
-    }),
-  };
+async function unlock(server: Awaited<ReturnType<typeof fakeServer>>, password: string, accountState = memoryAccountState()) {
+  const session = await loginWithPassword(server.api, { email: EMAIL, password, accountState });
+  const account = await unlockAccount(server.api, { email: EMAIL, password, session, accountState });
+  return importAccountKeys(account);
+}
 
-  // ── 1. First unlock migrates: the uploaded wrap opens to the same keys.
-  const first = await unlockAccount(keyApi, { email: EMAIL, password: P1, session: session(account) });
-  expect(keyApi.setAccountKey).toHaveBeenCalledOnce();
-  expect(await decryptsItem(await importAccountKeys(first), item)).toEqual(ITEM);
-  const again = await unlockAccount(keyApi, { email: EMAIL, password: P1, session: session(account) });
-  expect(keyApi.setAccountKey).toHaveBeenCalledOnce();
-  const againKeys = await importAccountKeys(again);
-  expect(await decryptsItem(againKeys, item)).toEqual(ITEM);
-  // The private key moved to the account-key-derived wrap and still opens.
-  await decryptUserPrivateKey(account.protectedPrivateKey, account.protectedPrivateKeyIv, againKeys.stretchedMasterKey);
+it("legacy SRP account upgrades, changes password and recovers with an old kit; items decrypt throughout", async () => {
+  const { server, item, kit, kitCode } = await legacyAccount();
+  const accountState = memoryAccountState();
 
-  // ── 2. Password change re-wraps only.
-  let loginState = "";
-  let pendingRecord = "";
-  const changeApi: PasswordChangeApi = {
-    passwordChangeStart: async (req) => {
-      const login = opaque.server.startLogin({
-        serverSetup,
-        registrationRecord: account.record,
-        startLoginRequest: req.startLoginRequest,
-        userIdentifier,
-      });
-      loginState = login.serverLoginState;
-      return {
-        changeId: "c",
-        loginResponse: login.loginResponse,
-        kdfParams: KSF,
-        registrationResponse: opaque.server.createRegistrationResponse({
-          serverSetup,
-          userIdentifier,
-          registrationRequest: req.registrationRequest,
-        }).registrationResponse,
-        wrappedAccountKey: account.wrappedAccountKey!,
-        wrappedAccountKeyIv: account.wrappedAccountKeyIv!,
-      };
-    },
-    passwordChangeFinish: async (req) => {
-      opaque.server.finishLogin({ serverLoginState: loginState, finishLoginRequest: req.finishLoginRequest });
-      pendingRecord = req.registrationRecord;
-      account.record = req.registrationRecord;
-      account.wrappedAccountKey = req.wrappedAccountKey;
-      account.wrappedAccountKeyIv = req.wrappedAccountKeyIv;
-    },
-  };
+  // 1. First unlock upgrades in one request, with a fresh SRP proof.
+  const first = await unlock(server, P1, accountState);
+  expect(server.api.upgradeFinish).toHaveBeenCalledOnce();
+  expect(server.account.srp).toBeUndefined();
+  expect(await decryptItem(item, first.vaultEncKey, first.vaultMacKey)).toEqual(ITEM);
+  expect(await accountState.get(computeEmailHash(EMAIL))).toEqual({ opaque: true, accountKey: true });
+  // The private key moved to the account-key wrap and still opens.
+  await decryptUserPrivateKey(server.account.protectedPrivateKey!, server.account.protectedPrivateKeyIv!, first.stretchedMasterKey);
+
+  // 2. Password change re-wraps only.
   await expect(
-    changeMasterPassword(changeApi, { email: EMAIL, userId: USER_ID, sessionToken: "t", currentPassword: "wrong", newPassword: P2 }),
+    changeMasterPassword(server.api, { email: EMAIL, sessionToken: "t", currentPassword: "wrong", newPassword: P2 }),
   ).rejects.toBeInstanceOf(IncorrectPasswordError);
-  await changeMasterPassword(changeApi, { email: EMAIL, userId: USER_ID, sessionToken: "t", currentPassword: P1, newPassword: P2 });
-  expect(pendingRecord).not.toBe("");
+  await changeMasterPassword(server.api, { email: EMAIL, sessionToken: "t", currentPassword: P1, newPassword: P2 });
+  const afterChange = await unlock(server, P2, accountState);
+  expect(await decryptItem(item, afterChange.vaultEncKey, afterChange.vaultMacKey)).toEqual(ITEM);
+  await expect(unlock(server, P1, accountState)).rejects.toMatchObject({ status: 401 });
 
-  const afterChange = await importAccountKeys(await unlockAccount(keyApi, { email: EMAIL, password: P2, session: session(account) }));
-  expect(await decryptsItem(afterChange, item)).toEqual(ITEM);
-  // The old password neither logs in nor opens the wrap.
-  const oldLogin = opaque.client.startLogin({ password: P1 });
-  const oldResponse = opaque.server.startLogin({
-    serverSetup,
-    registrationRecord: account.record,
-    startLoginRequest: oldLogin.startLoginRequest,
-    userIdentifier,
-  });
-  expect(
-    opaque.client.finishLogin({
-      clientLoginState: oldLogin.clientLoginState,
-      loginResponse: oldResponse.loginResponse,
-      password: P1,
-      keyStretching: { "argon2id-custom": { iterations: 1, memory: 1024, parallelism: 1 } },
-    }),
-  ).toBeUndefined();
-  await expect(unlockAccount(keyApi, { email: EMAIL, password: P1, session: session(account) })).rejects.toBeInstanceOf(
-    AccountKeyError,
-  );
-
-  // ── 3. The kit made before migration and before the change still recovers.
+  // 3. The kit made before the upgrade and the change still recovers.
   const recovered = await unwrapVaultSubkeys(kit, (await deriveRecoveryKeys(kitCode, EMAIL)).wrapKey);
   const init: RecoveryInitResponse = {
     recoveryToken: "r",
-    userId: USER_ID,
     recoveryBlob: kit.blob,
     recoveryBlobIv: kit.blobIv,
-    protectedPrivateKey: account.protectedPrivateKey,
-    protectedPrivateKeyIv: account.protectedPrivateKeyIv,
+    protectedPrivateKey: server.account.protectedPrivateKey!,
+    protectedPrivateKeyIv: server.account.protectedPrivateKeyIv!,
     items: [],
   };
   let completed: RecoveryCompleteRequest | undefined;
-  await completeAccountRecovery(
-    {
-      opaqueStart: async (req) =>
-        opaque.server.createRegistrationResponse({ serverSetup, userIdentifier, registrationRequest: req.registrationRequest }),
-      complete: async (req) => {
-        completed = req;
-      },
-    },
-    { email: EMAIL, newPassword: P3, init, recovered },
-  );
-  account.wrappedAccountKey = completed!.wrappedAccountKey;
-  account.wrappedAccountKeyIv = completed!.wrappedAccountKeyIv;
-  account.protectedPrivateKey = completed!.protectedPrivateKey!;
-  account.protectedPrivateKeyIv = completed!.protectedPrivateKeyIv!;
+  await completeAccountRecovery(server.recoveryApi((req) => (completed = req)), {
+    email: EMAIL,
+    newPassword: P3,
+    init,
+    recovered,
+  });
+  expect(completed).toBeDefined();
+  const afterRecovery = await unlock(server, P3, accountState);
+  expect(await decryptItem(item, afterRecovery.vaultEncKey, afterRecovery.vaultMacKey)).toEqual(ITEM);
+  await decryptUserPrivateKey(server.account.protectedPrivateKey!, server.account.protectedPrivateKeyIv!, afterRecovery.stretchedMasterKey);
+}, 600_000);
 
-  const afterRecovery = await importAccountKeys(await unlockAccount(keyApi, { email: EMAIL, password: P3, session: session(account) }));
-  expect(await decryptsItem(afterRecovery, item)).toEqual(ITEM);
-  await decryptUserPrivateKey(account.protectedPrivateKey, account.protectedPrivateKeyIv, afterRecovery.stretchedMasterKey);
-}, 300_000);
+describe("unlockAccount after migration", () => {
+  it("refuses a login response without the wrap instead of deriving legacy keys", async () => {
+    const { server } = await legacyAccount();
+    const accountState = memoryAccountState();
+    await unlock(server, P1, accountState);
 
-it("binds the wrap to the user id, so another account's blob doesn't open", async () => {
+    // The server now pretends the account was never migrated.
+    server.account.wrappedAccountKey = undefined;
+    server.account.wrappedAccountKeyIv = undefined;
+    await expect(unlock(server, P1, accountState)).rejects.toBeInstanceOf(AccountKeyError);
+    expect(server.api.setAccountKey).not.toHaveBeenCalled();
+  }, 300_000);
+
+  it("fails the unlock when the migration upload fails", async () => {
+    const { server } = await legacyAccount();
+    server.api.upgradeFinish = async () => {
+      throw new HttpError(500);
+    };
+    await expect(unlock(server, P1)).rejects.toMatchObject({ status: 500 });
+  }, 300_000);
+});
+
+it("binds the wrap to the account's email, so another account's blob doesn't open", async () => {
   const master = await deriveMasterKey(P1, EMAIL, DEFAULT_KDF_PARAMS);
-  const { wrapAccountKey, unwrapAccountKey } = await import("../account-key");
   const legacy = await stretchMasterKeyAllRaw(master, EMAIL);
-  const wrapped = await wrapAccountKey(legacy, master, EMAIL, USER_ID);
-  await expect(unwrapAccountKey(wrapped, master, EMAIL, "00000000-0000-0000-0000-000000000000")).rejects.toBeInstanceOf(
-    AccountKeyError,
-  );
+  const wrapped = await wrapAccountKey(legacy, master, EMAIL);
+  await expect(unwrapAccountKey(wrapped, master, "mallory@example.com")).rejects.toBeInstanceOf(AccountKeyError);
 }, 60_000);

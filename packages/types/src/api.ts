@@ -48,9 +48,51 @@ export interface RegisterResponse {
   userId: string;
 }
 
-/** Replaces the account's login credential in a fresh session (SRP → OPAQUE migration). */
-export interface OpaqueReregisterFinishRequest {
+/** A fresh OPAQUE proof of the password inside an authenticated request. */
+export interface PasswordProofStartRequest {
+  emailHash: string;
+  startLoginRequest: string;
+}
+
+export interface PasswordProofStartResponse {
+  proofId: string;
+  loginResponse: string;
+  kdfParams: KdfParams;
+}
+
+export interface PasswordProof {
+  proofId: string;
+  finishLoginRequest: string;
+}
+
+/** SRP → OPAQUE upgrade, round 1: a fresh SRP challenge plus an OPAQUE registration. */
+export interface UpgradeStartRequest {
+  emailHash: string;
+  clientPublicA: string;
+  registrationRequest: string;
+}
+
+export interface UpgradeStartResponse {
+  upgradeId: string;
+  serverPublicB: string;
+  srpSalt: string;
+  kdfParams: KdfParams;
+  registrationResponse: string;
+}
+
+/** Round 2: SRP proof, OPAQUE record and wrapped account key, applied together. */
+export interface UpgradeFinishRequest {
+  upgradeId: string;
+  clientProofM1: string;
   registrationRecord: string;
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
+}
+
+export interface UpgradeFinishResponse {
+  serverProofM2: string;
 }
 
 export interface OpaqueLoginStartRequest {
@@ -86,8 +128,9 @@ export interface LoginResponse {
   wrappedAccountKeyIv?: string | null;
 }
 
-/** One-time migration to the password-independent account key (fresh session only). */
+/** One-time migration of an OPAQUE account to the password-independent account key. */
 export interface SetAccountKeyRequest {
+  proof: PasswordProof;
   wrappedAccountKey: string;
   wrappedAccountKeyIv: string;
   /** RSA private key moved from the password-derived wrap to the account-key-derived one */
@@ -180,8 +223,6 @@ export interface RecoveryInitRequest {
 export interface RecoveryInitResponse {
   /** short-lived token authorizing the recovery completion */
   recoveryToken: string;
-  /** binds the re-wrapped account key to this account */
-  userId: string;
   recoveryBlob: string;
   recoveryBlobIv: string;
   protectedPrivateKey?: string | null;
@@ -405,6 +446,8 @@ export type PublicKeyResponse = KeyBundle;
 export interface SetIdentityRequest {
   identityPublicKey: string;
   publicKeySignature: string;
+  /** Required for the first publish */
+  proof?: PasswordProof;
 }
 
 // ─── Billing ─────────────────────────────────────────────────────────────────

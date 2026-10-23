@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ExternalLink, Plus, Search } from "lucide-react";
 import { loginWithPassword, unlockAccount, zeroAccount } from "@nopass/crypto";
 import { Banner, Button, EmptyState, Field, Kbd, Spinner, createApiClient } from "@nopass/ui";
+import { extensionAccountState } from "../lib/account-state";
 import { bytesToBase64 } from "../lib/base64";
 import { siteHostname, webVaultUrl } from "../lib/web-url";
 import { AUTO_LOCK_CHOICES, AUTO_LOCK_SETTING, parseAutoLockMinutes } from "../lib/auto-lock";
@@ -234,8 +235,9 @@ export function App() {
     dispatch({ type: "SET_ERROR", error: null });
     dispatch({ type: "SET_UNLOCKING", value: true });
     try {
-      const auth = await loginWithPassword(api.auth, { email, password });
-      const account = await unlockAccount(api.auth, { email, password, session: auth });
+      const accountState = extensionAccountState();
+      const auth = await loginWithPassword(api.auth, { email, password, accountState });
+      const account = await unlockAccount(api.auth, { email, password, session: auth, accountState });
       const { encKeyBytes, macKeyBytes } = account;
 
       const resp = await sendMessage<{ ok?: boolean; error?: string }>({

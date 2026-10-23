@@ -7,14 +7,18 @@ import {
   deriveRecoveryKeys,
   generateRecoveryCode,
   loginWithPassword,
+  provePassword,
   stretchMasterKey,
   importAccountKeys,
+  IncorrectPasswordError,
   unlockAccount,
   wrapVaultSubkeys,
   zeroAccount,
   type UnlockedAccount,
 } from "@nopass/crypto";
+import { browserAccountState } from "../lib/account-state";
 import { ApiError, type ApiClient } from "../lib/api-client";
+import { ensureIdentityPublished } from "../lib/identity-migration";
 import { useNopassStore } from "../store/vault-store";
 import { Banner } from "../primitives/Feedback";
 import { Button } from "../primitives/Button";
@@ -74,7 +78,8 @@ export function AuthShell({
 }
 
 function humanizeError(err: unknown): string {
-  if (err instanceof ApiError) {
+  if (err instanceof Error && err.name === "WeakKdfParamsError") return err.message;
+  if (err instanceof ApiError || err instanceof IncorrectPasswordError) {
     if (err.status === 401) return "Incorrect email or master password.";
     if (err.status === 409) return "An account with this email already exists.";
     if (err.status === 429) return "Too many attempts. Wait a moment and try again.";
@@ -270,14 +275,32 @@ export function UnlockScreen({
 
   /** Logs in, opens the account key (migrating a legacy account) and loads the session. */
   async function performLogin(): Promise<{ account: UnlockedAccount; sessionToken: string }> {
-    const auth = await loginWithPassword(apiClient.auth, { email, password });
-    const account = await unlockAccount(apiClient.auth, { email, password, session: auth });
+    const accountState = browserAccountState();
+    const auth = await loginWithPassword(apiClient.auth, { email, password, accountState });
+    const account = await unlockAccount(apiClient.auth, { email, password, session: auth, accountState });
     const keys = await importAccountKeys(account);
     setSession(
       { ...auth, protectedPrivateKey: account.protectedPrivateKey, protectedPrivateKeyIv: account.protectedPrivateKeyIv },
       email,
       keys,
     );
+    // The first identity-key publish needs a password proof, and this is
+    // where the password is at hand.
+    if (account.protectedPrivateKey && account.protectedPrivateKeyIv) {
+      await ensureIdentityPublished(
+        apiClient,
+        auth.sessionToken,
+        {
+          userId: auth.userId,
+          protectedPrivateKey: account.protectedPrivateKey,
+          protectedPrivateKeyIv: account.protectedPrivateKeyIv,
+          stretchedMasterKey: keys.stretchedMasterKey,
+        },
+        () => provePassword(apiClient.auth, { email, password, sessionToken: auth.sessionToken }),
+      ).catch(() => {
+        // Publishing is retried on the next sign-in; a key mismatch also shows in the vault.
+      });
+    }
     return { account, sessionToken: auth.sessionToken };
   }
 

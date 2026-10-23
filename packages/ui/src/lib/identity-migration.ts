@@ -3,6 +3,7 @@
  * identity keys unlocks the account, and checks on every unlock that the
  * server still serves the user's own key bundle unchanged.
  */
+import type { PasswordProof } from "@nopass/types";
 import { deriveIdentityKey, signKeyBundle } from "@nopass/crypto";
 import { ApiError, type ApiClient } from "./api-client";
 
@@ -22,7 +23,17 @@ export class OwnKeyMismatchError extends Error {
   }
 }
 
-export async function ensureIdentityPublished(api: ApiClient, token: string, own: OwnKeyMaterial): Promise<void> {
+/**
+ * `prove` supplies a fresh password proof, which the server requires for the
+ * first publish. Callers without the password omit it: the check still runs,
+ * and publishing waits for the next sign-in.
+ */
+export async function ensureIdentityPublished(
+  api: ApiClient,
+  token: string,
+  own: OwnKeyMaterial,
+  prove?: () => Promise<PasswordProof>,
+): Promise<void> {
   let published;
   try {
     published = await api.keys.me(token);
@@ -37,11 +48,13 @@ export async function ensureIdentityPublished(api: ApiClient, token: string, own
     if (published.publicKey !== identity.rsaPublicKeyB64) throw new OwnKeyMismatchError("public key");
     if (published.identityPublicKey === identity.publicKeyB64) return;
     if (published.identityPublicKey !== null) throw new OwnKeyMismatchError("identity key");
+    if (!prove) return;
 
     await api.keys.setIdentity(
       {
         identityPublicKey: identity.publicKeyB64,
         publicKeySignature: signKeyBundle(own.userId, identity.rsaPublicKeyB64, identity.secretKey),
+        proof: await prove(),
       },
       token,
     );

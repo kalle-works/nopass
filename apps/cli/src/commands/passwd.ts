@@ -8,7 +8,7 @@ export const passwdCommand = new Command("passwd")
   .description("change your master password (signs out your other devices)")
   .action(async () => {
     const session = loadSession();
-    if (!session?.userId) {
+    if (!session) {
       process.stderr.write("Log in first (`nopwd login`), then run this again.\n");
       process.exit(1);
     }
@@ -31,7 +31,6 @@ export const passwdCommand = new Command("passwd")
       // Only the wrap of the account key changes, so this session's vault keys stay valid.
       await changeMasterPassword(createApiClient(session.apiUrl).auth, {
         email: session.email,
-        userId: session.userId,
         sessionToken: session.sessionToken,
         currentPassword,
         newPassword,

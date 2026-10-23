@@ -34,12 +34,20 @@ async function setup(serverPublicKey?: string) {
 }
 
 describe("ensureIdentityPublished", () => {
-  it("gives an account without an identity key a valid signed bundle", async () => {
+  it("gives an account without an identity key a valid signed bundle, with a password proof", async () => {
     const { api, own, published, uploads } = await setup();
-    await ensureIdentityPublished(api, "token", own);
+    const proof = { proofId: "p", finishLoginRequest: "f" };
+    await ensureIdentityPublished(api, "token", own, async () => proof);
 
     expect(uploads).toHaveLength(1);
+    expect(uploads[0]!.proof).toEqual(proof);
     expect(verifyKeyBundle({ ...published, ...uploads[0]! })).toBe(true);
+  });
+
+  it("leaves the first publish to a caller that can prove the password", async () => {
+    const { api, own, uploads } = await setup();
+    await ensureIdentityPublished(api, "token", own);
+    expect(uploads).toHaveLength(0);
   });
 
   it("refuses to vouch for a public key the server substituted", async () => {

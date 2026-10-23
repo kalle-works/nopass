@@ -15,7 +15,7 @@ import { estimateStrength, MASTER_PASSWORD_MIN_LEVEL } from "../primitives/stren
  * the vault stays unlocked with the same keys; other devices are signed out.
  */
 export function ChangePasswordForm({ apiClient }: { apiClient: ApiClient }) {
-  const { email, userId, sessionToken } = useNopassStore();
+  const { email, sessionToken } = useNopassStore();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -25,7 +25,7 @@ export function ChangePasswordForm({ apiClient }: { apiClient: ApiClient }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!email || !userId || !sessionToken) return;
+    if (!email || !sessionToken) return;
     setError(null);
     if (estimateStrength(next, [email]).level < MASTER_PASSWORD_MIN_LEVEL) {
       setError("Choose a stronger master password. It has to reach Strong.");
@@ -39,7 +39,6 @@ export function ChangePasswordForm({ apiClient }: { apiClient: ApiClient }) {
     try {
       await changeMasterPassword(apiClient.auth, {
         email,
-        userId,
         sessionToken,
         currentPassword: current,
         newPassword: next,
