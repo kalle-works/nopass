@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { Kbd, useNopassStore } from "@nopass/ui";
 import { PageShell, DataTable, TBODY, TD, TH } from "@/components/vault/PageShell";
+import { ChangePasswordForm } from "@/components/vault/ChangePasswordForm";
 
 const SHORTCUTS: Array<{ keys: string[]; action: string }> = [
   { keys: ["⌘", "K"], action: "Open the command palette" },
@@ -53,6 +54,10 @@ export default function SettingsPage() {
             <dd className="text-ui text-fg">Hidden again after 30 seconds or when the window loses focus</dd>
           </div>
         </dl>
+      </Section>
+
+      <Section title="Master password">
+        <ChangePasswordForm />
       </Section>
 
       <Section title="Keyboard shortcuts">

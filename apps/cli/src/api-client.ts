@@ -9,6 +9,9 @@ import type {
   OpaqueRegisterStartRequest,
   OpaqueRegisterStartResponse,
   OpaqueReregisterFinishRequest,
+  PasswordChangeFinishRequest,
+  PasswordChangeStartRequest,
+  PasswordChangeStartResponse,
   RecoveryCompleteRequest,
   RecoveryInitRequest,
   RecoveryInitResponse,
@@ -70,6 +73,10 @@ export function createApiClient(baseUrl: string) {
         post<OpaqueRegisterStartResponse>("/auth/opaque/reregister/start", req, token),
       opaqueReregisterFinish: (req: OpaqueReregisterFinishRequest, token: string) =>
         post<void>("/auth/opaque/reregister/finish", req, token),
+      passwordChangeStart: (req: PasswordChangeStartRequest, token: string) =>
+        post<PasswordChangeStartResponse>("/auth/password/start", req, token),
+      passwordChangeFinish: (req: PasswordChangeFinishRequest, token: string) =>
+        post<void>("/auth/password/finish", req, token),
       // Legacy SRP, used only by loginWithPassword's fallback for unmigrated accounts
       srpInit: (req: SrpInitRequest) => post<SrpInitResponse>("/auth/srp/init", req),
       srpVerify: (req: SrpVerifyRequest) => post<SrpVerifyResponse>("/auth/srp/verify", req),

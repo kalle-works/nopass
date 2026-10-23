@@ -114,6 +114,38 @@ export interface SrpVerifyResponse extends LoginResponse {
   serverProofM2: string;
 }
 
+// ─── Password change ─────────────────────────────────────────────────────────
+
+/** Round 1: OPAQUE login with the current password plus registration of the new one. */
+export interface PasswordChangeStartRequest {
+  emailHash: string;
+  startLoginRequest: string;
+  registrationRequest: string;
+}
+
+export interface PasswordChangeStartResponse {
+  changeId: string;
+  loginResponse: string;
+  kdfParams: KdfParams;
+  registrationResponse: string;
+  /** every item, tombstones included — all must come back re-encrypted */
+  items: EncryptedVaultItem[];
+  protectedPrivateKey?: string | null;
+  protectedPrivateKeyIv?: string | null;
+}
+
+export interface PasswordChangeFinishRequest {
+  changeId: string;
+  /** proof of the current password */
+  finishLoginRequest: string;
+  registrationRecord: string;
+  protectedSymmetricKey: string;
+  protectedSymmetricKeyIv: string;
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
+  items: ReencryptedItem[];
+}
+
 // ─── Recovery ────────────────────────────────────────────────────────────────
 
 /** Enable or rotate the account recovery kit (authenticated). */
