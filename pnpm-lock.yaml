@@ -252,9 +252,9 @@ importers:
       '@noble/hashes':
         specifier: ^2.2.0
         version: 2.2.0
-      secure-remote-password:
-        specifier: ^0.3.1
-        version: 0.3.1
+      '@serenity-kit/opaque':
+        specifier: 1.1.0
+        version: 1.1.0
     devDependencies:
       '@nopass/config':
         specifier: workspace:*
@@ -1360,6 +1360,10 @@ packages:
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
 
+  '@serenity-kit/opaque@1.1.0':
+    resolution: {integrity: sha512-Y6v/+hRMn0MdMEk5+/ArM0vPIiFfFEbdTZc7oAx+cWyvGODGezAQ/sMjXBVogf7NsS9z9EV0Ve5paZCVULuedw==}
+    hasBin: true
+
   '@simplewebauthn/server@13.3.1':
     resolution: {integrity: sha512-GV/oM/qeycWn8p42JZIMJBsXWQcNFg+nJFzeQTnMA4gN8mXg0+HZFWJerHg8ZN/zlveMS3iV1wzuFpOVWS/46w==}
     engines: {node: '>=20.0.0'}
@@ -1882,9 +1886,6 @@ packages:
     resolution: {integrity: sha512-LHE+8BuR7RYGDKvnrmcuSq3tDcKv9OFEXQt/HpbZhY7V6h0zlUXutnAD82GiFx9rdieCMjkvtcsPqBwgUl1Iiw==}
     engines: {node: '>= 0.4'}
 
-  array-buffer-to-hex@1.0.0:
-    resolution: {integrity: sha512-arycdkxgK1cj6s03GDb96tlCxOl1n3kg9M2OHseUc6Pqyqp+lgfceFPmG507eI5V+oxOSEnlOw/dFc7LXBXF4Q==}
-
   array-includes@3.1.9:
     resolution: {integrity: sha512-FmeCCAenzH0KH381SPT5FZmiA/TmpndpcaShhfgEN9eCVjnFBqq3l1xrI42y8+PPLI6hypzou4GXw00WHmPBLQ==}
     engines: {node: '>= 0.4'}
@@ -2050,12 +2051,6 @@ packages:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
 
-  crypto-digest-sync@1.0.0:
-    resolution: {integrity: sha512-UQBOB5z+HF4iA8shKQ3PPwhCmdFAihwcytD1Qh4uiz78x04cZZmKtZ1F1VyAjkrA8uEZqXt2tMXfj3dJHtcbng==}
-
-  crypto-random-hex@1.0.0:
-    resolution: {integrity: sha512-1DuZQ03El13TRgfrqbbjW40Gvi4OKInny/Wxqj23/JMXe214C/3Tlz92bKXWDW3NZT5RjXUGdYW4qiIOUPf+cA==}
-
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
 
@@ -2123,9 +2118,6 @@ packages:
   empathic@2.1.0:
     resolution: {integrity: sha512-AnfC1ATldl49/cvZdLPDjBfrRNwbDO05aibiOtzQu3qtlbJtomNLhF30HEtn/7iBz50dlMECqATo3fG0LrdEgw==}
     engines: {node: '>=14'}
-
-  encode-utf8@1.0.3:
-    resolution: {integrity: sha512-ucAnuBEhUK4boH2HjVYG5Q2mQyPorvv0u/ocS+zhdw0S8AlHYY+GOFhP1Gio5z4icpP2ivFSvhtFjQi8+T9ppw==}
 
   enhanced-resolve@5.21.3:
     resolution: {integrity: sha512-QyL119InA+XXEkNLNTPCXPugSvOfhwv0JOlGNzvxs0hZaiHLNvXSpudUWsOlsXGWJh8G6ckCScEkVHfX3kw/2Q==}
@@ -2485,9 +2477,6 @@ packages:
   hermes-parser@0.25.1:
     resolution: {integrity: sha512-6pEjquH3rqaI6cYAXYPcz9MS4rY6R4ngRgrgfDshRptUZIc3lw0MCIJIGDj9++mfySOuPTHB4nrSW99BCvOPIA==}
 
-  hex-to-array-buffer@1.1.0:
-    resolution: {integrity: sha512-vvl3IM8FfT1uOnHtEqyjkDK9Luqz6MQrH82qIvVnjyXxRhkeaEZyRRPiBgf2yym3nweRVEfayxt/1SoTXZYd4Q==}
-
   html-escaper@2.0.2:
     resolution: {integrity: sha512-H2iMtd0I4Mt5eYiapRdIDjp+XzelXQ0tFE4JS7YFwFevXXMmOp9myNrUvCg0D6ws8iqkRPBfKHgbwig1SmlLfg==}
 
@@ -2656,9 +2645,6 @@ packages:
   js-yaml@4.1.1:
     resolution: {integrity: sha512-qQKT4zQxXl8lLwBtHMWwaTcGfFOZviOJet3Oy/xmGk2gZH677CJM9EvtfdSkgWcATZhj/55JZ0rmy3myCT5lsA==}
     hasBin: true
-
-  jsbn@1.1.0:
-    resolution: {integrity: sha512-4bYVV3aAMtDTTu4+xsDYa6sy9GyJ69/amsu9sYF2zqjiEoZA5xJi3BrfX3uY+/IekIu7MwdObdbDWpoZdBv3/A==}
 
   jsesc@3.1.0:
     resolution: {integrity: sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA==}
@@ -2945,9 +2931,6 @@ packages:
     resolution: {integrity: sha512-LaNjtRWUBY++zB5nE/NwcaoMylSPk+S+ZHNB1TzdbMJMny6dynpAGt7X/tl/QYq3TIeE6nxHppbo2LGymrG5Pw==}
     engines: {node: '>=10'}
 
-  pad-start@1.0.2:
-    resolution: {integrity: sha512-EBN8Ez1SVRcZT1XsIE4WkdnZ5coLoaChkIgAET6gIlaLhXqCz9upVk0DQWFtOYkrpTVvbEppRUnqhTiJrBdkfw==}
-
   parent-module@1.0.1:
     resolution: {integrity: sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g==}
     engines: {node: '>=6'}
@@ -3123,9 +3106,6 @@ packages:
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
-
-  secure-remote-password@0.3.1:
-    resolution: {integrity: sha512-iEp/qLRfb9XYhfKFrPFfdeD7KVreCjhDKSTRP1G1nRIO0Sw1hjnVHD58ymOhiy9Zf5quHbDIbG9cTupji7qwnA==}
 
   semver@6.3.1:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
@@ -4420,6 +4400,8 @@ snapshots:
 
   '@rtsao/scc@1.1.0': {}
 
+  '@serenity-kit/opaque@1.1.0': {}
+
   '@simplewebauthn/server@13.3.1':
     dependencies:
       '@hexagon/base64': 1.1.28
@@ -4929,8 +4911,6 @@ snapshots:
       call-bound: 1.0.4
       is-array-buffer: 3.0.5
 
-  array-buffer-to-hex@1.0.0: {}
-
   array-includes@3.1.9:
     dependencies:
       call-bind: 1.0.9
@@ -5113,12 +5093,6 @@ snapshots:
       shebang-command: 2.0.0
       which: 2.0.2
 
-  crypto-digest-sync@1.0.0: {}
-
-  crypto-random-hex@1.0.0:
-    dependencies:
-      array-buffer-to-hex: 1.0.0
-
   csstype@3.2.3: {}
 
   damerau-levenshtein@1.0.8: {}
@@ -5180,8 +5154,6 @@ snapshots:
   emoji-regex@9.2.2: {}
 
   empathic@2.1.0: {}
-
-  encode-utf8@1.0.3: {}
 
   enhanced-resolve@5.21.3:
     dependencies:
@@ -5734,8 +5706,6 @@ snapshots:
     dependencies:
       hermes-estree: 0.25.1
 
-  hex-to-array-buffer@1.1.0: {}
-
   html-escaper@2.0.2: {}
 
   ignore@5.3.2: {}
@@ -5906,8 +5876,6 @@ snapshots:
   js-yaml@4.1.1:
     dependencies:
       argparse: 2.0.1
-
-  jsbn@1.1.0: {}
 
   jsesc@3.1.0: {}
 
@@ -6176,8 +6144,6 @@ snapshots:
     dependencies:
       p-limit: 3.1.0
 
-  pad-start@1.0.2: {}
-
   parent-module@1.0.1:
     dependencies:
       callsites: 3.1.0
@@ -6379,16 +6345,6 @@ snapshots:
       is-regex: 1.2.1
 
   scheduler@0.27.0: {}
-
-  secure-remote-password@0.3.1:
-    dependencies:
-      array-buffer-to-hex: 1.0.0
-      crypto-digest-sync: 1.0.0
-      crypto-random-hex: 1.0.0
-      encode-utf8: 1.0.3
-      hex-to-array-buffer: 1.1.0
-      jsbn: 1.1.0
-      pad-start: 1.0.2
 
   semver@6.3.1: {}
 

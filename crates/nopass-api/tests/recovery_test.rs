@@ -2,7 +2,10 @@ mod helpers;
 
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use helpers::{build_test_server, compute_email_hash, generate_srp_verifier, login, register_user};
+use helpers::{
+    build_test_server, compute_email_hash, generate_srp_verifier, login, opaque_login_start,
+    opaque_registration, register_user, srp_login_ok,
+};
 use nopass_models::{
     CreateVaultItemRequest, RecoveryInitResponse, RecoveryStatusResponse, VaultItemType,
 };
@@ -145,8 +148,16 @@ async fn recovery_full_flow_rotates_credentials(pool: PgPool) {
     assert_eq!(init.items.len(), 1);
     assert_eq!(init.items[0].id, item.id);
 
-    // Complete: new SRP credentials, re-encrypted item, new recovery kit
-    let (new_salt, new_verifier) = generate_srp_verifier(EMAIL, NEW_PASSWORD);
+    // Complete: new OPAQUE record, re-encrypted item, new recovery kit
+    let record = opaque_registration(
+        &server,
+        "/v1/auth/recovery/opaque/start",
+        None,
+        json!({ "recoveryToken": init.recovery_token }),
+        EMAIL,
+        NEW_PASSWORD,
+    )
+    .await;
     let new_auth_key = random_b64(32);
     let reencrypted_blob = random_b64(64);
 
@@ -154,8 +165,7 @@ async fn recovery_full_flow_rotates_credentials(pool: PgPool) {
         .post("/v1/auth/recovery/complete")
         .json(&json!({
             "recoveryToken": init.recovery_token,
-            "srpSalt": B64.encode(&new_salt),
-            "srpVerifier": B64.encode(&new_verifier),
+            "registrationRecord": record,
             "protectedSymmetricKey": random_b64(32),
             "protectedSymmetricKeyIv": random_b64(12),
             "items": [{
@@ -177,6 +187,8 @@ async fn recovery_full_flow_rotates_credentials(pool: PgPool) {
         .authorization_bearer(&session.session_token)
         .await
         .assert_status(StatusCode::UNAUTHORIZED);
+
+    assert!(opaque_login_start(&server, EMAIL, PASSWORD).await.finish_request.is_none());
 
     // New password logs in; the item carries the re-encrypted blob at version+1
     let new_session = login(&server, EMAIL, NEW_PASSWORD).await;
@@ -319,4 +331,118 @@ async fn recovery_disable_clears_kit(pool: PgPool) {
         }))
         .await
         .assert_status(StatusCode::UNAUTHORIZED);
+}
+
+/// Clients released before OPAQUE still send SRP credentials; the recovery
+/// must go through and leave an account that can log in and then migrate.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn recovery_from_a_pre_opaque_client_still_completes(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+    let session = login(&server, EMAIL, PASSWORD).await;
+
+    let auth_key = random_b64(32);
+    server
+        .put("/v1/auth/recovery")
+        .authorization_bearer(&session.session_token)
+        .json(&json!({
+            "recoveryAuthKey": auth_key,
+            "recoveryBlob": random_b64(112),
+            "recoveryBlobIv": random_b64(12),
+        }))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+    let init: RecoveryInitResponse = server
+        .post("/v1/auth/recovery/init")
+        .json(&json!({ "emailHash": compute_email_hash(EMAIL), "recoveryAuthKey": auth_key }))
+        .await
+        .json();
+
+    let (new_salt, new_verifier) = generate_srp_verifier(EMAIL, NEW_PASSWORD);
+    server
+        .post("/v1/auth/recovery/complete")
+        .json(&json!({
+            "recoveryToken": init.recovery_token,
+            "srpSalt": B64.encode(&new_salt),
+            "srpVerifier": B64.encode(&new_verifier),
+            "protectedSymmetricKey": random_b64(32),
+            "protectedSymmetricKeyIv": random_b64(12),
+            "items": [],
+            "recoveryAuthKey": random_b64(32),
+            "recoveryBlob": random_b64(112),
+            "recoveryBlobIv": random_b64(12),
+        }))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    srp_login_ok(&server, EMAIL, NEW_PASSWORD).await;
+}
+
+/// Current clients recover by re-wrapping the account key from the kit:
+/// items stay exactly as they were.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn recovery_with_the_account_key_leaves_items_untouched(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+    let session = login(&server, EMAIL, PASSWORD).await;
+    let item: nopass_models::EncryptedVaultItem = server
+        .post(&format!("/v1/vaults/{}/items", session.default_vault_id))
+        .authorization_bearer(&session.session_token)
+        .json(&CreateVaultItemRequest {
+            id: None,
+            item_type: VaultItemType::Login,
+            blob: random_b64(64),
+            blob_iv: random_b64(12),
+            blob_mac: random_b64(32),
+        })
+        .await
+        .json();
+    let auth_key = random_b64(32);
+    server
+        .put("/v1/auth/recovery")
+        .authorization_bearer(&session.session_token)
+        .json(&json!({ "recoveryAuthKey": auth_key, "recoveryBlob": random_b64(112), "recoveryBlobIv": random_b64(12) }))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    let init: RecoveryInitResponse = server
+        .post("/v1/auth/recovery/init")
+        .json(&json!({ "emailHash": compute_email_hash(EMAIL), "recoveryAuthKey": auth_key }))
+        .await
+        .json();
+    assert_eq!(init.user_id, session.user_id);
+    let record = opaque_registration(
+        &server,
+        "/v1/auth/recovery/opaque/start",
+        None,
+        json!({ "recoveryToken": init.recovery_token }),
+        EMAIL,
+        NEW_PASSWORD,
+    )
+    .await;
+    let wrapped = random_b64(80);
+    server
+        .post("/v1/auth/recovery/complete")
+        .json(&json!({
+            "recoveryToken": init.recovery_token,
+            "registrationRecord": record,
+            "protectedSymmetricKey": random_b64(32),
+            "protectedSymmetricKeyIv": random_b64(12),
+            "wrappedAccountKey": wrapped,
+            "wrappedAccountKeyIv": random_b64(12),
+            "recoveryAuthKey": random_b64(32),
+            "recoveryBlob": random_b64(112),
+            "recoveryBlobIv": random_b64(12),
+        }))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    let fresh = login(&server, EMAIL, NEW_PASSWORD).await;
+    assert_eq!(fresh.wrapped_account_key, Some(wrapped));
+    let items: Vec<nopass_models::EncryptedVaultItem> = server
+        .get(&format!("/v1/vaults/{}/items", fresh.default_vault_id))
+        .authorization_bearer(&fresh.session_token)
+        .await
+        .json();
+    assert_eq!((items[0].blob.clone(), items[0].version), (item.blob, item.version));
 }

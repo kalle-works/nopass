@@ -2,6 +2,7 @@
 export * from "./primitives/index";
 
 // Components
+export * from "./components/ChangePasswordForm";
 export * from "./components/ItemEditor/index";
 export * from "./components/OrgPanel";
 export * from "./components/UnlockScreen";

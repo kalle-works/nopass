@@ -3,22 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  bindingForItem,
+  completeAccountRecovery,
   computeEmailHash,
-  decryptBytes,
-  decryptVaultItem,
-  deriveMasterKey,
   deriveRecoveryKeys,
-  encryptBytes,
-  encryptItemV2,
-  generateRecoveryCode,
-  generateSrpRegistration,
-  stretchMasterKey,
-  stretchMasterKeyAllRaw,
   unwrapVaultSubkeys,
-  wrapVaultSubkeys,
 } from "@nopass/crypto";
-import { DEFAULT_KDF_PARAMS, type RecoveryInitResponse, type ReencryptedItem } from "@nopass/types";
+import type { RecoveryInitResponse } from "@nopass/types";
 import {
   AuthShell,
   Banner,
@@ -119,78 +109,14 @@ export default function RecoverPage() {
     }
     setError(null);
     setLoading(true);
-    let newRaw: Awaited<ReturnType<typeof stretchMasterKeyAllRaw>> | null = null;
     try {
-      setProgress("Importing old keys…");
-      const importAes = (bytes: Uint8Array<ArrayBuffer>, usages: KeyUsage[]) =>
-        crypto.subtle.importKey("raw", bytes, { name: "AES-GCM", length: 256 }, false, usages);
-      const oldEncKey = await importAes(oldSubkeys.encKeyBytes, ["decrypt"]);
-      const oldMacKey = await crypto.subtle.importKey(
-        "raw",
-        oldSubkeys.macKeyBytes,
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["verify"],
-      );
-      const oldSmkKey = await importAes(oldSubkeys.smkBytes, ["decrypt"]);
-
+      // The kit holds the account key: re-wrap it under the new password;
+      // no item is re-encrypted.
       setProgress("Deriving new keys (Argon2id)…");
-      const newMasterKey = await deriveMasterKey(newPassword, email, DEFAULT_KDF_PARAMS);
-      const newKeys = await stretchMasterKey(newMasterKey, email);
-      newRaw = await stretchMasterKeyAllRaw(newMasterKey, email);
-      const { srpSalt, srpVerifier } = generateSrpRegistration(email, newPassword);
-
-      setProgress(`Re-encrypting ${init.items.length} item${init.items.length === 1 ? "" : "s"}…`);
-      const items: ReencryptedItem[] = [];
-      for (const item of init.items) {
-        const binding = bindingForItem(item);
-        const { plaintext, revision } = await decryptVaultItem(item, binding, {
-          vaultEncKey: oldEncKey,
-          vaultMacKey: oldMacKey,
-        });
-        const reencrypted = await encryptItemV2(plaintext, binding, revision + 1, newKeys.vaultEncKey);
-        items.push({
-          id: item.id,
-          blob: reencrypted.blob,
-          blobIv: reencrypted.blobIv,
-          blobMac: reencrypted.blobMac,
-        });
-      }
-
-      setProgress("Re-wrapping keys…");
-      const protectedKey = await encryptBytes(newRaw.encKeyBytes, newKeys.stretchedMasterKey);
-
-      let protectedPrivateKey: string | undefined;
-      let protectedPrivateKeyIv: string | undefined;
-      if (init.protectedPrivateKey && init.protectedPrivateKeyIv) {
-        const pkcs8 = await decryptBytes(
-          { blob: init.protectedPrivateKey, blobIv: init.protectedPrivateKeyIv, blobMac: "" },
-          oldSmkKey,
-        );
-        const rewrapped = await encryptBytes(pkcs8, newKeys.stretchedMasterKey);
-        pkcs8.fill(0);
-        protectedPrivateKey = rewrapped.blob;
-        protectedPrivateKeyIv = rewrapped.blobIv;
-      }
-
-      // The used code is burned server-side — issue a fresh kit in the same pass
-      const replacementCode = generateRecoveryCode();
-      const replacementKeys = await deriveRecoveryKeys(replacementCode, email);
-      const replacementBlob = await wrapVaultSubkeys(newRaw, replacementKeys.wrapKey);
-
-      setProgress("Applying…");
-      await api.recovery.complete({
-        recoveryToken: init.recoveryToken,
-        srpSalt,
-        srpVerifier,
-        protectedSymmetricKey: protectedKey.blob,
-        protectedSymmetricKeyIv: protectedKey.blobIv,
-        ...(protectedPrivateKey ? { protectedPrivateKey, protectedPrivateKeyIv } : {}),
-        items,
-        recoveryAuthKey: replacementKeys.authKeyB64,
-        recoveryBlob: replacementBlob.blob,
-        recoveryBlobIv: replacementBlob.blobIv,
-      });
+      const replacementCode = await completeAccountRecovery(
+        { opaqueStart: api.recovery.opaqueStart, complete: api.recovery.complete },
+        { email, newPassword, init, recovered: oldSubkeys },
+      );
 
       // Only on success — a failed attempt must stay retryable with the same keys
       oldSubkeys.smkBytes.fill(0);
@@ -203,10 +129,6 @@ export default function RecoverPage() {
     } catch (err) {
       setError(humanizeError(err));
     } finally {
-      // New-password subkeys are re-derivable — zero them on every path
-      newRaw?.smkBytes.fill(0);
-      newRaw?.encKeyBytes.fill(0);
-      newRaw?.macKeyBytes.fill(0);
       setLoading(false);
       setProgress(null);
     }
@@ -260,7 +182,8 @@ export default function RecoverPage() {
         <>
           <h1 className="text-h1 font-semibold text-fg">Choose a new master password</h1>
           <p className="mt-2 text-body text-muted">
-            Your vault will be re-encrypted on this device under the new password.
+            Your vault keys come back from the recovery kit and are locked under the new password. Your items
+            stay as they are.
           </p>
           <form onSubmit={handleSetPassword} className="mt-8 flex flex-col gap-5">
             <div className="flex flex-col gap-2">
@@ -287,7 +210,7 @@ export default function RecoverPage() {
             />
             {error && <Banner tone="danger">{error}</Banner>}
             <Button type="submit" variant="primary" size="lg" pending={loading} pendingLabel={progress ?? "Working…"}>
-              Re-encrypt vault
+              Set new password
             </Button>
           </form>
         </>

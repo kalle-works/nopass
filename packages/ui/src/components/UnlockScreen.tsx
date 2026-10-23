@@ -2,15 +2,19 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import {
   computeEmailHash,
+  createOpaqueRegistration,
   deriveMasterKey,
   deriveRecoveryKeys,
   generateRecoveryCode,
+  loginWithPassword,
   stretchMasterKey,
-  stretchMasterKeyAllRaw,
+  importAccountKeys,
+  unlockAccount,
   wrapVaultSubkeys,
+  zeroAccount,
+  type UnlockedAccount,
 } from "@nopass/crypto";
-import type { ApiClient } from "../lib/api-client";
-import { srpStep1, srpStep2 } from "@nopass/crypto";
+import { ApiError, type ApiClient } from "../lib/api-client";
 import { useNopassStore } from "../store/vault-store";
 import { Banner } from "../primitives/Feedback";
 import { Button } from "../primitives/Button";
@@ -70,6 +74,11 @@ export function AuthShell({
 }
 
 function humanizeError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) return "Incorrect email or master password.";
+    if (err.status === 409) return "An account with this email already exists.";
+    if (err.status === 429) return "Too many attempts. Wait a moment and try again.";
+  }
   const msg = err instanceof Error ? err.message : String(err);
   if (msg === "Failed to fetch" || msg.includes("NetworkError") || msg.includes("ERR_FAILED")) {
     return "Could not reach the nopwd server. Check your connection and try again.";
@@ -139,7 +148,7 @@ export function UnlockScreen({
   const [kitPending, setKitPending] = useState(false);
   // Held only between account creation and kit creation so a failed kit upload
   // can be retried without asking for the password again. Zeroed afterwards.
-  const pendingKit = useRef<{ masterKey: Uint8Array; sessionToken: string } | null>(null);
+  const pendingKit = useRef<{ account: UnlockedAccount; sessionToken: string } | null>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
 
   const { setSession } = useNopassStore();
@@ -163,7 +172,7 @@ export function UnlockScreen({
   useEffect(() => () => clearPendingKit(), []);
 
   function clearPendingKit() {
-    pendingKit.current?.masterKey.fill(0);
+    if (pendingKit.current) zeroAccount(pendingKit.current.account);
     pendingKit.current = null;
   }
 
@@ -207,14 +216,17 @@ export function UnlockScreen({
   }
 
   async function handleRegister() {
-    const { generateSrpRegistration, stretchMasterKeyRaw } = await import("@nopass/crypto");
+    const { stretchMasterKeyRaw } = await import("@nopass/crypto");
     const kdfParams = DEFAULT_KDF_PARAMS;
+    const emailHash = computeEmailHash(email);
 
     const masterKey = await deriveMasterKey(password, email, kdfParams);
     const keys = await stretchMasterKey(masterKey, email);
 
     const { encKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-    const { srpSalt, srpVerifier } = generateSrpRegistration(email, password);
+    const registrationRecord = await createOpaqueRegistration(password, kdfParams, (registrationRequest) =>
+      apiClient.auth.opaqueRegisterStart({ emailHash, registrationRequest }),
+    );
 
     const { encryptBytes } = await import("@nopass/crypto");
     const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
@@ -223,10 +235,9 @@ export function UnlockScreen({
     const { generateUserKeyPair } = await import("@nopass/crypto");
     const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-    await apiClient.auth.register({
-      emailHash: computeEmailHash(email),
-      srpSalt,
-      srpVerifier,
+    await apiClient.auth.opaqueRegisterFinish({
+      emailHash,
+      registrationRecord,
       kdfParams,
       protectedSymmetricKey: protectedKey.blob,
       protectedSymmetricKeyIv: protectedKey.blobIv,
@@ -235,66 +246,51 @@ export function UnlockScreen({
       protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
     });
 
-    let sessionToken: string;
+    masterKey.fill(0);
+
+    let unlocked: Awaited<ReturnType<typeof performLogin>>;
     try {
-      sessionToken = await performLogin(keys);
+      // The first unlock moves the new account onto the wrapped account key.
+      unlocked = await performLogin();
     } catch {
-      masterKey.fill(0);
       // The account exists now; a retry of register would only hit "already exists"
       throw new Error("Your account was created, but signing in failed. Sign in to finish setting up your recovery kit.");
     }
     if (onDownloadRecoveryKit) {
-      pendingKit.current = { masterKey, sessionToken };
+      pendingKit.current = unlocked;
     } else {
-      masterKey.fill(0);
+      zeroAccount(unlocked.account);
     }
   }
 
   async function handleLogin() {
-    const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
-    const keys = await stretchMasterKey(masterKey, email);
-    await performLogin(keys);
+    const { account } = await performLogin();
+    zeroAccount(account);
   }
 
-  async function performLogin(keys: Awaited<ReturnType<typeof stretchMasterKey>>): Promise<string> {
-    const emailHash = computeEmailHash(email);
-    const step1 = srpStep1();
-
-    const initResp = await apiClient.auth.srpInit({
-      emailHash,
-      clientPublicA: step1.clientPublicA,
-    });
-
-    const step2 = srpStep2(
+  /** Logs in, opens the account key (migrating a legacy account) and loads the session. */
+  async function performLogin(): Promise<{ account: UnlockedAccount; sessionToken: string }> {
+    const auth = await loginWithPassword(apiClient.auth, { email, password });
+    const account = await unlockAccount(apiClient.auth, { email, password, session: auth });
+    const keys = await importAccountKeys(account);
+    setSession(
+      { ...auth, protectedPrivateKey: account.protectedPrivateKey, protectedPrivateKeyIv: account.protectedPrivateKeyIv },
       email,
-      password,
-      initResp.srpSalt,
-      initResp.serverPublicB,
-      step1.privateSession,
+      keys,
     );
-
-    const verifyResp = await apiClient.auth.srpVerify({
-      sessionId: initResp.sessionId,
-      clientProofM1: step2.clientProofM1,
-    });
-
-    step2.verifyServerProof(verifyResp.serverProofM2);
-    setSession(verifyResp, email, keys);
-    return verifyResp.sessionToken;
+    return { account, sessionToken: auth.sessionToken };
   }
 
-  /** Wraps the vault keys under a fresh recovery code and uploads the blob. */
+  /** Wraps the account key under a fresh recovery code and uploads the blob. */
   async function createKit() {
     const pending = pendingKit.current;
     if (!pending) return;
     setKitError(null);
     setKitPending(true);
-    let subkeys: Awaited<ReturnType<typeof stretchMasterKeyAllRaw>> | null = null;
     try {
-      subkeys = await stretchMasterKeyAllRaw(pending.masterKey, email);
       const code = generateRecoveryCode();
       const { authKeyB64, wrapKey } = await deriveRecoveryKeys(code, email);
-      const blob = await wrapVaultSubkeys(subkeys, wrapKey);
+      const blob = await wrapVaultSubkeys(pending.account, wrapKey);
       await apiClient.recovery.set(
         { recoveryAuthKey: authKeyB64, recoveryBlob: blob.blob, recoveryBlobIv: blob.blobIv },
         pending.sessionToken,
@@ -304,9 +300,6 @@ export function UnlockScreen({
     } catch (err) {
       setKitError(humanizeError(err));
     } finally {
-      subkeys?.smkBytes.fill(0);
-      subkeys?.encKeyBytes.fill(0);
-      subkeys?.macKeyBytes.fill(0);
       setKitPending(false);
     }
   }

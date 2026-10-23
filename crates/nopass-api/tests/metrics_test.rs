@@ -1,5 +1,3 @@
-// Each test binary compiles the shared helpers on its own and uses a subset
-#[allow(dead_code)]
 mod helpers;
 
 use helpers::build_test_server;
@@ -34,10 +32,29 @@ async fn requests_are_counted_per_route_template_and_status(pool: PgPool) {
     assert!(body.contains("nopass_http_request_duration_seconds_count"));
 }
 
-#[test]
-fn login_failure_helper_increments_the_exported_counter() {
-    let before = sample(&metrics::render(), "nopass_login_failures_total");
-    metrics::record_login_failure();
-    let after = sample(&metrics::render(), "nopass_login_failures_total");
-    assert_eq!(after - before, 1.0);
+/// Alerting on `nopass_login_failures_total` only works if every credential
+/// rejection counts: a wrong password the OPAQUE client catches locally only
+/// reaches the server as the SRP fallback's failed verify, and a forged proof
+/// is rejected at OPAQUE finish.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn rejected_credentials_count_as_login_failures(pool: PgPool) {
+    let server = build_test_server(pool);
+    helpers::register_user(&server, "metrics@example.com", "right password").await;
+    let count = || sample(&metrics::render(), "nopass_login_failures_total");
+
+    let before = count();
+    // Wrong password: the client rejects the OPAQUE response, falls back to SRP, fails there.
+    assert!(helpers::opaque_login_start(&server, "metrics@example.com", "wrong").await.finish_request.is_none());
+    helpers::srp_login(&server, "metrics@example.com", "wrong")
+        .await
+        .assert_status(axum::http::StatusCode::UNAUTHORIZED);
+    assert_eq!(count() - before, 1.0);
+
+    // A proof from another handshake is rejected at OPAQUE finish.
+    let wrong = helpers::opaque_login_start(&server, "metrics@example.com", "wrong").await;
+    let other = helpers::opaque_login_start(&server, "metrics@example.com", "right password").await;
+    helpers::opaque_login_finish(&server, wrong.login_id, &other.finish_request.unwrap())
+        .await
+        .assert_status(axum::http::StatusCode::UNAUTHORIZED);
+    assert_eq!(count() - before, 2.0);
 }

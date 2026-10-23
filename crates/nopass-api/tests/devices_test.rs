@@ -23,8 +23,9 @@ async fn register_device(server: &axum_test::TestServer, token: &str, name: &str
     resp["deviceId"].as_str().unwrap().parse().unwrap()
 }
 
-async fn user_id(pool: &PgPool, email_hash_of: &str) -> Uuid {
-    let hash = helpers::compute_email_hash(email_hash_of);
+async fn user_id(pool: &PgPool, email: &str) -> Uuid {
+    // users.email_hash holds the keyed hash, see AppState::account_key
+    let hash = helpers::stored_account_key(email);
     sqlx::query_scalar("SELECT id FROM users WHERE email_hash = $1")
         .bind(hash)
         .fetch_one(pool)

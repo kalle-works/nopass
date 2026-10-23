@@ -170,13 +170,13 @@ jobs:
       - name: Start API
         env:
           DATABASE_URL: postgres://nopass:nopass_e2e@localhost:5432/nopass_e2e
-          NOPASS_SESSION_SECRET: e2e-only-session-secret-not-used-anywhere-else
+          NOPASS_EMAIL_LOOKUP_KEY: ZTJlLW9ubHktZW1haWwtbG9va3VwLWtleS0zMi1ieXRlcyE=
           NOPASS_ALLOWED_ORIGINS: http://localhost:4020
           NOPASS_PORT: "4010"
           # Every test signs in from one IP; the production limit would 429 them
           NOPASS_AUTH_RATE_LIMIT_PER_MIN: "1000"
         run: |
-          target/debug/nopass-api > api.log 2>&1 &
+          NOPASS_OPAQUE_SERVER_SETUP=$(target/debug/nopass-api generate-opaque-setup) target/debug/nopass-api > api.log 2>&1 &
           curl -sf --retry 30 --retry-delay 1 --retry-connrefused http://localhost:4010/v1/health
       - run: pnpm turbo run build --filter=@nopass/web
       - run: pnpm --filter @nopass/web exec playwright install --with-deps chromium
@@ -222,11 +222,11 @@ jobs:
       - name: Start API
         env:
           DATABASE_URL: postgres://nopass:nopass_e2e@localhost:5432/nopass_e2e
-          NOPASS_SESSION_SECRET: e2e-only-session-secret-not-used-anywhere-else
+          NOPASS_EMAIL_LOOKUP_KEY: ZTJlLW9ubHktZW1haWwtbG9va3VwLWtleS0zMi1ieXRlcyE=
           NOPASS_ALLOWED_ORIGINS: http://localhost:3000
           NOPASS_PORT: "3001"
         run: |
-          target/debug/nopass-api > api.log 2>&1 &
+          NOPASS_OPAQUE_SERVER_SETUP=$(target/debug/nopass-api generate-opaque-setup) target/debug/nopass-api > api.log 2>&1 &
           curl -sf --retry 30 --retry-delay 1 --retry-connrefused http://localhost:3001/v1/health
       - run: pnpm --filter @nopass/extension build
       # The suite skips itself when the API, the build or the browser is

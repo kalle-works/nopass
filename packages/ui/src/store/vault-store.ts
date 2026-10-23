@@ -11,7 +11,7 @@ import { create } from "zustand";
 import type {
   EncryptedVaultItem,
   KdfParams,
-  SrpVerifyResponse,
+  LoginResponse,
   VaultItemPlaintext,
   VaultItemType,
 } from "@nopass/types";
@@ -69,7 +69,7 @@ function saveFavorites(ids: Set<string>): void {
 
 interface NopassStore extends AuthState, CryptoState, VaultState {
   // Auth actions
-  setSession: (auth: SrpVerifyResponse, email: string, keys: DerivedKeys) => void;
+  setSession: (auth: LoginResponse, email: string, keys: DerivedKeys) => void;
   lock: () => void;
   setKeyPair: (protectedPrivateKey: string, protectedPrivateKeyIv: string) => void;
 

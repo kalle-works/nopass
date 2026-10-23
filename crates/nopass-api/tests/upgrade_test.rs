@@ -1,5 +1,3 @@
-// Each test binary compiles the shared helpers on its own and uses a subset
-#[allow(dead_code)]
 mod helpers;
 
 use std::path::Path;
@@ -9,7 +7,7 @@ use nopass_models::{EncryptedVaultItem, KdfParams, UpdateVaultItemRequest};
 use sqlx::{migrate::Migrator, PgPool};
 use uuid::Uuid;
 
-use helpers::{build_test_server, compute_email_hash, generate_srp_verifier, login};
+use helpers::{build_test_server, compute_email_hash, generate_srp_verifier, srp_login_ok};
 
 const EMAIL: &str = "veteran@example.com";
 const PASSWORD: &str = "a password from the last release";
@@ -72,9 +70,17 @@ async fn accounts_and_items_from_the_last_release_survive_the_upgrade(pool: PgPo
     .unwrap();
 
     sqlx::migrate!("src/db/migrations").run(&pool).await.unwrap();
+    // What the API does on boot before serving: key the stored email hashes.
+    nopass_api::db::auth::key_email_hashes(&pool, |h| {
+        nopass_api::state::account_key(&helpers::EMAIL_LOOKUP_KEY, h)
+    })
+    .await
+    .unwrap();
 
+    // The account still has only its SRP verifier: it logs in the legacy way
+    // (and the client then upgrades it to OPAQUE).
     let server = build_test_server(pool);
-    let session = login(&server, EMAIL, PASSWORD).await;
+    let session = srp_login_ok(&server, EMAIL, PASSWORD).await.session;
     assert_eq!(session.user_id, user_id);
     assert_eq!(session.default_vault_id, vault_id);
 

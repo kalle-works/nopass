@@ -212,6 +212,7 @@ async fn concurrent_updates_from_the_same_version_have_exactly_one_winner(pool: 
         .post(&format!("/v1/vaults/{vault_id}/items"))
         .authorization_bearer(&session.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Login,
             blob: blob.clone(),
             blob_iv: blob_iv.clone(),

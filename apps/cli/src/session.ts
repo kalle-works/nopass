@@ -7,6 +7,8 @@ import { MemoryRevisionStore } from "@nopass/crypto";
 export interface Session {
   sessionToken: string;
   email: string;
+  /** Account id; absent in sessions saved before password change existed */
+  userId?: string;
   /** base64-encoded AES-256-GCM vault encryption key bytes */
   vaultEncKeyB64: string;
   /** base64-encoded HMAC-SHA256 vault MAC key bytes */

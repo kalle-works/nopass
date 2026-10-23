@@ -22,4 +22,7 @@ pub enum CryptoError {
 
     #[error("SRP error: {0}")]
     Srp(String),
+
+    #[error("OPAQUE error: {0}")]
+    Opaque(String),
 }

@@ -16,13 +16,23 @@ export const DEFAULT_KDF_PARAMS: KdfParams = {
   parallelism: 4,
 };
 
-export interface RegisterRequest {
-  /** SHA-256("nopass-v1-email:" + lowercase(email)) */
+// OPAQUE (RFC 9807) messages are base64url without padding, as produced and
+// consumed by @serenity-kit/opaque.
+
+export interface OpaqueRegisterStartRequest {
+  /** SHA-256("nopass-v1-email:" + lowercase(email)), hex — also the OPAQUE credential identifier */
   emailHash: string;
-  /** base64 Argon2id salt */
-  srpSalt: string;
-  /** base64 SRP-6a verifier */
-  srpVerifier: string;
+  registrationRequest: string;
+}
+
+export interface OpaqueRegisterStartResponse {
+  registrationResponse: string;
+}
+
+export interface OpaqueRegisterFinishRequest {
+  emailHash: string;
+  registrationRecord: string;
+  /** Argon2id parameters for both the vault KDF and the OPAQUE key-stretching function */
   kdfParams: KdfParams;
   /** base64 AES-GCM encrypted vault key */
   protectedSymmetricKey: string;
@@ -37,6 +47,56 @@ export interface RegisterRequest {
 export interface RegisterResponse {
   userId: string;
 }
+
+/** Replaces the account's login credential in a fresh session (SRP → OPAQUE migration). */
+export interface OpaqueReregisterFinishRequest {
+  registrationRecord: string;
+}
+
+export interface OpaqueLoginStartRequest {
+  emailHash: string;
+  startLoginRequest: string;
+}
+
+/** Identical in status and shape whether or not the account exists. */
+export interface OpaqueLoginStartResponse {
+  loginId: string;
+  loginResponse: string;
+  kdfParams: KdfParams;
+}
+
+export interface OpaqueLoginFinishRequest {
+  loginId: string;
+  finishLoginRequest: string;
+  /** Optional: link this session to an existing trusted device. */
+  deviceId?: string;
+}
+
+/** A successful login, by OPAQUE or legacy SRP. */
+export interface LoginResponse {
+  sessionToken: string;
+  userId: string;
+  defaultVaultId: string;
+  protectedSymmetricKey: string;
+  protectedSymmetricKeyIv: string;
+  protectedPrivateKey?: string | null;
+  protectedPrivateKeyIv?: string | null;
+  /** Account key wrapped under the password KEK; absent until the account has migrated */
+  wrappedAccountKey?: string | null;
+  wrappedAccountKeyIv?: string | null;
+}
+
+/** One-time migration to the password-independent account key (fresh session only). */
+export interface SetAccountKeyRequest {
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
+  /** RSA private key moved from the password-derived wrap to the account-key-derived one */
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
+}
+
+// Legacy SRP login — only for accounts that haven't logged in since OPAQUE
+// shipped. See docs/auth.md "Removing SRP".
 
 export interface SrpInitRequest {
   emailHash: string;
@@ -61,16 +121,38 @@ export interface SrpVerifyRequest {
   deviceId?: string;
 }
 
-export interface SrpVerifyResponse {
+export interface SrpVerifyResponse extends LoginResponse {
   /** base64 server proof M2 — client MUST verify this before trusting the session */
   serverProofM2: string;
-  sessionToken: string;
-  userId: string;
-  defaultVaultId: string;
-  protectedSymmetricKey: string;
-  protectedSymmetricKeyIv: string;
-  protectedPrivateKey?: string | null;
-  protectedPrivateKeyIv?: string | null;
+}
+
+// ─── Password change ─────────────────────────────────────────────────────────
+
+/** Round 1: OPAQUE login with the current password plus registration of the new one. */
+export interface PasswordChangeStartRequest {
+  emailHash: string;
+  startLoginRequest: string;
+  registrationRequest: string;
+}
+
+export interface PasswordChangeStartResponse {
+  changeId: string;
+  loginResponse: string;
+  kdfParams: KdfParams;
+  registrationResponse: string;
+  /** current account-key wrap, to open with the current password and re-wrap */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
+}
+
+export interface PasswordChangeFinishRequest {
+  changeId: string;
+  /** proof of the current password */
+  finishLoginRequest: string;
+  registrationRecord: string;
+  /** the same account key, wrapped under the new password's KEK */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
 }
 
 // ─── Recovery ────────────────────────────────────────────────────────────────
@@ -98,6 +180,8 @@ export interface RecoveryInitRequest {
 export interface RecoveryInitResponse {
   /** short-lived token authorizing the recovery completion */
   recoveryToken: string;
+  /** binds the re-wrapped account key to this account */
+  userId: string;
   recoveryBlob: string;
   recoveryBlobIv: string;
   protectedPrivateKey?: string | null;
@@ -113,17 +197,25 @@ export interface ReencryptedItem {
   blobMac: string;
 }
 
+/** OPAQUE registration round 1 for the new master password, authorized by the recovery token. */
+export interface RecoveryOpaqueStartRequest {
+  recoveryToken: string;
+  emailHash: string;
+  registrationRequest: string;
+}
+
 export interface RecoveryCompleteRequest {
   recoveryToken: string;
-  /** new SRP credentials derived from the new master password */
-  srpSalt: string;
-  srpVerifier: string;
+  /** OPAQUE record for the new master password (from recovery/opaque/start) */
+  registrationRecord: string;
   protectedSymmetricKey: string;
   protectedSymmetricKeyIv: string;
   /** RSA private key re-wrapped under the new stretched master key (when the user has one) */
   protectedPrivateKey?: string;
   protectedPrivateKeyIv?: string;
-  items: ReencryptedItem[];
+  /** the account key from the kit, wrapped under the new password's KEK */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
   /** replacement recovery kit — the used code is burned */
   recoveryAuthKey: string;
   recoveryBlob: string;

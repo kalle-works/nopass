@@ -11,13 +11,14 @@ export function resolveApiOrigin(apiUrl: string | undefined): string {
 /**
  * Per-request Content-Security-Policy. Scripts run only with the request's
  * nonce ('strict-dynamic' lets those scripts load their own chunks); there is
- * no 'unsafe-inline' for scripts or style elements. 'unsafe-eval' is dev-only
- * (React debugging).
+ * no 'unsafe-inline' for scripts or style elements. 'wasm-unsafe-eval' lets
+ * the OPAQUE login client (WebAssembly) compile; it does not allow JS eval.
+ * 'unsafe-eval' is dev-only (React debugging).
  */
 export function buildCsp({ nonce, isDev, apiOrigin }: { nonce: string; isDev: boolean; apiOrigin: string }): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' 'nonce-${nonce}'`,
     // style="" attributes (e.g. the import progress bar width) cannot carry a nonce
     "style-src-attr 'unsafe-inline'",

@@ -14,11 +14,12 @@ pub struct KeyBundle {
 const BUNDLE_COLUMNS: &str =
     "id AS user_id, public_key, identity_public_key, public_key_signature";
 
-pub async fn get_bundle_by_email_hash(pool: &PgPool, email_hash: &str) -> Result<Option<KeyBundle>> {
+/// `account_key` is the keyed email hash (AppState::account_key).
+pub async fn get_bundle_by_account_key(pool: &PgPool, account_key: &str) -> Result<Option<KeyBundle>> {
     let bundle = sqlx::query_as::<_, KeyBundle>(&format!(
-        "SELECT {BUNDLE_COLUMNS} FROM users WHERE email_hash = $1 AND public_key IS NOT NULL"
+        "SELECT {BUNDLE_COLUMNS} FROM users WHERE email_hash = $1 AND email_hash_keyed AND public_key IS NOT NULL"
     ))
-    .bind(email_hash)
+    .bind(account_key)
     .fetch_optional(pool)
     .await?;
     Ok(bundle)

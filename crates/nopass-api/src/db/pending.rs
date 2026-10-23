@@ -3,6 +3,67 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
+/// Login handshakes kept per account; older ones are dropped on insert. Two or
+/// three devices logging in at once fit; a flood of starts for one account
+/// can't grow the table.
+pub const MAX_PENDING_LOGINS_PER_ACCOUNT: i64 = 5;
+
+/// Pending OPAQUE login (start → finish). `user_id` is None for the fake
+/// response given to unknown or not-yet-migrated accounts.
+#[derive(Debug, Clone, FromRow)]
+pub struct PendingOpaqueLogin {
+    pub id: Uuid,
+    pub account_key: String,
+    pub user_id: Option<Uuid>,
+    pub server_state: Vec<u8>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn insert_opaque_login(
+    pool: &PgPool,
+    id: Uuid,
+    account_key: &str,
+    user_id: Option<Uuid>,
+    server_state: &[u8],
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO pending_opaque_logins (id, account_key, user_id, server_state) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(id)
+    .bind(account_key)
+    .bind(user_id)
+    .bind(server_state)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        DELETE FROM pending_opaque_logins
+        WHERE account_key = $1 AND id NOT IN (
+            SELECT id FROM pending_opaque_logins WHERE account_key = $1
+            ORDER BY created_at DESC LIMIT $2
+        )
+        "#,
+    )
+    .bind(account_key)
+    .bind(MAX_PENDING_LOGINS_PER_ACCOUNT)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Consume the handshake atomically, like `take_srp`: one finish per start.
+pub async fn take_opaque_login(pool: &PgPool, id: Uuid) -> Result<Option<PendingOpaqueLogin>> {
+    let login = sqlx::query_as::<_, PendingOpaqueLogin>(
+        "DELETE FROM pending_opaque_logins WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(login)
+}
+
 /// Pending SRP handshake (init → verify), persisted so any replica can finish
 /// a login another replica started.
 #[derive(Debug, Clone, FromRow)]
@@ -23,6 +84,7 @@ pub async fn insert_srp(
     server_ephemeral_b: &[u8],
     client_public_a: &[u8],
 ) -> Result<()> {
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         INSERT INTO pending_srp_sessions (id, user_id, srp_verifier, server_ephemeral_b, client_public_a)
@@ -34,8 +96,22 @@ pub async fn insert_srp(
     .bind(srp_verifier)
     .bind(server_ephemeral_b)
     .bind(client_public_a)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    sqlx::query(
+        r#"
+        DELETE FROM pending_srp_sessions
+        WHERE user_id = $1 AND id NOT IN (
+            SELECT id FROM pending_srp_sessions WHERE user_id = $1
+            ORDER BY created_at DESC LIMIT $2
+        )
+        "#,
+    )
+    .bind(user_id)
+    .bind(MAX_PENDING_LOGINS_PER_ACCOUNT)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -80,14 +156,18 @@ pub async fn peek_recovery(pool: &PgPool, token: Uuid) -> Result<Option<PendingR
 }
 
 /// Sweep expired handshakes/tokens; runs from the periodic cleanup task.
-pub async fn prune_expired(pool: &PgPool, srp_ttl_secs: i64, recovery_ttl_secs: i64) -> Result<u64> {
+pub async fn prune_expired(pool: &PgPool, login_ttl_secs: i64, recovery_ttl_secs: i64) -> Result<u64> {
     let a = sqlx::query("DELETE FROM pending_srp_sessions WHERE created_at < NOW() - ($1 * INTERVAL '1 second')")
-        .bind(srp_ttl_secs)
+        .bind(login_ttl_secs)
+        .execute(pool)
+        .await?;
+    let c = sqlx::query("DELETE FROM pending_opaque_logins WHERE created_at < NOW() - ($1 * INTERVAL '1 second')")
+        .bind(login_ttl_secs)
         .execute(pool)
         .await?;
     let b = sqlx::query("DELETE FROM pending_recovery_sessions WHERE created_at < NOW() - ($1 * INTERVAL '1 second')")
         .bind(recovery_ttl_secs)
         .execute(pool)
         .await?;
-    Ok(a.rows_affected() + b.rows_affected())
+    Ok(a.rows_affected() + b.rows_affected() + c.rows_affected())
 }

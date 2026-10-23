@@ -4,6 +4,7 @@ pub mod billing;
 pub mod devices;
 pub mod keys;
 pub mod orgs;
+pub mod password;
 pub mod recovery;
 pub mod shares;
 pub mod sync;
@@ -61,6 +62,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let protected = Router::new()
         .nest("/auth", auth::protected_router())
         .nest("/auth/recovery", recovery::protected_router())
+        .nest("/auth/password", password::router())
         .nest("/shares", shares::router())
         .nest("/billing", billing::router())
         .nest("/activity", activity::router())
@@ -77,7 +79,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .layer(middleware::from_fn_with_state(state, attach_client_ip))
 }
 
-/// Per-IP rate limiter middleware for auth endpoints (20 req/min, burst 10).
+/// Per-IP rate limiter middleware for auth endpoints (NOPASS_AUTH_RATE_LIMIT_PER_MIN, default 60/min).
 async fn auth_rate_limit(
     State(state): State<AppState>,
     req: Request,

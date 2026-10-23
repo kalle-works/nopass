@@ -8,6 +8,14 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(nopass_api::healthcheck::run());
     }
 
+    // One-off secret generation for deployments; prints and exits without
+    // touching the database.
+    if std::env::args().nth(1).as_deref() == Some("generate-opaque-setup") {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        println!("{}", URL_SAFE_NO_PAD.encode(nopass_crypto::opaque::generate_server_setup()));
+        return Ok(());
+    }
+
     dotenv().ok();
 
     let filter = EnvFilter::try_from_default_env()

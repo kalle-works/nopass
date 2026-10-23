@@ -1,27 +1,29 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll } from "vitest";
 import {
+  changeMasterPassword,
+  completeAccountRecovery,
   computeEmailHash,
-  deriveMasterKey,
-  stretchMasterKey,
-  stretchMasterKeyRaw,
-  stretchMasterKeyAllRaw,
-  srpStep1,
-  srpStep2,
-  generateSrpRegistration,
-  generateUserKeyPair,
+  createOpaqueRegistration,
+  decryptItem,
   decryptUserPrivateKey,
+  deriveMasterKey,
+  deriveRecoveryKeys,
   encryptBytes,
   encryptItem,
-  decryptItem,
   generateRecoveryCode,
-  deriveRecoveryKeys,
-  wrapVaultSubkeys,
+  generateUserKeyPair,
+  importAccountKeys,
+  loginWithPassword,
+  stretchMasterKey,
+  stretchMasterKeyRaw,
+  unlockAccount,
   unwrapVaultSubkeys,
+  wrapVaultSubkeys,
 } from "../index.js";
 import { DEFAULT_KDF_PARAMS, type LoginItem } from "@nopass/types";
+import { liveAuthApi } from "./support/live-api";
 
-// Point at another API instance with NOPASS_TEST_API_URL (e.g. http://127.0.0.1:3021/v1)
 // (this package has no Node types, so read process.env through globalThis)
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env;
 const BASE = env?.["NOPASS_TEST_API_URL"] ?? "http://127.0.0.1:3001/v1";
@@ -39,18 +41,22 @@ async function apiCall(method: string, path: string, body?: unknown, token?: str
   return text ? JSON.parse(text) : null;
 }
 
+const auth = liveAuthApi(apiCall);
+
 async function register(email: string, password: string) {
   const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
   const keys = await stretchMasterKey(masterKey, email);
   const { encKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-  const { srpSalt, srpVerifier } = generateSrpRegistration(email, password);
+  const emailHash = computeEmailHash(email);
+  const registrationRecord = await createOpaqueRegistration(password, DEFAULT_KDF_PARAMS, (registrationRequest) =>
+    auth.opaqueRegisterStart({ emailHash, registrationRequest }),
+  );
   const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
   const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-  await apiCall("POST", "/auth/register", {
-    emailHash: computeEmailHash(email),
-    srpSalt,
-    srpVerifier,
+  await auth.opaqueRegisterFinish({
+    emailHash,
+    registrationRecord,
     kdfParams: DEFAULT_KDF_PARAMS,
     protectedSymmetricKey: protectedKey.blob,
     protectedSymmetricKeyIv: protectedKey.blobIv,
@@ -62,25 +68,17 @@ async function register(email: string, password: string) {
   return { masterKey, keys };
 }
 
+/** What every client does: log in, then open (or on first use, migrate to) the account key. */
 async function login(email: string, password: string) {
-  const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
-  const keys = await stretchMasterKey(masterKey, email);
-  const step1 = srpStep1();
-  const initResp = await apiCall("POST", "/auth/srp/init", {
-    emailHash: computeEmailHash(email),
-    clientPublicA: step1.clientPublicA,
-  });
-  const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-  const verifyResp = await apiCall("POST", "/auth/srp/verify", {
-    sessionId: initResp.sessionId,
-    clientProofM1: step2.clientProofM1,
-  });
-  step2.verifyServerProof(verifyResp.serverProofM2);
-  return { keys, token: verifyResp.sessionToken as string, vaultId: verifyResp.defaultVaultId as string, verifyResp };
+  const verifyResp = await loginWithPassword(auth, { email, password });
+  const account = await unlockAccount(auth, { email, password, session: verifyResp });
+  const keys = await importAccountKeys(account);
+  return { keys, account, token: verifyResp.sessionToken, userId: verifyResp.userId, vaultId: verifyResp.defaultVaultId };
 }
 
 const EMAIL = `recovery-${Date.now()}@nopass.test`;
 const PASSWORD = "original-passphrase-it-is-long";
+const CHANGED_PASSWORD = "the-changed-passphrase-17";
 const NEW_PASSWORD = "the-replacement-passphrase-42";
 
 const SECRET_ITEM: LoginItem = {
@@ -108,7 +106,7 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
   }, 120_000);
 
   it("stores an item and enables the recovery kit", async () => {
-    const { keys, token, vaultId } = await login(EMAIL, PASSWORD);
+    const { keys, account, token, vaultId } = await login(EMAIL, PASSWORD);
 
     const encrypted = await encryptItem(SECRET_ITEM, keys.vaultEncKey, keys.vaultMacKey);
     const created = await apiCall("POST", `/vaults/${vaultId}/items`, {
@@ -119,11 +117,9 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
     }, token);
     itemId = created.id;
 
-    const masterKey = await deriveMasterKey(PASSWORD, EMAIL, DEFAULT_KDF_PARAMS);
-    const subkeys = await stretchMasterKeyAllRaw(masterKey, EMAIL);
     recoveryCode = generateRecoveryCode();
     const { authKeyB64, wrapKey } = await deriveRecoveryKeys(recoveryCode, EMAIL);
-    const blob = await wrapVaultSubkeys(subkeys, wrapKey);
+    const blob = await wrapVaultSubkeys(account, wrapKey);
 
     await apiCall("PUT", "/auth/recovery", {
       recoveryAuthKey: authKeyB64,
@@ -135,72 +131,44 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
     expect(status.enabled).toBe(true);
   }, 120_000);
 
-  it("recovers the vault with the code and rotates to a new password", async () => {
-    // ── What the /recover page does, step by step ──
+  it("changes the password without touching items; the old password stops working", async () => {
+    const { token, userId } = await login(EMAIL, PASSWORD);
+    await changeMasterPassword(auth, {
+      email: EMAIL,
+      userId,
+      sessionToken: token,
+      currentPassword: PASSWORD,
+      newPassword: CHANGED_PASSWORD,
+    });
+
+    const { keys, vaultId, token: fresh } = await login(EMAIL, CHANGED_PASSWORD);
+    const items = await apiCall("GET", `/vaults/${vaultId}/items`, undefined, fresh);
+    expect(items[0].version).toBe(1);
+    expect(await decryptItem(items[0], keys.vaultEncKey, keys.vaultMacKey)).toEqual(SECRET_ITEM);
+    await expect(login(EMAIL, PASSWORD)).rejects.toThrow(/401/);
+  }, 240_000);
+
+  it("recovers with the kit made before the password change", async () => {
     const { authKeyB64, wrapKey } = await deriveRecoveryKeys(recoveryCode, EMAIL);
     const init = await apiCall("POST", "/auth/recovery/init", {
       emailHash: computeEmailHash(EMAIL),
       recoveryAuthKey: authKeyB64,
     });
-    expect(init.items).toHaveLength(1);
-
-    const old = await unwrapVaultSubkeys(
+    const recovered = await unwrapVaultSubkeys(
       { blob: init.recoveryBlob, blobIv: init.recoveryBlobIv, blobMac: "" },
       wrapKey,
     );
-    const oldEncKey = await crypto.subtle.importKey("raw", old.encKeyBytes, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
-    const oldMacKey = await crypto.subtle.importKey("raw", old.macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
-    const oldSmkKey = await crypto.subtle.importKey("raw", old.smkBytes, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
-
-    // The recovered keys really decrypt the vault
-    const recovered = await decryptItem(
-      { blob: init.items[0]!.blob, blobIv: init.items[0]!.blobIv, blobMac: init.items[0]!.blobMac },
-      oldEncKey,
-      oldMacKey,
+    await completeAccountRecovery(
+      {
+        opaqueStart: (req) => apiCall("POST", "/auth/recovery/opaque/start", req),
+        complete: (req) => apiCall("POST", "/auth/recovery/complete", req),
+      },
+      { email: EMAIL, newPassword: NEW_PASSWORD, init, recovered },
     );
-    expect(recovered).toEqual(SECRET_ITEM);
-
-    // Re-encrypt under the new password
-    const newMasterKey = await deriveMasterKey(NEW_PASSWORD, EMAIL, DEFAULT_KDF_PARAMS);
-    const newKeys = await stretchMasterKey(newMasterKey, EMAIL);
-    const newRaw = await stretchMasterKeyAllRaw(newMasterKey, EMAIL);
-    const { srpSalt, srpVerifier } = generateSrpRegistration(EMAIL, NEW_PASSWORD);
-    const reencrypted = await encryptItem(recovered, newKeys.vaultEncKey, newKeys.vaultMacKey);
-    const protectedKey = await encryptBytes(newRaw.encKeyBytes, newKeys.stretchedMasterKey);
-
-    const pkcs8 = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: Uint8Array.from(atob(init.protectedPrivateKeyIv), (c) => c.charCodeAt(0)) },
-      oldSmkKey,
-      Uint8Array.from(atob(init.protectedPrivateKey), (c) => c.charCodeAt(0)),
-    );
-    const rewrappedPrivate = await encryptBytes(new Uint8Array(pkcs8), newKeys.stretchedMasterKey);
-
-    const replacementCode = generateRecoveryCode();
-    const replacementKeys = await deriveRecoveryKeys(replacementCode, EMAIL);
-    const replacementBlob = await wrapVaultSubkeys(newRaw, replacementKeys.wrapKey);
-
-    await apiCall("POST", "/auth/recovery/complete", {
-      recoveryToken: init.recoveryToken,
-      srpSalt,
-      srpVerifier,
-      protectedSymmetricKey: protectedKey.blob,
-      protectedSymmetricKeyIv: protectedKey.blobIv,
-      protectedPrivateKey: rewrappedPrivate.blob,
-      protectedPrivateKeyIv: rewrappedPrivate.blobIv,
-      items: [{
-        id: itemId,
-        blob: reencrypted.blob,
-        blobIv: reencrypted.blobIv,
-        blobMac: reencrypted.blobMac,
-      }],
-      recoveryAuthKey: replacementKeys.authKeyB64,
-      recoveryBlob: replacementBlob.blob,
-      recoveryBlobIv: replacementBlob.blobIv,
-    });
   }, 240_000);
 
   it("logs in with the new password and decrypts the item", async () => {
-    const { keys, token, vaultId, verifyResp } = await login(EMAIL, NEW_PASSWORD);
+    const { keys, account, token, vaultId } = await login(EMAIL, NEW_PASSWORD);
     const items = await apiCall("GET", `/vaults/${vaultId}/items`, undefined, token);
     expect(items).toHaveLength(1);
 
@@ -213,15 +181,15 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
 
     // The re-wrapped org keypair opens under the new stretched master key too
     const privateKey = await decryptUserPrivateKey(
-      verifyResp.protectedPrivateKey,
-      verifyResp.protectedPrivateKeyIv,
+      account.protectedPrivateKey!,
+      account.protectedPrivateKeyIv!,
       keys.stretchedMasterKey,
     );
     expect(privateKey.type).toBe("private");
   }, 240_000);
 
-  it("rejects the old password and the burned recovery code", async () => {
-    await expect(login(EMAIL, PASSWORD)).rejects.toThrow(/401/);
+  it("rejects the previous password and the burned recovery code", async () => {
+    await expect(login(EMAIL, CHANGED_PASSWORD)).rejects.toThrow(/401/);
 
     const { authKeyB64 } = await deriveRecoveryKeys(recoveryCode, EMAIL);
     await expect(

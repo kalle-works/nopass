@@ -1,16 +1,20 @@
 use std::{net::IpAddr, num::NonZeroU32, sync::Arc};
 
 use governor::{DefaultKeyedRateLimiter, Quota};
+use hmac::{Hmac, Mac};
+use nopass_crypto::opaque::{self, ServerSetup};
+use sha2::Sha256;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{config::Config, stripe::StripeClient};
 
-/// Pending SRP handshakes and recovery tokens live in Postgres
-/// (pending_srp_sessions / pending_recovery_sessions) so any replica can
-/// finish a flow another replica started, and restarts don't drop logins.
-/// SRP handshake TTL — init → verify must complete within this window.
+/// Pending login handshakes and recovery tokens live in Postgres
+/// (pending_opaque_logins / pending_srp_sessions / pending_recovery_sessions)
+/// so any replica can finish a flow another replica started, and restarts
+/// don't drop logins. Handshake TTL — start → finish must complete within it.
 pub const SRP_SESSION_TTL_SECS: u64 = 300;
+pub const OPAQUE_LOGIN_TTL_SECS: u64 = 300;
 
 /// Recovery completion involves client-side re-encryption of the whole vault,
 /// so the window is longer than the SRP handshake's 5 minutes.
@@ -28,12 +32,16 @@ fn auth_limiter(per_minute: u32) -> DefaultKeyedRateLimiter<IpAddr> {
 pub struct AppState {
     pub db: PgPool,
     pub config: Config,
-    /// Per-IP rate limiter for auth endpoints (20 req/min, burst 10).
+    /// Per-IP rate limiter for auth endpoints (NOPASS_AUTH_RATE_LIMIT_PER_MIN,
+    /// default 60/min, burst half that). A login
+    /// is two requests (three with the SRP fallback), and guessing is bounded
+    /// per account by the login throttle, so this only has to stop floods.
     pub auth_rate_limiter: Arc<DefaultKeyedRateLimiter<IpAddr>>,
     /// Per-share limiter for the public view endpoint (6 req/min, burst 3).
     pub share_rate_limiter: Arc<DefaultKeyedRateLimiter<Uuid>>,
     /// Stripe client — `None` when STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are not set.
     pub stripe: Option<StripeClient>,
+    pub opaque_setup: Arc<ServerSetup>,
 }
 
 impl AppState {
@@ -57,28 +65,49 @@ impl AppState {
             }
         };
 
+        let opaque_setup = Arc::new(
+            opaque::parse_server_setup(&config.opaque_server_setup.0)
+                .expect("OPAQUE server setup is validated in Config::from_env"),
+        );
+
         Self {
             db,
             config,
             auth_rate_limiter,
             share_rate_limiter,
             stripe,
+            opaque_setup,
         }
     }
 
-    /// Spawn a background task that evicts expired SRP sessions every 60 seconds.
-    /// Without this, an attacker who calls srp/init repeatedly can exhaust server memory.
-    pub fn spawn_srp_cleanup(self: &Arc<Self>) {
+    /// The account's database key: HMAC-SHA256(email lookup key, client email
+    /// hash). Lowercased first because the client sends hex and the HMAC is
+    /// over the string.
+    pub fn account_key(&self, email_hash: &str) -> String {
+        account_key(&self.config.email_lookup_key.0, email_hash)
+    }
+
+    /// Spawn the periodic housekeeping task: evicts expired login handshakes
+    /// every 60 seconds (each start writes a row, so an attacker calling start
+    /// repeatedly would otherwise grow the table without bound), keys email
+    /// hashes left behind by older replicas, and runs hourly pruning.
+    pub fn spawn_housekeeping(self: &Arc<Self>) {
         let db = self.db.clone();
+        let lookup_key = self.config.email_lookup_key.0.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             let mut ticks: u64 = 0;
             loop {
                 interval.tick().await;
                 ticks += 1;
+                match crate::db::auth::key_email_hashes(&db, |h| account_key(&lookup_key, h)).await {
+                    Ok(n) if n > 0 => tracing::info!("keyed {n} legacy email hashes"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("email hash keying failed: {e}"),
+                }
                 match crate::db::pending::prune_expired(
                     &db,
-                    SRP_SESSION_TTL_SECS as i64,
+                    OPAQUE_LOGIN_TTL_SECS.max(SRP_SESSION_TTL_SECS) as i64,
                     RECOVERY_SESSION_TTL_SECS as i64,
                 )
                 .await
@@ -104,10 +133,21 @@ impl AppState {
                         Ok(_) => {}
                         Err(e) => tracing::warn!("session prune failed: {e}"),
                     }
+                    match crate::db::throttle::prune_stale(&db).await {
+                        Ok(n) if n > 0 => tracing::debug!("pruned {n} stale login throttle rows"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("login throttle prune failed: {e}"),
+                    }
                 }
             }
         });
     }
+}
+
+pub fn account_key(lookup_key: &[u8], email_hash: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(lookup_key).expect("HMAC accepts any key length");
+    mac.update(email_hash.to_ascii_lowercase().as_bytes());
+    hex::encode(mac.finalize().into_bytes())
 }
 
 #[cfg(test)]
@@ -120,8 +160,8 @@ mod tests {
     }
 
     #[test]
-    fn auth_limiter_default_is_burst_ten_and_override_raises_it() {
-        assert_eq!(allowed_in_a_row(&auth_limiter(20)), 10);
+    fn auth_limiter_default_is_burst_thirty_and_override_raises_it() {
+        assert_eq!(allowed_in_a_row(&auth_limiter(60)), 30);
         assert_eq!(allowed_in_a_row(&auth_limiter(1000)), 500);
     }
 }

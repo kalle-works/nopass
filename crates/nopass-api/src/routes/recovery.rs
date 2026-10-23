@@ -5,8 +5,11 @@ use axum::{
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
+use nopass_crypto::opaque;
 use nopass_models::{
-    EncryptedVaultItem, RecoveryCompleteRequest, RecoveryInitRequest, RecoveryInitResponse,
+    EncryptedVaultItem, OpaqueRegisterStartResponse, ReencryptedItem, RecoveryCompleteRequest,
+    RecoveryInitRequest, RecoveryInitResponse, RecoveryOpaqueStartRequest,
     RecoveryStatusResponse, SetRecoveryRequest,
 };
 use sha2::{Digest, Sha256};
@@ -16,13 +19,18 @@ use crate::{
     db::{activity, auth as db_auth, pending, recovery as db_recovery},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
-    routes::{vault::parse_item_type, ClientIp},
+    routes::{
+        auth::{decode_opaque, parse_email_hash},
+        vault::parse_item_type,
+        ClientIp,
+    },
     state::{AppState, RECOVERY_SESSION_TTL_SECS},
 };
 
 pub fn public_router() -> Router<AppState> {
     Router::new()
         .route("/init", post(recovery_init))
+        .route("/opaque/start", post(recovery_opaque_start))
         .route("/complete", post(recovery_complete))
 }
 
@@ -102,7 +110,8 @@ async fn recovery_init(
     // Same error for unknown email, no kit, and wrong code — no enumeration
     let invalid = || ApiError::Unauthorized("invalid recovery code".into());
 
-    let user = db_auth::find_user_by_email_hash(&state.db, &req.email_hash)
+    let email_hash = parse_email_hash(&req.email_hash)?;
+    let user = db_auth::find_user_by_account_key(&state.db, &state.account_key(&email_hash))
         .await?
         .ok_or_else(invalid)?;
 
@@ -116,8 +125,162 @@ async fn recovery_init(
         _ => return Err(ApiError::Internal(anyhow::anyhow!("recovery kit missing blob"))),
     };
 
-    let items = db_recovery::list_all_items_for_user(&state.db, user.id).await?;
-    let items = items
+    let items = encode_all_items(&state, user.id).await?;
+
+    activity::record(&state.db, user.id, "recovery_initiated", Some(&client_ip.to_string()), None).await;
+    let recovery_token = Uuid::new_v4();
+    pending::insert_recovery(&state.db, recovery_token, user.id).await?;
+
+    Ok(Json(RecoveryInitResponse {
+        recovery_token: recovery_token.to_string(),
+        user_id: user.id,
+        recovery_blob: B64.encode(blob),
+        recovery_blob_iv: B64.encode(blob_iv),
+        protected_private_key: user.protected_private_key.clone(),
+        protected_private_key_iv: user.protected_private_key_iv.clone(),
+        items,
+    }))
+}
+
+/// Live recovery session for `token`, or 401.
+async fn live_recovery_session(state: &AppState, token: &str) -> ApiResult<pending::PendingRecoverySession> {
+    let token: Uuid = token
+        .parse()
+        .map_err(|_| ApiError::Unauthorized("invalid recovery token".into()))?;
+    let session = pending::peek_recovery(&state.db, token)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
+    if (chrono::Utc::now() - session.created_at).num_seconds() > RECOVERY_SESSION_TTL_SECS as i64 {
+        return Err(ApiError::Unauthorized("recovery session expired".into()));
+    }
+    Ok(session)
+}
+
+/// OPAQUE registration round 1 for the new master password. The recovery
+/// token authorizes it; the record itself arrives with recovery/complete so
+/// the credential, keys and items rotate in one transaction.
+async fn recovery_opaque_start(
+    State(state): State<AppState>,
+    Json(req): Json<RecoveryOpaqueStartRequest>,
+) -> ApiResult<Json<OpaqueRegisterStartResponse>> {
+    let email_hash = parse_email_hash(&req.email_hash)?;
+    let request = decode_opaque(&req.registration_request, "registrationRequest")?;
+    let session = live_recovery_session(&state, &req.recovery_token).await?;
+    let user = db_auth::get_user_by_id(&state.db, session.user_id)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
+    if state.account_key(&email_hash) != user.email_hash {
+        return Err(ApiError::BadRequest("emailHash does not match this account".into()));
+    }
+
+    let response = opaque::registration_start(&state.opaque_setup, &request, email_hash.as_bytes())
+        .map_err(|_| ApiError::BadRequest("invalid registrationRequest".into()))?;
+    Ok(Json(OpaqueRegisterStartResponse {
+        registration_response: B64URL.encode(response),
+    }))
+}
+
+async fn recovery_complete(
+    State(state): State<AppState>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
+    Json(req): Json<RecoveryCompleteRequest>,
+) -> ApiResult<StatusCode> {
+    // Peek without consuming: a transient failure (DB hiccup, bad field) must
+    // leave the token usable so the client can retry without restarting the
+    // whole code-entry flow. The token holder already has full recovery power,
+    // so single-use isn't load-bearing; it's consumed on success below.
+    let pending_session = live_recovery_session(&state, &req.recovery_token).await?;
+    let token = pending_session.token;
+
+    let credential = match (&req.registration_record, &req.srp_salt, &req.srp_verifier) {
+        (Some(record), None, None) => {
+            let upload = decode_opaque(record, "registrationRecord")?;
+            db_recovery::NewCredential::Opaque(
+                opaque::registration_finish(&upload)
+                    .map_err(|_| ApiError::BadRequest("invalid registrationRecord".into()))?,
+            )
+        }
+        (None, Some(salt), Some(verifier)) => db_recovery::NewCredential::Srp {
+            salt: decode_b64(salt, "srp_salt")?,
+            verifier: decode_b64(verifier, "srp_verifier")?,
+        },
+        _ => {
+            return Err(ApiError::BadRequest(
+                "send either registrationRecord or srpSalt and srpVerifier".into(),
+            ))
+        }
+    };
+    let protected_key = decode_b64(&req.protected_symmetric_key, "protected_symmetric_key")?;
+    let protected_key_iv = decode_b64(&req.protected_symmetric_key_iv, "protected_symmetric_key_iv")?;
+    let new_auth_key = decode_b64(&req.recovery_auth_key, "recovery_auth_key")?;
+    let new_blob = decode_b64(&req.recovery_blob, "recovery_blob")?;
+    let new_blob_iv = decode_b64(&req.recovery_blob_iv, "recovery_blob_iv")?;
+
+    if new_auth_key.len() != 32 {
+        return Err(ApiError::BadRequest("recovery_auth_key must be 32 bytes".into()));
+    }
+
+    let wrapped_account_key = match (&req.wrapped_account_key, &req.wrapped_account_key_iv) {
+        (Some(k), Some(iv)) => Some((decode_b64(k, "wrappedAccountKey")?, decode_b64(iv, "wrappedAccountKeyIv")?)),
+        (None, None) => None,
+        _ => return Err(ApiError::BadRequest("send both wrappedAccountKey and its IV, or neither".into())),
+    };
+
+    // Current clients re-wrap the account key recovered from the kit and leave
+    // items alone. Clients predating the account key re-encrypt every item
+    // instead — a partial set would leave the rest undecryptable.
+    let items = if wrapped_account_key.is_some() {
+        if !req.items.is_empty() {
+            return Err(ApiError::BadRequest("items are not re-encrypted when the account key is re-wrapped".into()));
+        }
+        None
+    } else {
+        let expected = db_recovery::list_all_items_for_user(&state.db, pending_session.user_id).await?;
+        if expected.len() != req.items.len() {
+            return Err(ApiError::BadRequest(format!(
+                "expected {} re-encrypted items, got {}",
+                expected.len(),
+                req.items.len()
+            )));
+        }
+        Some(decode_reencrypted_items(&req.items)?)
+    };
+
+    let new_auth_hash = hash_auth_key(&new_auth_key);
+    db_recovery::rotate_master_password(
+        &state.db,
+        db_recovery::RotationAuthority::RecoveryToken(token),
+        pending_session.user_id,
+        db_recovery::PasswordRotation {
+            credential: &credential,
+            protected_symmetric_key: Some((&protected_key, &protected_key_iv)),
+            protected_private_key: req
+                .protected_private_key
+                .as_deref()
+                .zip(req.protected_private_key_iv.as_deref()),
+            wrapped_account_key: wrapped_account_key.as_ref().map(|(k, iv)| (k.as_slice(), iv.as_slice())),
+            recovery_kit: Some(db_recovery::NewRecoveryKit {
+                auth_hash: &new_auth_hash,
+                blob: &new_blob,
+                blob_iv: &new_blob_iv,
+            }),
+            reencrypted_items: items.as_deref(),
+        },
+    )
+    .await
+    .map_err(rotation_error)?;
+
+    // Token was burned inside the completion transaction
+    activity::record(&state.db, pending_session.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Every item the user owns, as the client must re-encrypt them when the
+/// master password changes.
+pub(crate) async fn encode_all_items(state: &AppState, user_id: Uuid) -> ApiResult<Vec<EncryptedVaultItem>> {
+    db_recovery::list_all_items_for_user(&state.db, user_id)
+        .await?
         .into_iter()
         .map(|item| {
             Ok(EncryptedVaultItem {
@@ -134,69 +297,11 @@ async fn recovery_init(
                 updated_at: item.updated_at,
             })
         })
-        .collect::<ApiResult<Vec<_>>>()?;
-
-    activity::record(&state.db, user.id, "recovery_initiated", Some(&client_ip.to_string()), None).await;
-    let recovery_token = Uuid::new_v4();
-    pending::insert_recovery(&state.db, recovery_token, user.id).await?;
-
-    Ok(Json(RecoveryInitResponse {
-        recovery_token: recovery_token.to_string(),
-        recovery_blob: B64.encode(blob),
-        recovery_blob_iv: B64.encode(blob_iv),
-        protected_private_key: user.protected_private_key.clone(),
-        protected_private_key_iv: user.protected_private_key_iv.clone(),
-        items,
-    }))
+        .collect()
 }
 
-async fn recovery_complete(
-    State(state): State<AppState>,
-    Extension(ClientIp(client_ip)): Extension<ClientIp>,
-    Json(req): Json<RecoveryCompleteRequest>,
-) -> ApiResult<StatusCode> {
-    let token: Uuid = req
-        .recovery_token
-        .parse()
-        .map_err(|_| ApiError::Unauthorized("invalid recovery token".into()))?;
-
-    // Peek without consuming: a transient failure (DB hiccup, bad field) must
-    // leave the token usable so the client can retry without restarting the
-    // whole code-entry flow. The token holder already has full recovery power,
-    // so single-use isn't load-bearing; it's consumed on success below.
-    let pending_session = pending::peek_recovery(&state.db, token)
-        .await?
-        .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
-
-    if (chrono::Utc::now() - pending_session.created_at).num_seconds() > RECOVERY_SESSION_TTL_SECS as i64 {
-        return Err(ApiError::Unauthorized("recovery session expired".into()));
-    }
-
-    let srp_salt = decode_b64(&req.srp_salt, "srp_salt")?;
-    let srp_verifier = decode_b64(&req.srp_verifier, "srp_verifier")?;
-    let protected_key = decode_b64(&req.protected_symmetric_key, "protected_symmetric_key")?;
-    let protected_key_iv = decode_b64(&req.protected_symmetric_key_iv, "protected_symmetric_key_iv")?;
-    let new_auth_key = decode_b64(&req.recovery_auth_key, "recovery_auth_key")?;
-    let new_blob = decode_b64(&req.recovery_blob, "recovery_blob")?;
-    let new_blob_iv = decode_b64(&req.recovery_blob_iv, "recovery_blob_iv")?;
-
-    if new_auth_key.len() != 32 {
-        return Err(ApiError::BadRequest("recovery_auth_key must be 32 bytes".into()));
-    }
-
-    // The client must re-encrypt every single item — a partial set would leave
-    // the rest of the vault undecryptable under the new keys.
-    let expected = db_recovery::list_all_items_for_user(&state.db, pending_session.user_id).await?;
-    if expected.len() != req.items.len() {
-        return Err(ApiError::BadRequest(format!(
-            "expected {} re-encrypted items, got {}",
-            expected.len(),
-            req.items.len()
-        )));
-    }
-
-    let items = req
-        .items
+pub(crate) fn decode_reencrypted_items(items: &[ReencryptedItem]) -> ApiResult<Vec<db_recovery::ReencryptedItemRow>> {
+    items
         .iter()
         .map(|item| {
             Ok(db_recovery::ReencryptedItemRow {
@@ -206,39 +311,17 @@ async fn recovery_complete(
                 blob_mac: decode_b64(&item.blob_mac, "item blob_mac")?,
             })
         })
-        .collect::<ApiResult<Vec<_>>>()?;
+        .collect()
+}
 
-    let new_auth_hash = hash_auth_key(&new_auth_key);
-    db_recovery::complete_recovery(
-        &state.db,
-        token,
-        pending_session.user_id,
-        db_recovery::RecoveryCompletion {
-            srp_salt: &srp_salt,
-            srp_verifier: &srp_verifier,
-            protected_symmetric_key: &protected_key,
-            protected_symmetric_key_iv: &protected_key_iv,
-            protected_private_key: req.protected_private_key.as_deref(),
-            protected_private_key_iv: req.protected_private_key_iv.as_deref(),
-            recovery_auth_hash: &new_auth_hash,
-            recovery_blob: &new_blob,
-            recovery_blob_iv: &new_blob_iv,
-        },
-        &items,
-    )
-    .await
-    .map_err(|e| match e {
-        db_recovery::CompleteRecoveryError::ItemMismatch => {
-            ApiError::BadRequest("one or more items do not belong to this account".into())
-        }
+pub(crate) fn rotation_error(e: db_recovery::CompleteRecoveryError) -> ApiError {
+    match e {
+        db_recovery::CompleteRecoveryError::ItemMismatch => ApiError::BadRequest(
+            "every item must be re-encrypted, and only this account's items".into(),
+        ),
         db_recovery::CompleteRecoveryError::TokenConsumed => {
             ApiError::Unauthorized("recovery session not found or expired".into())
         }
         db_recovery::CompleteRecoveryError::Db(e) => ApiError::Internal(e),
-    })?;
-
-    // Token was burned inside the completion transaction
-    activity::record(&state.db, pending_session.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
-
-    Ok(StatusCode::NO_CONTENT)
+    }
 }

@@ -12,7 +12,7 @@ nopwd is a password manager that treats your secrets as yours alone.
 Everything — logins, passkeys, cards, notes, SSH keys — is encrypted on your
 device with keys derived from your master password. Our servers store
 ciphertext they cannot decrypt. Not as a promise: as math (Argon2id,
-AES-256-GCM, SRP-6a — the client is open source).
+AES-256-GCM, OPAQUE login — the client is open source).
 
 This extension gives you:
 

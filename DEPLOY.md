@@ -35,7 +35,7 @@ fix, not a rollback of the images alone.
 ### Replicas and state
 
 Both Deployments run two replicas with `maxUnavailable: 0`. The API holds no
-session state in memory: SRP handshakes and recovery tokens live in Postgres
+session state in memory: login handshakes and recovery tokens live in Postgres
 (since v0.1.3), so any replica can finish a login another one started and
 rollouts do not drop in-flight logins. The web pod is stateless. A
 PodDisruptionBudget keeps one web pod up during node drains.
@@ -49,9 +49,14 @@ controller key. Never commit a plain Secret.
 
 | Secret | Keys | Used by |
 | --- | --- | --- |
-| `nopwd-secrets` | `database-url`, `session-secret` | api, backup |
+| `nopwd-secrets` | `database-url`, `opaque-server-setup`, `email-lookup-key` | api (database-url also backup) |
 | `nopwd-backup-secrets` | `passphrase`, `deploy-key` | backup, restore drill |
 | `ghcr-pull-secret` | `.dockerconfigjson` | image pulls (rotate with `scripts/rotate-ghcr-pull-secret.sh` in the infra repo) |
+
+`opaque-server-setup` (`nopass-api generate-opaque-setup`) and
+`email-lookup-key` (`openssl rand -base64 32`) are set once and never rotated:
+replacing either locks every account out. Back both up next to the backup
+passphrase. See [docs/auth.md](docs/auth.md).
 
 The backup `passphrase` encrypts every dump. Keep a copy outside the cluster
 (the password manager); without it the backups are unreadable. The
