@@ -14,6 +14,8 @@ import {
   generateSrpRegistration,
   stretchMasterKeyRaw,
   encryptBytes,
+  deriveIdentityKey,
+  signOrgKeyWrap,
 } from "../index.js";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 
@@ -194,11 +196,31 @@ describe.skipIf(!apiAvailable)("Organization API — end-to-end", () => {
     const orgKey = await decryptOrgKey(orgEncryptedKey, alicePrivateKey);
     const encKeyForBob = await encryptOrgKeyForMember(orgKey, pkResp.publicKey as string);
 
+    // Alice signs the wrap so Bob can tell it came from her
+    const aliceUserId = (await apiGet(`/organizations/public-key/${computeEmailHash(ALICE_EMAIL)}`, aliceToken))
+      .userId as string;
+    const aliceIdentity = await deriveIdentityKey(
+      aliceKeyPair.protectedPrivateKey,
+      aliceKeyPair.protectedPrivateKeyIv,
+      aliceKeys.stretchedMasterKey,
+    );
+    const wrapSignature = signOrgKeyWrap(
+      {
+        orgId,
+        recipientUserId: pkResp.userId as string,
+        signerUserId: aliceUserId,
+        role: "member",
+        encryptedOrgKey: encKeyForBob,
+      },
+      aliceIdentity.secretKey,
+    );
+
     // Invite Bob
     await apiPost(`/organizations/${orgId}/members`, {
       emailHash: bobEmailHash,
       role: "member",
       encryptedOrgKey: encKeyForBob,
+      wrapSignature,
     }, aliceToken);
 
     // Bob accepts

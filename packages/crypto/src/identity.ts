@@ -198,3 +198,69 @@ export function verifyMemberKey(bundle: KeyBundle, pins: KeyPinStore): VerifiedK
     firstSeen: pinned === undefined,
   };
 }
+
+// ── Signed org-key wraps ─────────────────────────────────────────────────────
+
+/** Who wrapped an org key for whom. The signature covers all of it. */
+export interface OrgKeyWrap {
+  orgId: string;
+  recipientUserId: string;
+  signerUserId: string;
+  role: string;
+  /** base64 RSA-OAEP ciphertext of the org key */
+  encryptedOrgKey: string;
+}
+
+/** label || 0 || orgId || recipient || signer || len(role) || role || ciphertext */
+function wrapMessage(wrap: OrgKeyWrap): Uint8Array {
+  const role = enc.encode(wrap.role);
+  if (role.length > 255) throw new Error("role too long");
+  return concat(
+    enc.encode("nopwd-org-key-wrap-v1"),
+    Uint8Array.of(0),
+    uuidBytes(wrap.orgId),
+    uuidBytes(wrap.recipientUserId),
+    uuidBytes(wrap.signerUserId),
+    Uint8Array.of(role.length),
+    role,
+    fromBase64(wrap.encryptedOrgKey),
+  );
+}
+
+export function signOrgKeyWrap(wrap: OrgKeyWrap, identitySecretKey: Uint8Array): string {
+  return toBase64(ed25519.sign(wrapMessage(wrap), identitySecretKey));
+}
+
+export class UntrustedOrgKeyError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "UntrustedOrgKeyError";
+  }
+}
+
+/**
+ * Check that an org-key wrap was made by `signer` (whose bundle must pass
+ * verifyMemberKey — pinned, or pinned now on first contact) and is for this
+ * org, recipient and role. A server that wrapped a key of its own choosing to
+ * the recipient cannot produce this signature.
+ */
+export function verifyOrgKeyWrap(
+  wrap: OrgKeyWrap,
+  signature: string | null,
+  signer: KeyBundle,
+  pins: KeyPinStore,
+): VerifiedKey {
+  if (signer.userId !== wrap.signerUserId) throw new UntrustedOrgKeyError("org key signer does not match the inviter");
+  const verified = verifyMemberKey(signer, pins);
+  if (!signature) throw new UntrustedOrgKeyError("This org key is not signed by the person who shared it.");
+  let ok = false;
+  try {
+    ok = ed25519.verify(fromBase64(signature), wrapMessage(wrap), fromBase64(signer.identityPublicKey!), {
+      zip215: false,
+    });
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new UntrustedOrgKeyError("This org key's signature is invalid — it may have been replaced by the server.");
+  return verified;
+}
