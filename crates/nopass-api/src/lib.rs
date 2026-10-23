@@ -38,9 +38,12 @@ pub async fn run() -> Result<()> {
     metrics::spawn_server();
     // Key legacy email hashes before serving: until a row is keyed, its
     // account can't be found by login.
-    let keyed = db::auth::key_email_hashes(&pool, |h| state::account_key(&config.email_lookup_key.0, h)).await?;
-    if keyed > 0 {
-        info!("keyed {keyed} legacy email hashes");
+    // A failure here must not stop the API: lookups also match unkeyed rows,
+    // and the housekeeping task retries every minute.
+    match db::auth::key_email_hashes(&pool, |h| state::account_key(&config.email_lookup_key.0, h)).await {
+        Ok(keyed) if keyed > 0 => info!("keyed {keyed} legacy email hashes"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("email hash keying failed, retrying in the background: {e:#}"),
     }
 
     let state = Arc::new(AppState::new(pool, config.clone()));

@@ -8,11 +8,20 @@ use crate::models::user::User;
 // `account_key` throughout is the keyed email hash (AppState::account_key),
 // never the client's raw email hash.
 
-pub async fn find_user_by_account_key(pool: &PgPool, account_key: &str) -> Result<Option<User>> {
+/// The account for an email: by its keyed hash, or by the raw client hash on
+/// a row not yet rekeyed (written by an older replica during a rolling
+/// deploy). The keyed row wins if both exist.
+pub async fn find_user(pool: &PgPool, account_key: &str, email_hash: &str) -> Result<Option<User>> {
     let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE email_hash = $1 AND email_hash_keyed",
+        r#"
+        SELECT * FROM users
+        WHERE (email_hash = $1 AND email_hash_keyed) OR (email_hash = $2 AND NOT email_hash_keyed)
+        ORDER BY email_hash_keyed DESC
+        LIMIT 1
+        "#,
     )
     .bind(account_key)
+    .bind(email_hash)
     .fetch_optional(pool)
     .await?;
     Ok(user)
@@ -73,26 +82,68 @@ pub async fn create_user(pool: &PgPool, new: NewUser<'_>) -> Result<Option<User>
     Ok(Some(user))
 }
 
-/// Store a new OPAQUE record and drop any SRP verifier in the same write: after
-/// this the account is OPAQUE-only and the brute-forceable verifier is gone.
-pub async fn set_opaque_record(pool: &PgPool, user_id: Uuid, record: &[u8]) -> Result<()> {
-    sqlx::query(
+/// SRP → OPAQUE upgrade in one transaction: OPAQUE record and wrapped account
+/// key in, SRP verifier out, pending handshakes dropped, every session but
+/// `keep_session` revoked. Returns false (and changes nothing) if the account
+/// no longer has an SRP verifier, e.g. a concurrent upgrade won.
+pub async fn complete_srp_upgrade(
+    pool: &PgPool,
+    user_id: Uuid,
+    keep_session: Uuid,
+    record: &[u8],
+    wrapped: (&[u8], &[u8]),
+    protected_private_key: Option<(&str, &str)>,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let updated = sqlx::query(
         r#"
         UPDATE users
-        SET opaque_record = $2, srp_salt = NULL, srp_verifier = NULL, updated_at = NOW()
-        WHERE id = $1
+        SET opaque_record = $2, srp_salt = NULL, srp_verifier = NULL,
+            wrapped_account_key = $3, wrapped_account_key_iv = $4,
+            protected_private_key = COALESCE($5, protected_private_key),
+            protected_private_key_iv = COALESCE($6, protected_private_key_iv),
+            updated_at = NOW()
+        WHERE id = $1 AND srp_verifier IS NOT NULL
         "#,
     )
     .bind(user_id)
     .bind(record)
-    .execute(pool)
+    .bind(wrapped.0)
+    .bind(wrapped.1)
+    .bind(protected_private_key.map(|k| k.0))
+    .bind(protected_private_key.map(|k| k.1))
+    .execute(&mut *tx)
     .await?;
+    if updated.rows_affected() != 1 {
+        return Ok(false);
+    }
+    drop_pending_logins(&mut tx, user_id).await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2")
+        .bind(user_id)
+        .bind(keep_session)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// In-flight login handshakes were started against the old credential; a
+/// credential change must not let one finish afterwards.
+pub async fn drop_pending_logins(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<()> {
+    sqlx::query("DELETE FROM pending_opaque_logins WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM pending_srp_sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
     Ok(())
 }
 
 /// One-time migration to the wrapped account key; also moves the private key
 /// to its account-key-derived wrap. Returns false if the account already has
-/// one, so a later (possibly stolen-session) call can't replace it.
+/// one: the wrap is only ever replaced by a password change or recovery.
 pub async fn set_account_key(
     pool: &PgPool,
     user_id: Uuid,
@@ -119,27 +170,53 @@ pub async fn set_account_key(
     Ok(result.rows_affected() == 1)
 }
 
+/// Advisory lock id for the email-hash rekey, so replicas take turns.
+const REKEY_LOCK: i64 = 0x6e6f_7061_7373_6b79; // "nopasskey"
+
 /// Rewrite raw client email hashes (pre-OPAQUE rows, or rows written by an
-/// older replica during a rolling deploy) into keyed account keys. Idempotent
-/// and safe to race: each row is only rewritten while still unkeyed.
+/// older replica during a rolling deploy) into keyed account keys.
+///
+/// Replicas take turns through an advisory lock. Each row is rewritten in
+/// its own savepoint: if its keyed form already exists (an older replica
+/// registered the same address again during the rollout), that row is
+/// logged as `email_rekey_conflict` for a manual merge and skipped, and the
+/// rest still get keyed. Until then, lookups also match the raw form
+/// (`find_user`), so the account stays reachable.
 pub async fn key_email_hashes(pool: &PgPool, key: impl Fn(&str) -> String) -> Result<u64> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(REKEY_LOCK)
+        .execute(&mut *tx)
+        .await?;
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT id, email_hash FROM users WHERE NOT email_hash_keyed",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
 
     let mut keyed = 0;
     for (id, email_hash) in rows {
-        keyed += sqlx::query(
+        let mut row = sqlx::Acquire::begin(&mut *tx).await?;
+        let result = sqlx::query(
             "UPDATE users SET email_hash = $2, email_hash_keyed = TRUE WHERE id = $1 AND NOT email_hash_keyed",
         )
         .bind(id)
         .bind(key(&email_hash))
-        .execute(pool)
-        .await?
-        .rows_affected();
+        .execute(&mut *row)
+        .await;
+        match result {
+            Ok(done) => {
+                row.commit().await?;
+                keyed += done.rows_affected();
+            }
+            Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+                row.rollback().await?;
+                tracing::error!(event = "email_rekey_conflict", user_id = %id, "two accounts for one email; merge manually");
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
+    tx.commit().await?;
     Ok(keyed)
 }
 

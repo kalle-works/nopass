@@ -111,7 +111,7 @@ async fn recovery_init(
     let invalid = || ApiError::Unauthorized("invalid recovery code".into());
 
     let email_hash = parse_email_hash(&req.email_hash)?;
-    let user = db_auth::find_user_by_account_key(&state.db, &state.account_key(&email_hash))
+    let user = db_auth::find_user(&state.db, &state.account_key(&email_hash), &email_hash)
         .await?
         .ok_or_else(invalid)?;
 
@@ -133,7 +133,6 @@ async fn recovery_init(
 
     Ok(Json(RecoveryInitResponse {
         recovery_token: recovery_token.to_string(),
-        user_id: user.id,
         recovery_blob: B64.encode(blob),
         recovery_blob_iv: B64.encode(blob_iv),
         protected_private_key: user.protected_private_key.clone(),
@@ -235,6 +234,10 @@ async fn recovery_complete(
         }
         None
     } else {
+        let distinct: std::collections::HashSet<_> = req.items.iter().map(|i| i.id).collect();
+        if distinct.len() != req.items.len() {
+            return Err(ApiError::BadRequest("duplicate item ids".into()));
+        }
         let expected = db_recovery::list_all_items_for_user(&state.db, pending_session.user_id).await?;
         if expected.len() != req.items.len() {
             return Err(ApiError::BadRequest(format!(

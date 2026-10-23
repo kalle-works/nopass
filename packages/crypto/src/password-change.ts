@@ -15,6 +15,8 @@ import {
 } from "@nopass/types";
 
 import { unwrapAccountKey, wrapAccountKey, zeroAccount } from "./account-key";
+import { assertKdfFloor } from "./account-state";
+import { IncorrectPasswordError, keyStretching } from "./password-login";
 import { computeEmailHash, deriveMasterKey } from "./kdf";
 
 export interface PasswordChangeApi {
@@ -22,31 +24,16 @@ export interface PasswordChangeApi {
   passwordChangeFinish(req: PasswordChangeFinishRequest, token: string): Promise<void>;
 }
 
-/** The current password didn't open the server's login response. */
-export class IncorrectPasswordError extends Error {
-  constructor() {
-    super("Current master password is incorrect.");
-    this.name = "IncorrectPasswordError";
-  }
-}
-
 export interface PasswordChangeOptions {
   email: string;
-  userId: string;
   sessionToken: string;
   currentPassword: string;
   newPassword: string;
 }
 
-function keyStretching(params: { iterations: number; memoryKib: number; parallelism: number }) {
-  return {
-    "argon2id-custom": { iterations: params.iterations, memory: params.memoryKib, parallelism: params.parallelism },
-  } as const;
-}
-
 export async function changeMasterPassword(
   api: PasswordChangeApi,
-  { email, userId, sessionToken, currentPassword, newPassword }: PasswordChangeOptions,
+  { email, sessionToken, currentPassword, newPassword }: PasswordChangeOptions,
 ): Promise<void> {
   await opaque.ready;
   const login = opaque.client.startLogin({ password: currentPassword });
@@ -64,21 +51,21 @@ export async function changeMasterPassword(
     clientLoginState: login.clientLoginState,
     loginResponse: started.loginResponse,
     password: currentPassword,
-    keyStretching: keyStretching(started.kdfParams),
+    keyStretching: keyStretching(assertKdfFloor(started.kdfParams)),
   });
   if (!proof) throw new IncorrectPasswordError();
   const { registrationRecord } = opaque.client.finishRegistration({
     clientRegistrationState: registration.clientRegistrationState,
     registrationResponse: started.registrationResponse,
     password: newPassword,
-    keyStretching: keyStretching(started.kdfParams),
+    keyStretching: keyStretching(assertKdfFloor(started.kdfParams)),
   });
 
   const oldMaster = await deriveMasterKey(currentPassword, email, DEFAULT_KDF_PARAMS);
   const newMaster = await deriveMasterKey(newPassword, email, DEFAULT_KDF_PARAMS);
-  const account = await unwrapAccountKey(started, oldMaster, email, userId);
+  const account = await unwrapAccountKey(started, oldMaster, email);
   try {
-    const rewrapped = await wrapAccountKey(account, newMaster, email, userId);
+    const rewrapped = await wrapAccountKey(account, newMaster, email);
     await api.passwordChangeFinish(
       {
         changeId: started.changeId,

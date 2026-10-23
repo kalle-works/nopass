@@ -8,7 +8,7 @@ export const passwdCommand = new Command("passwd")
   .description("change your master password (signs out your other devices)")
   .action(async () => {
     const session = loadSession();
-    if (!session?.userId) {
+    if (!session) {
       process.stderr.write("Log in first (`nopwd login`), then run this again.\n");
       process.exit(1);
     }
@@ -31,7 +31,6 @@ export const passwdCommand = new Command("passwd")
       // Only the wrap of the account key changes, so this session's vault keys stay valid.
       await changeMasterPassword(createApiClient(session.apiUrl).auth, {
         email: session.email,
-        userId: session.userId,
         sessionToken: session.sessionToken,
         currentPassword,
         newPassword,
@@ -40,6 +39,8 @@ export const passwdCommand = new Command("passwd")
     } catch (err) {
       if (err instanceof IncorrectPasswordError || (err instanceof ApiError && err.status === 401)) {
         process.stderr.write("Current master password is incorrect.\n");
+      } else if (err instanceof ApiError && err.status === 403) {
+        process.stderr.write("Your session is too old to change the password. Run `nopwd login`, then retry within 15 minutes.\n");
       } else if (err instanceof ApiError && err.status === 409) {
         process.stderr.write("Log in again first so your account can be upgraded, then retry.\n");
       } else {

@@ -62,7 +62,7 @@ export async function completeAccountRecovery(
     const registrationRecord = await createOpaqueRegistration(newPassword, DEFAULT_KDF_PARAMS, (registrationRequest) =>
       api.opaqueStart({ recoveryToken: init.recoveryToken, emailHash: computeEmailHash(email), registrationRequest }),
     );
-    const wrapped = await wrapAccountKey(account, masterKey, email, init.userId);
+    const wrapped = await wrapAccountKey(account, masterKey, email);
     const smk = await importAes(smkBytes);
     const protectedKey = await encryptBytes(account.encKeyBytes, smk);
 

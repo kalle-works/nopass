@@ -3,7 +3,7 @@ mod helpers;
 use axum::http::StatusCode;
 use axum_test::TestServer;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use helpers::{build_test_server, compute_email_hash, login, register_user};
+use helpers::{build_test_server, compute_email_hash, login, password_proof, register_user};
 use sqlx::PgPool;
 
 /// Creating an org is how a user publishes an RSA public key today.
@@ -30,6 +30,13 @@ fn identity(byte: u8) -> serde_json::Value {
     })
 }
 
+/// The first publish carries a fresh password proof.
+async fn first_identity(server: &TestServer, token: &str, email: &str, byte: u8) -> serde_json::Value {
+    let mut body = identity(byte);
+    body["proof"] = password_proof(server, token, email, "password").await;
+    body
+}
+
 /// A published identity key can never be replaced through the API: a stolen
 /// session must not be able to swap it and re-sign a substituted RSA key.
 #[sqlx::test(migrations = "src/db/migrations")]
@@ -42,7 +49,9 @@ async fn identity_key_is_write_once(pool: PgPool) {
     let put = |body: serde_json::Value| {
         server.put("/v1/keys/identity").authorization_bearer(&alice.session_token).json(&body)
     };
-    put(identity(1)).await.assert_status(StatusCode::NO_CONTENT);
+    put(first_identity(&server, &alice.session_token, "alice@example.com", 1).await)
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
     put(identity(1)).await.assert_status(StatusCode::NO_CONTENT);
     put(identity(2)).await.assert_status(StatusCode::CONFLICT);
 
@@ -61,7 +70,7 @@ async fn key_lookups_return_the_signed_bundle(pool: PgPool) {
     server
         .put("/v1/keys/identity")
         .authorization_bearer(&alice.session_token)
-        .json(&identity(1))
+        .json(&first_identity(&server, &alice.session_token, "alice@example.com", 1).await)
         .await
         .assert_status(StatusCode::NO_CONTENT);
 
@@ -99,7 +108,7 @@ async fn invites_carry_the_signed_wrap_chain_up_to_the_owner(pool: PgPool) {
     server
         .put("/v1/keys/identity")
         .authorization_bearer(&alice.session_token)
-        .json(&identity(1))
+        .json(&first_identity(&server, &alice.session_token, "alice@example.com", 1).await)
         .await
         .assert_status(StatusCode::NO_CONTENT);
 
@@ -216,4 +225,25 @@ async fn vault_format_marker_round_trips_per_account(pool: PgPool) {
         server.get("/v1/keys/vault-format").authorization_bearer(&bob.session_token).await.json();
     assert_eq!(mine["marker"].as_str(), Some(marker.as_str()));
     assert!(theirs["marker"].is_null());
+}
+
+/// The first publish pins the account's identity for good, so a session token
+/// without the password can't do it.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn first_identity_publish_needs_the_password(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, "alice@example.com", "password").await;
+    let alice = login(&server, "alice@example.com", "password").await;
+    create_org(&server, &alice.session_token).await;
+    let put = |body: serde_json::Value| {
+        server.put("/v1/keys/identity").authorization_bearer(&alice.session_token).json(&body)
+    };
+
+    put(identity(1)).await.assert_status(StatusCode::UNAUTHORIZED);
+    let mut wrong = identity(1);
+    wrong["proof"] = password_proof(&server, &alice.session_token, "alice@example.com", "not the password").await;
+    put(wrong).await.assert_status(StatusCode::UNAUTHORIZED);
+
+    let me: serde_json::Value = server.get("/v1/keys/me").authorization_bearer(&alice.session_token).await.json();
+    assert!(me["identityPublicKey"].is_null());
 }

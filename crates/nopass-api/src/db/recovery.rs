@@ -27,6 +27,7 @@ pub async fn set_recovery(
     blob: &[u8],
     blob_iv: &[u8],
 ) -> Result<()> {
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         UPDATE users
@@ -39,12 +40,19 @@ pub async fn set_recovery(
     .bind(auth_hash)
     .bind(blob)
     .bind(blob_iv)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    // A token from init holds the old kit's authority; it dies with the kit.
+    sqlx::query("DELETE FROM pending_recovery_sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 
 pub async fn clear_recovery(pool: &PgPool, user_id: Uuid) -> Result<()> {
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         UPDATE users
@@ -54,8 +62,14 @@ pub async fn clear_recovery(pool: &PgPool, user_id: Uuid) -> Result<()> {
         "#,
     )
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    // A token from init holds the old kit's authority; it dies with the kit.
+    sqlx::query("DELETE FROM pending_recovery_sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -124,6 +138,13 @@ pub async fn rotate_master_password(
     rotation: PasswordRotation<'_>,
 ) -> std::result::Result<(), CompleteRecoveryError> {
     let mut tx = pool.begin().await?;
+
+    // Serialize with item creation (create_item takes FOR SHARE) so the
+    // re-encrypted set below can't miss an item created meanwhile.
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
 
     // Consume the token INSIDE the transaction: a concurrent completion
     // serializes on this row and sees zero rows (replay refused), while a
@@ -210,6 +231,15 @@ pub async fn rotate_master_password(
             return Err(CompleteRecoveryError::ItemMismatch);
         }
     }
+
+    crate::db::auth::drop_pending_logins(&mut tx, user_id)
+        .await
+        .map_err(CompleteRecoveryError::Db)?;
+    // Recovery tokens were issued against the old kit; none may outlive the rotation.
+    sqlx::query("DELETE FROM pending_recovery_sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
 
     // Sessions authenticated against the old password are revoked
     let keep_session = match authority {

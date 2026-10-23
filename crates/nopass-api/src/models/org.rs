@@ -208,4 +208,7 @@ pub struct PublicKeyResponse {
 pub struct SetIdentityBody {
     pub identity_public_key: String,
     pub public_key_signature: String,
+    /// Fresh password proof; required for the first publish, which binds the
+    /// account to an identity key for good.
+    pub proof: Option<nopass_models::PasswordProof>,
 }

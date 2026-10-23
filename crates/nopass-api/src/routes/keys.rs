@@ -7,6 +7,7 @@ use crate::{
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     models::org::{PublicKeyResponse, SetIdentityBody},
+    routes::{proof::verify_password_proof, ClientIp},
     state::AppState,
 };
 
@@ -65,10 +66,13 @@ async fn get_own_bundle(
 }
 
 /// Publish the caller's identity key and bundle signature. Write-once: the
-/// signature is verified by the clients that rely on it, not here.
+/// signature is verified by the clients that rely on it, not here. Because the
+/// first publish binds the account to that key for good, it takes a fresh
+/// password proof; a stolen session token alone can't pin a key of its own.
 async fn set_identity(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(body): Json<SetIdentityBody>,
 ) -> ApiResult<StatusCode> {
     let key_len = B64.decode(&body.identity_public_key).map(|k| k.len());
@@ -78,6 +82,15 @@ async fn set_identity(
     let sig_len = B64.decode(&body.public_key_signature).map(|s| s.len());
     if sig_len != Ok(64) {
         return Err(ApiError::BadRequest("publicKeySignature must be 64 bytes of base64".into()));
+    }
+
+    let current = db_keys::get_bundle(&state.db, auth.user_id).await?;
+    if current.and_then(|b| b.identity_public_key).is_none() {
+        let proof = body
+            .proof
+            .as_ref()
+            .ok_or_else(|| ApiError::Unauthorized("publishing an identity key needs a password proof".into()))?;
+        verify_password_proof(&state, &auth, client_ip, proof).await?;
     }
 
     match db_keys::set_identity(&state.db, auth.user_id, &body.identity_public_key, &body.public_key_signature)

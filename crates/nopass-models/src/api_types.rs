@@ -70,12 +70,71 @@ pub struct RegisterResponse {
     pub user_id: Uuid,
 }
 
-/// Authenticated re-registration finish: replaces the account's credential
-/// (and deletes any SRP verifier).
+/// A fresh OPAQUE proof of the password inside an authenticated request.
+/// Changes that replace key material require one, so a stolen session token
+/// alone can't make them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpaqueReregisterFinishRequest {
+pub struct PasswordProofStartRequest {
+    pub email_hash: String,
+    pub start_login_request: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordProofStartResponse {
+    pub proof_id: Uuid,
+    pub login_response: String,
+    pub kdf_params: KdfParams,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordProof {
+    pub proof_id: Uuid,
+    pub finish_login_request: String,
+}
+
+/// SRP → OPAQUE upgrade, round 1: a fresh SRP challenge plus an OPAQUE
+/// registration for the same password.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpgradeStartRequest {
+    pub email_hash: String,
+    /// Base64 SRP client ephemeral A
+    pub client_public_a: String,
+    pub registration_request: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpgradeStartResponse {
+    pub upgrade_id: Uuid,
+    pub server_public_b: String,
+    pub srp_salt: String,
+    pub kdf_params: KdfParams,
+    pub registration_response: String,
+}
+
+/// Round 2: the SRP proof, the OPAQUE record and the wrapped account key,
+/// applied together.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpgradeFinishRequest {
+    pub upgrade_id: Uuid,
+    pub client_proof_m1: String,
     pub registration_record: String,
+    pub wrapped_account_key: String,
+    pub wrapped_account_key_iv: String,
+    pub protected_private_key: Option<String>,
+    pub protected_private_key_iv: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpgradeFinishResponse {
+    /// Base64 SRP server proof M2 (client must verify)
+    pub server_proof_m2: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,12 +186,13 @@ pub struct LoginResponse {
     pub wrapped_account_key_iv: Option<String>,
 }
 
-/// One-time migration to the password-independent account key, sent right
-/// after unlocking a legacy account. The private key moves from the
+/// One-time migration of an OPAQUE account to the password-independent
+/// account key, with a fresh password proof. The private key moves from the
 /// password-derived wrap to the account-key-derived one in the same write.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetAccountKeyRequest {
+    pub proof: PasswordProof,
     pub wrapped_account_key: String,
     pub wrapped_account_key_iv: String,
     pub protected_private_key: Option<String>,
@@ -252,8 +312,6 @@ pub struct RecoveryInitRequest {
 pub struct RecoveryInitResponse {
     /// Short-lived token authorizing the recovery completion
     pub recovery_token: String,
-    /// Needed to bind the re-wrapped account key to this account
-    pub user_id: Uuid,
     pub recovery_blob: String,
     pub recovery_blob_iv: String,
     #[serde(skip_serializing_if = "Option::is_none")]

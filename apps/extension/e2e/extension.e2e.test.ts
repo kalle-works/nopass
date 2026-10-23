@@ -26,6 +26,7 @@ import {
   createOpaqueRegistration,
   deriveMasterKey,
   loginWithPassword,
+  memoryAccountState,
   stretchMasterKey,
   stretchMasterKeyRaw,
   generateUserKeyPair,
@@ -90,7 +91,7 @@ async function seedAccount(siteUrl: string) {
     protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
   });
 
-  const session = await loginWithPassword(auth, { email: EMAIL, password: PASSWORD });
+  const session = await loginWithPassword(auth, { email: EMAIL, password: PASSWORD, accountState: memoryAccountState() });
 
   const vaultEncKey = await crypto.subtle.importKey(
     "raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],

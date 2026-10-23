@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSy
 import { join } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
+import type { AccountState, AccountStateStore } from "@nopass/crypto";
 import { MemoryRevisionStore, type RevisionSnapshot, applyV2OnlyMarker, trustStateId } from "@nopass/crypto";
 
 export interface Session {
@@ -98,4 +99,30 @@ export function getApiUrl(): string {
     process.stderr.write("Warning: NOPASS_API_URL uses plaintext HTTP over a non-local host — credentials may be exposed\n");
   }
   return url;
+}
+
+const ACCOUNT_STATE_PATH = join(SESSION_DIR, "account-state.json");
+
+/**
+ * Per-account facts this machine has seen (OPAQUE in use, account key
+ * wrapped), so a server can't quietly downgrade them. Survives `nopwd lock`.
+ */
+export function fileAccountState(): AccountStateStore {
+  const read = (): Record<string, AccountState> => {
+    try {
+      return JSON.parse(readFileSync(ACCOUNT_STATE_PATH, "utf-8")) as Record<string, AccountState>;
+    } catch {
+      return {};
+    }
+  };
+  return {
+    get: async (emailHash) => ({ ...read()[emailHash] }),
+    update: async (emailHash, patch) => {
+      const all = read();
+      all[emailHash] = { ...all[emailHash], ...patch };
+      mkdirSync(SESSION_DIR, { recursive: true });
+      chmodSync(SESSION_DIR, 0o700);
+      writeFileSync(ACCOUNT_STATE_PATH, JSON.stringify(all, null, 2), { encoding: "utf-8", mode: 0o600 });
+    },
+  };
 }

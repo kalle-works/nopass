@@ -74,6 +74,14 @@ pub struct NewItem<'a> {
 }
 
 pub async fn create_item(pool: &PgPool, vault_id: Uuid, user_id: Uuid, item: NewItem<'_>) -> Result<VaultItem> {
+    let mut tx = pool.begin().await?;
+    // Shares the user row with other writers but waits for a key rotation
+    // (recovery re-encryption holds FOR UPDATE), so an item can't be created
+    // under the old keys while the rotation checks that none are left.
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR SHARE")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
     let item = sqlx::query_as::<_, VaultItem>(
         r#"
         INSERT INTO vault_items (id, vault_id, user_id, item_type, blob, blob_iv, blob_mac)
@@ -88,8 +96,9 @@ pub async fn create_item(pool: &PgPool, vault_id: Uuid, user_id: Uuid, item: New
     .bind(item.blob)
     .bind(item.blob_iv)
     .bind(item.blob_mac)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(item)
 }
 

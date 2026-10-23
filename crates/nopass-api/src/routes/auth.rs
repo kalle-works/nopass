@@ -13,8 +13,8 @@ use nopass_crypto::{
 use nopass_models::{
     KdfParams, LoginResponse, OpaqueLoginFinishRequest, OpaqueLoginStartRequest,
     OpaqueLoginStartResponse, OpaqueRegisterFinishRequest, OpaqueRegisterStartRequest,
-    OpaqueRegisterStartResponse, OpaqueReregisterFinishRequest, RegisterResponse, SetAccountKeyRequest,
-    SrpInitRequest,
+    OpaqueRegisterStartResponse, RegisterResponse, SetAccountKeyRequest, SrpInitRequest,
+    UpgradeFinishRequest, UpgradeFinishResponse, UpgradeStartRequest, UpgradeStartResponse,
     SrpInitResponse, SrpVerifyRequest, SrpVerifyResponse,
 };
 use rand::RngCore;
@@ -29,14 +29,12 @@ use crate::{
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     models::user::User,
-    routes::ClientIp,
+    routes::{
+        proof::{session_user, verify_password_proof},
+        ClientIp,
+    },
     state::{AppState, OPAQUE_LOGIN_TTL_SECS, SRP_SESSION_TTL_SECS},
 };
-
-/// Re-registration replaces the account's login credential, so a stolen
-/// session token must not be enough on its own: the session has to come from
-/// a login moments ago (the SRP → OPAQUE migration runs right after login).
-const REREGISTER_MAX_SESSION_AGE_SECS: i64 = 10 * 60;
 
 pub fn public_router() -> Router<AppState> {
     Router::new()
@@ -52,9 +50,9 @@ pub fn public_router() -> Router<AppState> {
 pub fn protected_router() -> Router<AppState> {
     Router::new()
         .route("/logout", post(logout))
-        .route("/opaque/reregister/start", post(reregister_start))
-        .route("/opaque/reregister/finish", post(reregister_finish))
-        .route("/account-key", axum::routing::put(set_account_key))
+        .route("/upgrade/start", post(upgrade_start))
+        .route("/upgrade/finish", post(upgrade_finish))
+        .route("/account-key", post(set_account_key))
 }
 
 /// Same message for every credential failure so responses don't tell an
@@ -104,20 +102,35 @@ fn network_of(ip: IpAddr) -> String {
     }
 }
 
-fn throttle_keys(account_key: &str, client_ip: IpAddr) -> (String, &str) {
-    (format!("{account_key}|{}", network_of(client_ip)), account_key)
+fn network_key(account_key: &str, client_ip: IpAddr) -> String {
+    format!("{account_key}|{}", network_of(client_ip))
 }
 
-/// Count this start against the account — once for the client's network and
-/// once account-wide — and refuse it while either is backed off. A stranger
-/// on another network only ever moves the account-wide counter, whose
-/// ceiling is ten times higher.
+/// Keyed tag of (account, network) for the trusted-network list.
+fn network_tag(state: &AppState, account_key: &str, client_ip: IpAddr) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(&state.config.email_lookup_key.0)
+        .expect("HMAC accepts any key length");
+    mac.update(b"nopass-trusted-network:");
+    mac.update(network_key(account_key, client_ip).as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Count this start against the account and refuse it while backed off.
+///
+/// Every network (/24, /64) has its own counter. Networks the account has
+/// logged in from before stop there; any other network also moves the
+/// account-wide counter, whose ceiling is ten times higher. So a stranger can
+/// lock out their own network and, with enough address space, new networks —
+/// but never the owner on a network they have used before.
 pub(crate) async fn throttle_account(state: &AppState, account_key: &str, client_ip: IpAddr) -> ApiResult<()> {
-    let (network_key, account_wide) = throttle_keys(account_key, client_ip);
-    for (key, policy, scope) in [
-        (network_key.as_str(), throttle::PER_NETWORK, "network"),
-        (account_wide, throttle::PER_ACCOUNT, "account"),
-    ] {
+    let network_key = network_key(account_key, client_ip);
+    let trusted =
+        throttle::is_trusted_network(&state.db, account_key, &network_tag(state, account_key, client_ip)).await?;
+    let mut counters = vec![(network_key.as_str(), throttle::PER_NETWORK, "network")];
+    if !trusted {
+        counters.push((account_key, throttle::PER_ACCOUNT, "account"));
+    }
+    for (key, policy, scope) in counters {
         match throttle::record_attempt(&state.db, key, policy).await? {
             throttle::Attempt::Allowed { failures } => {
                 if failures >= policy.free {
@@ -147,10 +160,12 @@ pub(crate) async fn throttle_account(state: &AppState, account_key: &str, client
     Ok(())
 }
 
-/// A successful proof clears the backoff for this network and account-wide.
+/// A successful proof clears the backoff for this network and account-wide,
+/// and marks the network as one the owner uses.
 pub(crate) async fn reset_throttle(state: &AppState, account_key: &str, client_ip: IpAddr) -> ApiResult<()> {
-    let (network_key, account_wide) = throttle_keys(account_key, client_ip);
-    throttle::reset(&state.db, &[network_key.as_str(), account_wide]).await?;
+    let network_key = network_key(account_key, client_ip);
+    throttle::reset(&state.db, &[network_key.as_str(), account_key]).await?;
+    throttle::trust_network(&state.db, account_key, &network_tag(state, account_key, client_ip)).await?;
     Ok(())
 }
 
@@ -193,20 +208,34 @@ async fn legacy_register() -> ApiResult<StatusCode> {
     ))
 }
 
-/// Registration round 1. Deliberately does not look the account up, so it
-/// says nothing about whether the email is registered. It does count against
-/// the account throttle: each call is an OPRF evaluation under the account's
-/// key, which together with one login response is enough to test a guess.
+/// OPRF credential identifier register/start uses for an email that already
+/// has an account: a key unrelated to the account's real one.
+fn register_decoy_id(state: &AppState, email_hash: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(&state.config.email_lookup_key.0)
+        .expect("HMAC accepts any key length");
+    mac.update(b"nopass-register-decoy:");
+    mac.update(email_hash.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Registration round 1. Each response is an OPRF evaluation; under an
+/// existing account's key, it would let anyone test password guesses offline
+/// against a single login response without touching the login throttle. So
+/// for an existing account the evaluation uses a decoy key instead: the
+/// response looks the same, the finish fails with 409 anyway, and nothing is
+/// charged to the account, so registration attempts can't lock its owner out.
 async fn register_start(
     State(state): State<AppState>,
-    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<OpaqueRegisterStartRequest>,
 ) -> ApiResult<Json<OpaqueRegisterStartResponse>> {
     let email_hash = parse_email_hash(&req.email_hash)?;
     let request = decode_opaque(&req.registration_request, "registrationRequest")?;
-    throttle_account(&state, &state.account_key(&email_hash), client_ip).await?;
+    let exists = db_auth::find_user(&state.db, &state.account_key(&email_hash), &email_hash)
+        .await?
+        .is_some();
+    let credential_id = if exists { register_decoy_id(&state, &email_hash) } else { email_hash };
 
-    let response = opaque::registration_start(&state.opaque_setup, &request, email_hash.as_bytes())
+    let response = opaque::registration_start(&state.opaque_setup, &request, credential_id.as_bytes())
         .map_err(|_| ApiError::BadRequest("invalid registrationRequest".into()))?;
 
     Ok(Json(OpaqueRegisterStartResponse {
@@ -232,6 +261,11 @@ async fn register_finish(
     // A 409 here is the one place an existing account is revealed; without the
     // plaintext email the server can't send a "you already have an account"
     // mail instead. Registration is per-IP rate limited.
+    // The keyed UNIQUE constraint can't see a raw-hash row an older replica
+    // wrote during a rolling deploy, so check both forms first.
+    if db_auth::find_user(&state.db, &account_key, &email_hash).await?.is_some() {
+        return Err(ApiError::Conflict("email already registered".into()));
+    }
     let user = db_auth::create_user(
         &state.db,
         db_auth::NewUser {
@@ -264,7 +298,7 @@ async fn login_start(
     let account_key = state.account_key(&email_hash);
     throttle_account(&state, &account_key, client_ip).await?;
 
-    let user = db_auth::find_user_by_account_key(&state.db, &account_key)
+    let user = db_auth::find_user(&state.db, &account_key, &email_hash)
         .await?
         .filter(|u| u.opaque_record.is_some());
     let kdf_params = match &user {
@@ -348,7 +382,7 @@ async fn srp_init(
     let account_key = state.account_key(&email_hash);
     throttle_account(&state, &account_key, client_ip).await?;
 
-    let user = db_auth::find_user_by_account_key(&state.db, &account_key).await?;
+    let user = db_auth::find_user(&state.db, &account_key, &email_hash).await?;
     let srp_user = user.and_then(|u| match (u.srp_salt.clone(), u.srp_verifier.clone()) {
         (Some(salt), Some(verifier)) => Some((u, salt, verifier)),
         _ => None,
@@ -484,72 +518,116 @@ async fn issue_session(
     })
 }
 
-/// The account behind a session created moments ago. One-time upgrades that
-/// replace key material (SRP → OPAQUE, legacy keys → account key) run right
-/// after login and require this, so a stolen older token can't do them.
-async fn fresh_session_user(state: &AppState, auth: &AuthUser) -> ApiResult<User> {
-    let session = sessions::find_session_by_token(&state.db, &auth.raw_token)
-        .await?
-        .ok_or_else(|| ApiError::Unauthorized("invalid or expired session".into()))?;
-    if (chrono::Utc::now() - session.created_at).num_seconds() > REREGISTER_MAX_SESSION_AGE_SECS {
-        return Err(ApiError::Forbidden("sign in again to change your login credential".into()));
-    }
-    let user = db_auth::get_user_by_id(&state.db, auth.user_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("user not found".into()))?;
-    Ok(user)
-}
-
-/// A fresh session on an account still on SRP — the only case where OPAQUE
-/// re-registration is allowed (a password change proves the old password instead).
-async fn migrating_user(state: &AppState, auth: &AuthUser) -> ApiResult<User> {
-    let user = fresh_session_user(state, auth).await?;
-    if user.srp_verifier.is_none() {
-        return Err(ApiError::Conflict("account already uses OPAQUE".into()));
-    }
-    Ok(user)
-}
-
-async fn reregister_start(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthUser>,
-    Json(req): Json<OpaqueRegisterStartRequest>,
-) -> ApiResult<Json<OpaqueRegisterStartResponse>> {
-    let email_hash = parse_email_hash(&req.email_hash)?;
-    let request = decode_opaque(&req.registration_request, "registrationRequest")?;
-    let user = migrating_user(&state, &auth).await?;
-    // The credential identifier must be this account's, or the record would
-    // be bound to someone else's OPRF key and never verify.
-    if state.account_key(&email_hash) != user.email_hash {
-        return Err(ApiError::BadRequest("emailHash does not match this account".into()));
-    }
-
-    let response = opaque::registration_start(&state.opaque_setup, &request, email_hash.as_bytes())
-        .map_err(|_| ApiError::BadRequest("invalid registrationRequest".into()))?;
-    Ok(Json(OpaqueRegisterStartResponse {
-        registration_response: B64URL.encode(response),
-    }))
-}
-
-async fn reregister_finish(
+/// SRP → OPAQUE upgrade, round 1. Needs the password again (a fresh SRP
+/// proof, checked in round 2), not just the session, because round 2 replaces
+/// the login credential and the key wrap.
+async fn upgrade_start(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
     Extension(ClientIp(client_ip)): Extension<ClientIp>,
-    Json(req): Json<OpaqueReregisterFinishRequest>,
-) -> ApiResult<StatusCode> {
+    Json(req): Json<UpgradeStartRequest>,
+) -> ApiResult<Json<UpgradeStartResponse>> {
+    let (user, email_hash) = session_user(&state, &auth, &req.email_hash).await?;
+    let client_public_a = decode_b64(&req.client_public_a, "clientPublicA")?;
+    if client_public_a.is_empty() {
+        return Err(ApiError::BadRequest("clientPublicA must not be empty".into()));
+    }
+    let registration_request = decode_opaque(&req.registration_request, "registrationRequest")?;
+    let (Some(srp_salt), Some(srp_verifier)) = (user.srp_salt.as_ref(), user.srp_verifier.as_ref()) else {
+        return Err(ApiError::Conflict("account already uses OPAQUE".into()));
+    };
+    throttle_account(&state, &user.email_hash, client_ip).await?;
+
+    let srp = srp_server_init(srp_verifier).map_err(|e| ApiError::Internal(anyhow::anyhow!("SRP init: {e}")))?;
+    let registration_response =
+        opaque::registration_start(&state.opaque_setup, &registration_request, email_hash.as_bytes())
+            .map_err(|_| ApiError::BadRequest("invalid registrationRequest".into()))?;
+    let upgrade_id = Uuid::new_v4();
+    pending::insert_srp(&state.db, upgrade_id, user.id, srp_verifier, &srp.server_ephemeral_b, &client_public_a)
+        .await?;
+
+    Ok(Json(UpgradeStartResponse {
+        upgrade_id,
+        server_public_b: B64.encode(&srp.server_public_b),
+        srp_salt: B64.encode(srp_salt),
+        kdf_params: user_kdf_params(&user)?,
+        registration_response: B64URL.encode(registration_response),
+    }))
+}
+
+/// Round 2: verifies the SRP proof, then in one transaction stores the
+/// OPAQUE record and the wrapped account key, deletes the SRP verifier,
+/// drops pending handshakes and revokes every other session.
+async fn upgrade_finish(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
+    Json(req): Json<UpgradeFinishRequest>,
+) -> ApiResult<Json<UpgradeFinishResponse>> {
+    let client_proof_m1 = decode_b64(&req.client_proof_m1, "clientProofM1")?;
     let upload = decode_opaque(&req.registration_record, "registrationRecord")?;
     let record = opaque::registration_finish(&upload)
         .map_err(|_| ApiError::BadRequest("invalid registrationRecord".into()))?;
-    let user = migrating_user(&state, &auth).await?;
+    let wrapped = decode_b64(&req.wrapped_account_key, "wrappedAccountKey")?;
+    let wrapped_iv = decode_b64(&req.wrapped_account_key_iv, "wrappedAccountKeyIv")?;
+    let private_key = private_key_pair(&req.protected_private_key, &req.protected_private_key_iv)?;
 
-    db_auth::set_opaque_record(&state.db, user.id, &record).await?;
+    let Some(pending) = pending::take_srp(&state.db, req.upgrade_id)
+        .await?
+        .filter(|p| p.user_id == auth.user_id)
+    else {
+        crate::metrics::record_login_failure();
+        return Err(auth_failed());
+    };
+    if (chrono::Utc::now() - pending.created_at).num_seconds() > SRP_SESSION_TTL_SECS as i64 {
+        return Err(auth_failed());
+    }
+    let user = db_auth::get_user_by_id(&state.db, auth.user_id).await?.ok_or_else(auth_failed)?;
+    let verified = match srp_server_verify(
+        &pending.srp_verifier,
+        &pending.server_ephemeral_b,
+        &pending.client_public_a,
+        &client_proof_m1,
+    ) {
+        Ok(v) => v,
+        Err(_) => {
+            record_login_failure(&state, Some(user.id), &user.email_hash, "srp_upgrade", client_ip).await;
+            return Err(auth_failed());
+        }
+    };
+
+    let session = sessions::find_session_by_token(&state.db, &auth.raw_token)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("invalid or expired session".into()))?;
+    let upgraded = db_auth::complete_srp_upgrade(
+        &state.db,
+        user.id,
+        session.id,
+        &record,
+        (&wrapped, &wrapped_iv),
+        private_key,
+    )
+    .await?;
+    if !upgraded {
+        return Err(ApiError::Conflict("account already uses OPAQUE".into()));
+    }
+    reset_throttle(&state, &user.email_hash, client_ip).await?;
     tracing::info!(event = "srp_migrated", account = log_handle(&user.email_hash), "account moved from SRP to OPAQUE");
     activity::record(&state.db, user.id, "login_upgraded", Some(&client_ip.to_string()), auth.device_id).await;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(UpgradeFinishResponse { server_proof_m2: B64.encode(&verified.server_proof_m2) }))
 }
 
-/// One-time move of a legacy account to the wrapped account key, sent by the
-/// client right after it unlocks with the password-derived keys.
+fn private_key_pair<'a>(key: &'a Option<String>, iv: &'a Option<String>) -> ApiResult<Option<(&'a str, &'a str)>> {
+    match (key, iv) {
+        (Some(k), Some(iv)) => Ok(Some((k.as_str(), iv.as_str()))),
+        (None, None) => Ok(None),
+        _ => Err(ApiError::BadRequest("send both protectedPrivateKey and its IV, or neither".into())),
+    }
+}
+
+/// One-time move of an OPAQUE account still on password-derived keys to the
+/// wrapped account key. Requires a fresh password proof, so a stolen session
+/// can't plant a key the owner can't open.
 async fn set_account_key(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
@@ -558,18 +636,15 @@ async fn set_account_key(
 ) -> ApiResult<StatusCode> {
     let wrapped = decode_b64(&req.wrapped_account_key, "wrappedAccountKey")?;
     let wrapped_iv = decode_b64(&req.wrapped_account_key_iv, "wrappedAccountKeyIv")?;
-    let private_key = match (&req.protected_private_key, &req.protected_private_key_iv) {
-        (Some(k), Some(iv)) => Some((k.as_str(), iv.as_str())),
-        (None, None) => None,
-        _ => return Err(ApiError::BadRequest("send both protectedPrivateKey and its IV, or neither".into())),
-    };
-    let user = fresh_session_user(&state, &auth).await?;
+    let private_key = private_key_pair(&req.protected_private_key, &req.protected_private_key_iv)?;
+    verify_password_proof(&state, &auth, client_ip, &req.proof).await?;
 
-    if !db_auth::set_account_key(&state.db, user.id, (&wrapped, &wrapped_iv), private_key).await? {
+    if !db_auth::set_account_key(&state.db, auth.user_id, (&wrapped, &wrapped_iv), private_key).await? {
         return Err(ApiError::Conflict("account key already set".into()));
     }
+    let user = db_auth::get_user_by_id(&state.db, auth.user_id).await?.ok_or_else(auth_failed)?;
     tracing::info!(event = "account_key_migrated", account = log_handle(&user.email_hash), "account moved to wrapped account key");
-    activity::record(&state.db, user.id, "account_key_upgraded", Some(&client_ip.to_string()), auth.device_id).await;
+    activity::record(&state.db, auth.user_id, "account_key_upgraded", Some(&client_ip.to_string()), auth.device_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

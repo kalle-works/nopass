@@ -11,6 +11,9 @@ export * from "./components/VaultItemCard";
 // Store
 export * from "./store/vault-store";
 
+// Account state (downgrade protection)
+export * from "./lib/account-state";
+
 // API client
 export * from "./lib/api-client";
 

@@ -38,10 +38,15 @@ import type {
   OpaqueRegisterFinishRequest,
   OpaqueRegisterStartRequest,
   OpaqueRegisterStartResponse,
-  OpaqueReregisterFinishRequest,
   PasswordChangeFinishRequest,
   PasswordChangeStartRequest,
   PasswordChangeStartResponse,
+  PasswordProofStartRequest,
+  PasswordProofStartResponse,
+  UpgradeFinishRequest,
+  UpgradeFinishResponse,
+  UpgradeStartRequest,
+  UpgradeStartResponse,
   SetAccountKeyRequest,
   RecoveryOpaqueStartRequest,
   RegisterDeviceRequest,
@@ -123,12 +128,13 @@ export function createApiClient(baseUrl: string) {
         post<OpaqueLoginStartResponse>("/auth/opaque/login/start", req),
       opaqueLoginFinish: (req: OpaqueLoginFinishRequest) =>
         post<LoginResponse>("/auth/opaque/login/finish", req),
-      opaqueReregisterStart: (req: OpaqueRegisterStartRequest, token: string) =>
-        post<OpaqueRegisterStartResponse>("/auth/opaque/reregister/start", req, token),
-      opaqueReregisterFinish: (req: OpaqueReregisterFinishRequest, token: string) =>
-        post<void>("/auth/opaque/reregister/finish", req, token),
-      setAccountKey: (req: SetAccountKeyRequest, token: string) =>
-        request<void>(baseUrl, "/auth/account-key", { method: "PUT", body: JSON.stringify(req), token }),
+      proofStart: (req: PasswordProofStartRequest, token: string) =>
+        post<PasswordProofStartResponse>("/auth/proof/start", req, token),
+      setAccountKey: (req: SetAccountKeyRequest, token: string) => post<void>("/auth/account-key", req, token),
+      upgradeStart: (req: UpgradeStartRequest, token: string) =>
+        post<UpgradeStartResponse>("/auth/upgrade/start", req, token),
+      upgradeFinish: (req: UpgradeFinishRequest, token: string) =>
+        post<UpgradeFinishResponse>("/auth/upgrade/finish", req, token),
       passwordChangeStart: (req: PasswordChangeStartRequest, token: string) =>
         post<PasswordChangeStartResponse>("/auth/password/start", req, token),
       passwordChangeFinish: (req: PasswordChangeFinishRequest, token: string) =>

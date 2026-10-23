@@ -1,11 +1,13 @@
 /**
  * Master-password login and registration over OPAQUE (RFC 9807), with the
- * SRP fallback and automatic upgrade for accounts created before OPAQUE.
+ * SRP fallback for accounts created before OPAQUE.
  *
  * The OPAQUE client is @serenity-kit/opaque: the wasm build of opaque-ke, the
  * same library the server runs, so the two can't drift apart. The key
  * stretching function is Argon2id with the account's KDF parameters, which
- * the server returns at login start. See docs/auth.md.
+ * the server returns at login start and which must not be weaker than the
+ * defaults. Upgrading an SRP account to OPAQUE happens in `unlockAccount`,
+ * with a fresh SRP proof. See docs/auth.md.
  */
 import * as opaque from "@serenity-kit/opaque";
 import type {
@@ -14,15 +16,17 @@ import type {
   OpaqueLoginFinishRequest,
   OpaqueLoginStartRequest,
   OpaqueLoginStartResponse,
-  OpaqueRegisterStartRequest,
   OpaqueRegisterStartResponse,
-  OpaqueReregisterFinishRequest,
+  PasswordProof,
+  PasswordProofStartRequest,
+  PasswordProofStartResponse,
   SrpInitRequest,
   SrpInitResponse,
   SrpVerifyRequest,
   SrpVerifyResponse,
 } from "@nopass/types";
 
+import { assertKdfFloor, type AccountStateStore } from "./account-state";
 import { computeEmailHash } from "./kdf";
 import { srpStep1, srpStep2 } from "./srp-client";
 
@@ -32,14 +36,22 @@ export interface PasswordAuthApi {
   opaqueLoginFinish(req: OpaqueLoginFinishRequest): Promise<LoginResponse>;
   srpInit(req: SrpInitRequest): Promise<SrpInitResponse>;
   srpVerify(req: SrpVerifyRequest): Promise<SrpVerifyResponse>;
-  opaqueReregisterStart(
-    req: OpaqueRegisterStartRequest,
-    token: string,
-  ): Promise<OpaqueRegisterStartResponse>;
-  opaqueReregisterFinish(req: OpaqueReregisterFinishRequest, token: string): Promise<void>;
 }
 
-function keyStretching(params: KdfParams) {
+export interface PasswordProofApi {
+  proofStart(req: PasswordProofStartRequest, token: string): Promise<PasswordProofStartResponse>;
+}
+
+/** Wrong password (or unknown account) — the two are indistinguishable by design. */
+export class IncorrectPasswordError extends Error {
+  readonly status = 401;
+  constructor() {
+    super("Incorrect email or master password.");
+    this.name = "IncorrectPasswordError";
+  }
+}
+
+export function keyStretching(params: KdfParams) {
   return {
     "argon2id-custom": {
       iterations: params.iterations,
@@ -51,7 +63,7 @@ function keyStretching(params: KdfParams) {
 
 /**
  * Runs the client side of an OPAQUE registration. `start` sends the
- * registration request to whichever route applies (new account, SRP upgrade,
+ * registration request to whichever route applies (new account, upgrade,
  * recovery) and returns the server's response; the resulting record goes to
  * the matching finish call.
  */
@@ -69,7 +81,7 @@ export async function createOpaqueRegistration(
     clientRegistrationState,
     registrationResponse,
     password,
-    keyStretching: keyStretching(kdfParams),
+    keyStretching: keyStretching(assertKdfFloor(kdfParams)),
   });
   return registrationRecord;
 }
@@ -77,23 +89,26 @@ export async function createOpaqueRegistration(
 export interface PasswordLoginOptions {
   email: string;
   password: string;
+  /** What this device remembers about the account; see account-state.ts */
+  accountState: AccountStateStore;
   /** Links the session to a trusted device the client registered earlier. */
   deviceId?: string;
 }
 
+/** A login, and which protocol it used — an SRP login still needs the upgrade in `unlockAccount`. */
+export type PasswordLoginResult = LoginResponse & { method: "opaque" | "srp" };
+
 /**
  * Logs in with the master password. Tries OPAQUE first; if the client can't
  * open the server's response (wrong password, or an account still on SRP —
- * the server answers both the same way) it falls back to SRP. An SRP success
- * is upgraded to OPAQUE straight away, which deletes the SRP verifier.
- *
- * Throws whatever the API client throws for the failed SRP verify (a 401)
- * when the password is wrong.
+ * the server answers both the same way) it falls back to SRP, unless this
+ * device has seen the account use OPAQUE, in which case a fallback could
+ * only be a downgrade and the password is reported wrong.
  */
 export async function loginWithPassword(
   api: PasswordAuthApi,
-  { email, password, deviceId }: PasswordLoginOptions,
-): Promise<LoginResponse> {
+  { email, password, accountState, deviceId }: PasswordLoginOptions,
+): Promise<PasswordLoginResult> {
   await opaque.ready;
   const emailHash = computeEmailHash(email);
   const device = deviceId ? { deviceId } : {};
@@ -104,15 +119,19 @@ export async function loginWithPassword(
     clientLoginState,
     loginResponse: started.loginResponse,
     password,
-    keyStretching: keyStretching(started.kdfParams),
+    keyStretching: keyStretching(assertKdfFloor(started.kdfParams)),
   });
   if (finished) {
-    return api.opaqueLoginFinish({
+    const session = await api.opaqueLoginFinish({
       loginId: started.loginId,
       finishLoginRequest: finished.finishLoginRequest,
       ...device,
     });
+    await accountState.update(emailHash, { opaque: true });
+    return { ...session, method: "opaque" };
   }
+
+  if ((await accountState.get(emailHash)).opaque) throw new IncorrectPasswordError();
 
   const step1 = srpStep1();
   const init = await api.srpInit({ emailHash, clientPublicA: step1.clientPublicA });
@@ -123,15 +142,28 @@ export async function loginWithPassword(
     ...device,
   });
   step2.verifyServerProof(verified.serverProofM2);
-
   const { serverProofM2: _, ...session } = verified;
-  try {
-    const registrationRecord = await createOpaqueRegistration(password, init.kdfParams, (registrationRequest) =>
-      api.opaqueReregisterStart({ emailHash, registrationRequest }, session.sessionToken),
-    );
-    await api.opaqueReregisterFinish({ registrationRecord }, session.sessionToken);
-  } catch {
-    // The login itself succeeded; the upgrade is retried on the next login.
-  }
-  return session;
+  return { ...session, method: "srp" };
+}
+
+/**
+ * A fresh OPAQUE proof of the password for an authenticated request that
+ * replaces key material. Throws IncorrectPasswordError if the password
+ * doesn't open the server's response.
+ */
+export async function provePassword(
+  api: PasswordProofApi,
+  { email, password, sessionToken }: { email: string; password: string; sessionToken: string },
+): Promise<PasswordProof> {
+  await opaque.ready;
+  const { clientLoginState, startLoginRequest } = opaque.client.startLogin({ password });
+  const started = await api.proofStart({ emailHash: computeEmailHash(email), startLoginRequest }, sessionToken);
+  const finished = opaque.client.finishLogin({
+    clientLoginState,
+    loginResponse: started.loginResponse,
+    password,
+    keyStretching: keyStretching(assertKdfFloor(started.kdfParams)),
+  });
+  if (!finished) throw new IncorrectPasswordError();
+  return { proofId: started.proofId, finishLoginRequest: finished.finishLoginRequest };
 }

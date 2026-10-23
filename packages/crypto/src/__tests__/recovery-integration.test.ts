@@ -14,7 +14,9 @@ import {
   generateRecoveryCode,
   generateUserKeyPair,
   importAccountKeys,
+  IncorrectPasswordError,
   loginWithPassword,
+  memoryAccountState,
   stretchMasterKey,
   stretchMasterKeyRaw,
   unlockAccount,
@@ -42,6 +44,8 @@ async function apiCall(method: string, path: string, body?: unknown, token?: str
 }
 
 const auth = liveAuthApi(apiCall);
+// One device's memory of the account, across the whole suite
+const accountState = memoryAccountState();
 
 async function register(email: string, password: string) {
   const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
@@ -70,8 +74,8 @@ async function register(email: string, password: string) {
 
 /** What every client does: log in, then open (or on first use, migrate to) the account key. */
 async function login(email: string, password: string) {
-  const verifyResp = await loginWithPassword(auth, { email, password });
-  const account = await unlockAccount(auth, { email, password, session: verifyResp });
+  const verifyResp = await loginWithPassword(auth, { email, password, accountState });
+  const account = await unlockAccount(auth, { email, password, session: verifyResp, accountState });
   const keys = await importAccountKeys(account);
   return { keys, account, token: verifyResp.sessionToken, userId: verifyResp.userId, vaultId: verifyResp.defaultVaultId };
 }
@@ -132,10 +136,9 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
   }, 120_000);
 
   it("changes the password without touching items; the old password stops working", async () => {
-    const { token, userId } = await login(EMAIL, PASSWORD);
+    const { token } = await login(EMAIL, PASSWORD);
     await changeMasterPassword(auth, {
       email: EMAIL,
-      userId,
       sessionToken: token,
       currentPassword: PASSWORD,
       newPassword: CHANGED_PASSWORD,
@@ -145,7 +148,8 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
     const items = await apiCall("GET", `/vaults/${vaultId}/items`, undefined, fresh);
     expect(items[0].version).toBe(1);
     expect(await decryptItem(items[0], keys.vaultEncKey, keys.vaultMacKey)).toEqual(SECRET_ITEM);
-    await expect(login(EMAIL, PASSWORD)).rejects.toThrow(/401/);
+    // This device knows the account uses OPAQUE, so no SRP fallback is even tried
+    await expect(login(EMAIL, PASSWORD)).rejects.toBeInstanceOf(IncorrectPasswordError);
   }, 240_000);
 
   it("recovers with the kit made before the password change", async () => {
@@ -189,7 +193,7 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
   }, 240_000);
 
   it("rejects the previous password and the burned recovery code", async () => {
-    await expect(login(EMAIL, CHANGED_PASSWORD)).rejects.toThrow(/401/);
+    await expect(login(EMAIL, CHANGED_PASSWORD)).rejects.toBeInstanceOf(IncorrectPasswordError);
 
     const { authKeyB64 } = await deriveRecoveryKeys(recoveryCode, EMAIL);
     await expect(

@@ -3,7 +3,7 @@ import { hostname, platform } from "os";
 import { loginWithPassword, unlockAccount, zeroAccount } from "@nopass/crypto";
 import type { DeviceType } from "@nopass/types";
 import { createApiClient } from "./api-client.js";
-import { saveSession, loadDeviceId, saveDeviceId, type Session } from "./session.js";
+import { fileAccountState, saveSession, loadDeviceId, saveDeviceId, type Session } from "./session.js";
 
 function deviceType(): DeviceType {
   switch (platform()) {
@@ -30,13 +30,15 @@ export async function loginWithCredentials(
 
   // Include previously-registered device_id so server links the session
   const existingDeviceId = loadDeviceId();
+  const accountState = fileAccountState();
   const auth = await loginWithPassword(api.auth, {
     email,
     password,
+    accountState,
     ...(existingDeviceId ? { deviceId: existingDeviceId } : {}),
   });
   // Opens the account key; a legacy account is migrated to it here.
-  const account = await unlockAccount(api.auth, { email, password, session: auth });
+  const account = await unlockAccount(api.auth, { email, password, session: auth, accountState });
   const { encKeyBytes, macKeyBytes } = account;
 
   // Register this machine as a trusted device on first login

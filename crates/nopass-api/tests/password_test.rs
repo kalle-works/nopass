@@ -6,7 +6,10 @@ use base64::{
     engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL},
     Engine,
 };
-use helpers::{build_test_server, compute_email_hash, login, opaque_login_start, register_user, test_kdf};
+use helpers::{
+    build_test_server, compute_email_hash, login, opaque_login_finish, opaque_login_start, password_proof,
+    register_user, test_kdf,
+};
 use nopass_crypto::{opaque::Suite, Argon2Params};
 use nopass_models::{CreateVaultItemRequest, PasswordChangeStartResponse, VaultItemType};
 use opaque_ke::{
@@ -87,12 +90,21 @@ fn finish_body(s: &Started, proof: &str) -> Value {
     })
 }
 
-async fn set_account_key(server: &TestServer, token: &str) -> axum_test::TestResponse {
+async fn set_account_key_with(server: &TestServer, token: &str, password: &str) -> axum_test::TestResponse {
+    let proof = password_proof(server, token, EMAIL, password).await;
     server
-        .put("/v1/auth/account-key")
+        .post("/v1/auth/account-key")
         .authorization_bearer(token)
-        .json(&json!({ "wrappedAccountKey": B64.encode([5u8; 80]), "wrappedAccountKeyIv": B64.encode([5u8; 12]) }))
+        .json(&json!({
+            "proof": proof,
+            "wrappedAccountKey": B64.encode([5u8; 80]),
+            "wrappedAccountKeyIv": B64.encode([5u8; 12]),
+        }))
         .await
+}
+
+async fn set_account_key(server: &TestServer, token: &str) -> axum_test::TestResponse {
+    set_account_key_with(server, token, OLD).await
 }
 
 async fn items(server: &TestServer, token: &str) -> Value {
@@ -198,19 +210,71 @@ async fn password_change_without_current_password_proof_changes_nothing(pool: Pg
 }
 
 #[sqlx::test(migrations = "src/db/migrations")]
-async fn account_key_is_set_once_and_only_from_a_fresh_session(pool: PgPool) {
-    let server = build_test_server(pool.clone());
+async fn account_key_needs_the_password_and_is_set_once(pool: PgPool) {
+    let server = build_test_server(pool);
     register_user(&server, EMAIL, OLD).await;
     let token = login(&server, EMAIL, OLD).await.session_token;
 
     // A legacy-key account can't change its password until it has migrated.
     start_change_raw(&server, &token).await.assert_status(StatusCode::CONFLICT);
 
-    sqlx::query("UPDATE sessions SET created_at = NOW() - INTERVAL '1 hour'").execute(&pool).await.unwrap();
-    set_account_key(&server, &token).await.assert_status(StatusCode::FORBIDDEN);
+    // A session token without the password can't plant a key.
+    set_account_key_with(&server, &token, "not the password").await.assert_status(StatusCode::UNAUTHORIZED);
+    assert!(login(&server, EMAIL, OLD).await.wrapped_account_key.is_none());
 
-    let fresh = login(&server, EMAIL, OLD).await.session_token;
-    set_account_key(&server, &fresh).await.assert_status(StatusCode::NO_CONTENT);
-    // A second write would let a session holder swap in a key of their choosing.
-    set_account_key(&server, &fresh).await.assert_status(StatusCode::CONFLICT);
+    set_account_key(&server, &token).await.assert_status(StatusCode::NO_CONTENT);
+    // Only a password change or recovery replaces it afterwards.
+    set_account_key(&server, &token).await.assert_status(StatusCode::CONFLICT);
+}
+
+/// A login started before a password change must not finish after it: its
+/// server state belongs to the old credential.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn logins_started_before_a_password_change_cannot_finish(pool: PgPool) {
+    let server = build_test_server(pool);
+    let (current, _) = setup(&server).await;
+    let earlier = opaque_login_start(&server, EMAIL, OLD).await;
+
+    let started = start_change(&server, &current, OLD).await;
+    let proof = started.finish_login_request.clone().unwrap();
+    server
+        .post("/v1/auth/password/finish")
+        .authorization_bearer(&current)
+        .json(&finish_body(&started, &proof))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    opaque_login_finish(&server, earlier.login_id, &earlier.finish_request.unwrap())
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+}
+
+/// A session that has been open a while can't change the password, even with
+/// the password; the record and the session's own access stay as they were.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn an_aged_session_cannot_change_the_password(pool: PgPool) {
+    let server = build_test_server(pool.clone());
+    let (current, _) = setup(&server).await;
+    let age = || async {
+        sqlx::query("UPDATE sessions SET created_at = NOW() - INTERVAL '1 hour'")
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+
+    // Started while fresh, finished after aging: refused at finish.
+    let started = start_change(&server, &current, OLD).await;
+    age().await;
+    let proof = started.finish_login_request.clone().unwrap();
+    server
+        .post("/v1/auth/password/finish")
+        .authorization_bearer(&current)
+        .json(&finish_body(&started, &proof))
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+    // And refused at start.
+    start_change_raw(&server, &current).await.assert_status(StatusCode::FORBIDDEN);
+
+    login(&server, EMAIL, OLD).await;
+    assert!(opaque_login_start(&server, EMAIL, NEW).await.finish_request.is_none());
 }
