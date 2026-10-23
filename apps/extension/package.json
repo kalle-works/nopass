@@ -29,7 +29,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^21.0.3",
     "playwright": "^1.60.0",
     "tailwindcss": "^4",
     "typescript": "^5",
