@@ -75,7 +75,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .layer(middleware::from_fn_with_state(state, attach_client_ip))
 }
 
-/// Per-IP rate limiter middleware for auth endpoints (20 req/min, burst 10).
+/// Per-IP rate limiter middleware for auth endpoints (60 req/min, burst 30).
 async fn auth_rate_limit(
     State(state): State<AppState>,
     req: Request,

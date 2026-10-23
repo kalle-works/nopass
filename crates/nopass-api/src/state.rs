@@ -23,7 +23,9 @@ pub const RECOVERY_SESSION_TTL_SECS: u64 = 600;
 pub struct AppState {
     pub db: PgPool,
     pub config: Config,
-    /// Per-IP rate limiter for auth endpoints (20 req/min, burst 10).
+    /// Per-IP rate limiter for auth endpoints (60 req/min, burst 30). A login
+    /// is two requests (three with the SRP fallback), and guessing is bounded
+    /// per account by the login throttle, so this only has to stop floods.
     pub auth_rate_limiter: Arc<DefaultKeyedRateLimiter<IpAddr>>,
     /// Stripe client — `None` when STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are not set.
     pub stripe: Option<StripeClient>,
@@ -33,8 +35,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let auth_rate_limiter = Arc::new(DefaultKeyedRateLimiter::keyed(
-            Quota::per_minute(NonZeroU32::new(20).expect("non-zero"))
-                .allow_burst(NonZeroU32::new(10).expect("non-zero")),
+            Quota::per_minute(NonZeroU32::new(60).expect("non-zero"))
+                .allow_burst(NonZeroU32::new(30).expect("non-zero")),
         ));
 
         let stripe = match (&config.stripe_secret_key, &config.stripe_webhook_secret) {
