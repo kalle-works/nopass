@@ -88,7 +88,7 @@ fn log_handle(account_key: &str) -> &str {
 }
 
 /// Count this start against the account and refuse it while backed off.
-async fn throttle_account(state: &AppState, account_key: &str, client_ip: IpAddr) -> ApiResult<()> {
+pub(crate) async fn throttle_account(state: &AppState, account_key: &str, client_ip: IpAddr) -> ApiResult<()> {
     match throttle::record_attempt(&state.db, account_key).await? {
         throttle::Attempt::Allowed { failures } => {
             if failures >= throttle::FREE_ATTEMPTS {
@@ -115,7 +115,7 @@ async fn throttle_account(state: &AppState, account_key: &str, client_ip: IpAddr
     }
 }
 
-async fn record_login_failure(state: &AppState, user_id: Option<Uuid>, account_key: &str, method: &str, client_ip: IpAddr) {
+pub(crate) async fn record_login_failure(state: &AppState, user_id: Option<Uuid>, account_key: &str, method: &str, client_ip: IpAddr) {
     tracing::warn!(
         event = "login_failed",
         method,
@@ -142,7 +142,7 @@ fn validate_kdf_params(params: &KdfParams) -> ApiResult<()> {
     }
 }
 
-fn user_kdf_params(user: &User) -> ApiResult<KdfParams> {
+pub(crate) fn user_kdf_params(user: &User) -> ApiResult<KdfParams> {
     serde_json::from_value(user.kdf_params.clone()).map_err(|e| ApiError::Internal(e.into()))
 }
 

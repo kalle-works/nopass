@@ -8,7 +8,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use nopass_crypto::opaque;
 use nopass_models::{
-    EncryptedVaultItem, OpaqueRegisterStartResponse, RecoveryCompleteRequest,
+    EncryptedVaultItem, OpaqueRegisterStartResponse, ReencryptedItem, RecoveryCompleteRequest,
     RecoveryInitRequest, RecoveryInitResponse, RecoveryOpaqueStartRequest,
     RecoveryStatusResponse, SetRecoveryRequest,
 };
@@ -125,25 +125,7 @@ async fn recovery_init(
         _ => return Err(ApiError::Internal(anyhow::anyhow!("recovery kit missing blob"))),
     };
 
-    let items = db_recovery::list_all_items_for_user(&state.db, user.id).await?;
-    let items = items
-        .into_iter()
-        .map(|item| {
-            Ok(EncryptedVaultItem {
-                id: item.id,
-                vault_id: item.vault_id,
-                user_id: item.user_id,
-                item_type: parse_item_type(&item.item_type)?,
-                blob: B64.encode(&item.blob),
-                blob_iv: B64.encode(&item.blob_iv),
-                blob_mac: B64.encode(&item.blob_mac),
-                version: item.version,
-                deleted_at: item.deleted_at,
-                created_at: item.created_at,
-                updated_at: item.updated_at,
-            })
-        })
-        .collect::<ApiResult<Vec<_>>>()?;
+    let items = encode_all_items(&state, user.id).await?;
 
     activity::record(&state.db, user.id, "recovery_initiated", Some(&client_ip.to_string()), None).await;
     let recovery_token = Uuid::new_v4();
@@ -248,8 +230,62 @@ async fn recovery_complete(
         )));
     }
 
-    let items = req
-        .items
+    let items = decode_reencrypted_items(&req.items)?;
+
+    let new_auth_hash = hash_auth_key(&new_auth_key);
+    db_recovery::rotate_master_password(
+        &state.db,
+        db_recovery::RotationAuthority::RecoveryToken(token),
+        pending_session.user_id,
+        db_recovery::RecoveryCompletion {
+            credential: &credential,
+            protected_symmetric_key: &protected_key,
+            protected_symmetric_key_iv: &protected_key_iv,
+            protected_private_key: req.protected_private_key.as_deref(),
+            protected_private_key_iv: req.protected_private_key_iv.as_deref(),
+            recovery_kit: Some(db_recovery::NewRecoveryKit {
+                auth_hash: &new_auth_hash,
+                blob: &new_blob,
+                blob_iv: &new_blob_iv,
+            }),
+        },
+        &items,
+    )
+    .await
+    .map_err(rotation_error)?;
+
+    // Token was burned inside the completion transaction
+    activity::record(&state.db, pending_session.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Every item the user owns, as the client must re-encrypt them when the
+/// master password changes.
+pub(crate) async fn encode_all_items(state: &AppState, user_id: Uuid) -> ApiResult<Vec<EncryptedVaultItem>> {
+    db_recovery::list_all_items_for_user(&state.db, user_id)
+        .await?
+        .into_iter()
+        .map(|item| {
+            Ok(EncryptedVaultItem {
+                id: item.id,
+                vault_id: item.vault_id,
+                user_id: item.user_id,
+                item_type: parse_item_type(&item.item_type)?,
+                blob: B64.encode(&item.blob),
+                blob_iv: B64.encode(&item.blob_iv),
+                blob_mac: B64.encode(&item.blob_mac),
+                version: item.version,
+                deleted_at: item.deleted_at,
+                created_at: item.created_at,
+                updated_at: item.updated_at,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn decode_reencrypted_items(items: &[ReencryptedItem]) -> ApiResult<Vec<db_recovery::ReencryptedItemRow>> {
+    items
         .iter()
         .map(|item| {
             Ok(db_recovery::ReencryptedItemRow {
@@ -259,38 +295,17 @@ async fn recovery_complete(
                 blob_mac: decode_b64(&item.blob_mac, "item blob_mac")?,
             })
         })
-        .collect::<ApiResult<Vec<_>>>()?;
+        .collect()
+}
 
-    let new_auth_hash = hash_auth_key(&new_auth_key);
-    db_recovery::complete_recovery(
-        &state.db,
-        token,
-        pending_session.user_id,
-        db_recovery::RecoveryCompletion {
-            credential: &credential,
-            protected_symmetric_key: &protected_key,
-            protected_symmetric_key_iv: &protected_key_iv,
-            protected_private_key: req.protected_private_key.as_deref(),
-            protected_private_key_iv: req.protected_private_key_iv.as_deref(),
-            recovery_auth_hash: &new_auth_hash,
-            recovery_blob: &new_blob,
-            recovery_blob_iv: &new_blob_iv,
-        },
-        &items,
-    )
-    .await
-    .map_err(|e| match e {
-        db_recovery::CompleteRecoveryError::ItemMismatch => {
-            ApiError::BadRequest("one or more items do not belong to this account".into())
-        }
+pub(crate) fn rotation_error(e: db_recovery::CompleteRecoveryError) -> ApiError {
+    match e {
+        db_recovery::CompleteRecoveryError::ItemMismatch => ApiError::BadRequest(
+            "every item must be re-encrypted, and only this account's items".into(),
+        ),
         db_recovery::CompleteRecoveryError::TokenConsumed => {
             ApiError::Unauthorized("recovery session not found or expired".into())
         }
         db_recovery::CompleteRecoveryError::Db(e) => ApiError::Internal(e),
-    })?;
-
-    // Token was burned inside the completion transaction
-    activity::record(&state.db, pending_session.user_id, "recovery_completed", Some(&client_ip.to_string()), None).await;
-
-    Ok(StatusCode::NO_CONTENT)
+    }
 }

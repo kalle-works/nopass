@@ -77,15 +77,22 @@ pub enum NewCredential {
     Srp { salt: Vec<u8>, verifier: Vec<u8> },
 }
 
+/// Replacement recovery kit for the new keys.
+pub struct NewRecoveryKit<'a> {
+    pub auth_hash: &'a [u8],
+    pub blob: &'a [u8],
+    pub blob_iv: &'a [u8],
+}
+
 pub struct RecoveryCompletion<'a> {
     pub credential: &'a NewCredential,
     pub protected_symmetric_key: &'a [u8],
     pub protected_symmetric_key_iv: &'a [u8],
     pub protected_private_key: Option<&'a str>,
     pub protected_private_key_iv: Option<&'a str>,
-    pub recovery_auth_hash: &'a [u8],
-    pub recovery_blob: &'a [u8],
-    pub recovery_blob_iv: &'a [u8],
+    /// None clears the kit: it wraps the old vault keys, so after a password
+    /// change it would restore keys that no longer open anything.
+    pub recovery_kit: Option<NewRecoveryKit<'a>>,
 }
 
 pub struct ReencryptedItemRow {
@@ -95,12 +102,20 @@ pub struct ReencryptedItemRow {
     pub blob_mac: Vec<u8>,
 }
 
-/// Atomically rotate credentials, swap in re-encrypted item blobs, replace the
-/// recovery kit, and revoke every session. All-or-nothing: a half-applied
-/// password change would brick the account.
-pub async fn complete_recovery(
+/// What authorizes a master-password rotation.
+pub enum RotationAuthority {
+    /// Recovery: burn the token; every session is revoked.
+    RecoveryToken(Uuid),
+    /// Password change in a session: that session survives, all others are revoked.
+    Session(Uuid),
+}
+
+/// Atomically rotate credentials, swap in re-encrypted item blobs, replace or
+/// clear the recovery kit, and revoke sessions. All-or-nothing: a
+/// half-applied password change would brick the account.
+pub async fn rotate_master_password(
     pool: &PgPool,
-    token: Uuid,
+    authority: RotationAuthority,
     user_id: Uuid,
     completion: RecoveryCompletion<'_>,
     items: &[ReencryptedItemRow],
@@ -110,12 +125,14 @@ pub async fn complete_recovery(
     // Consume the token INSIDE the transaction: a concurrent completion
     // serializes on this row and sees zero rows (replay refused), while a
     // failed transaction rolls the delete back, keeping the token retryable.
-    let consumed = sqlx::query("DELETE FROM pending_recovery_sessions WHERE token = $1")
-        .bind(token)
-        .execute(&mut *tx)
-        .await?;
-    if consumed.rows_affected() == 0 {
-        return Err(CompleteRecoveryError::TokenConsumed);
+    if let RotationAuthority::RecoveryToken(token) = authority {
+        let consumed = sqlx::query("DELETE FROM pending_recovery_sessions WHERE token = $1")
+            .bind(token)
+            .execute(&mut *tx)
+            .await?;
+        if consumed.rows_affected() == 0 {
+            return Err(CompleteRecoveryError::TokenConsumed);
+        }
     }
 
     let (srp_salt, srp_verifier, opaque_record) = match completion.credential {
@@ -131,7 +148,8 @@ pub async fn complete_recovery(
             protected_private_key = COALESCE($6, protected_private_key),
             protected_private_key_iv = COALESCE($7, protected_private_key_iv),
             recovery_auth_hash = $8, recovery_blob = $9, recovery_blob_iv = $10,
-            recovery_updated_at = NOW(), updated_at = NOW()
+            recovery_updated_at = CASE WHEN $8::BYTEA IS NULL THEN NULL ELSE NOW() END,
+            updated_at = NOW()
         WHERE id = $1
         "#,
     )
@@ -142,9 +160,9 @@ pub async fn complete_recovery(
     .bind(completion.protected_symmetric_key_iv)
     .bind(completion.protected_private_key)
     .bind(completion.protected_private_key_iv)
-    .bind(completion.recovery_auth_hash)
-    .bind(completion.recovery_blob)
-    .bind(completion.recovery_blob_iv)
+    .bind(completion.recovery_kit.as_ref().map(|k| k.auth_hash))
+    .bind(completion.recovery_kit.as_ref().map(|k| k.blob))
+    .bind(completion.recovery_kit.as_ref().map(|k| k.blob_iv))
     .bind(opaque_record)
     .execute(&mut *tx)
     .await?;
@@ -170,9 +188,24 @@ pub async fn complete_recovery(
         }
     }
 
-    // Old sessions authenticated against the old password — kill them all
-    sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+    // Every item must have been re-encrypted: one left under the old keys
+    // (or created concurrently) would be unreadable after the commit.
+    let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM vault_items WHERE user_id = $1")
         .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if total != items.len() as i64 {
+        return Err(CompleteRecoveryError::ItemMismatch);
+    }
+
+    // Sessions authenticated against the old password are revoked
+    let keep_session = match authority {
+        RotationAuthority::Session(id) => Some(id),
+        RotationAuthority::RecoveryToken(_) => None,
+    };
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND id IS DISTINCT FROM $2")
+        .bind(user_id)
+        .bind(keep_session)
         .execute(&mut *tx)
         .await?;
 

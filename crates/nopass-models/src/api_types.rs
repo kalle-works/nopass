@@ -163,6 +163,50 @@ pub struct SrpVerifyResponse {
     pub session: LoginResponse,
 }
 
+// ─── Password change ─────────────────────────────────────────────────────────
+
+/// Authenticated password change, round 1: an OPAQUE login with the current
+/// password plus an OPAQUE registration for the new one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordChangeStartRequest {
+    pub email_hash: String,
+    /// OPAQUE login request made with the current password
+    pub start_login_request: String,
+    /// OPAQUE registration request made with the new password
+    pub registration_request: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordChangeStartResponse {
+    pub change_id: Uuid,
+    pub login_response: String,
+    pub kdf_params: KdfParams,
+    pub registration_response: String,
+    /// Every item (tombstones included); all must come back re-encrypted
+    pub items: Vec<crate::EncryptedVaultItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key_iv: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordChangeFinishRequest {
+    pub change_id: Uuid,
+    /// Proof of the current password
+    pub finish_login_request: String,
+    /// OPAQUE record for the new password
+    pub registration_record: String,
+    pub protected_symmetric_key: String,
+    pub protected_symmetric_key_iv: String,
+    pub protected_private_key: Option<String>,
+    pub protected_private_key_iv: Option<String>,
+    pub items: Vec<ReencryptedItem>,
+}
+
 // ─── Recovery ────────────────────────────────────────────────────────────────
 
 /// Enable or rotate the account recovery kit (authenticated).

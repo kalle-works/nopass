@@ -3,6 +3,7 @@ pub mod auth;
 pub mod billing;
 pub mod devices;
 pub mod orgs;
+pub mod password;
 pub mod recovery;
 pub mod shares;
 pub mod sync;
@@ -60,6 +61,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     let protected = Router::new()
         .nest("/auth", auth::protected_router())
         .nest("/auth/recovery", recovery::protected_router())
+        .nest("/auth/password", password::router())
         .nest("/shares", shares::router())
         .nest("/billing", billing::router())
         .nest("/activity", activity::router())
