@@ -35,6 +35,7 @@ import {
   buildRotation,
   checkOrgKey,
   openOrgKey,
+  recordVerifiedOrgItems,
   type OrgKeyCheck,
   type RotationPlan,
 } from "../lib/org-trust";
@@ -272,8 +273,21 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       setSelectedOrg(details);
       setOrgCheck(check);
       onOrgVaultKeyChange?.(orgId, orgKey);
-      // Members seen in a verified org; a later rotation that lacks one is refused
-      if (check.status === "ok") trust.ledger.remember(orgId, { members: details.members.map((m) => m.userId) });
+      // Members and items seen in a verified org; a later rotation that lacks one is refused
+      if (check.status === "ok" && orgKey) {
+        trust.ledger.remember(orgId, { members: details.members.map((m) => m.userId) });
+        const items = await apiClient.orgs.items(orgId, sessionToken);
+        const { failed } = await recordVerifiedOrgItems(
+          orgId,
+          items,
+          { current: orgKey, retired: [] },
+          trust.revisions,
+          trust.ledger,
+        );
+        if (failed.length > 0) {
+          setError(`${failed.length} item(s) in this organization could not be verified and are not shown.`);
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load org");
     } finally {

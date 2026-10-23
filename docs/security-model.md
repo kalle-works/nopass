@@ -171,7 +171,17 @@ Before uploading, the owner's client checks what it builds against what it
 has seen of the org:
 
 - Every item id and member id this device has seen in the org (kept in a
-  local per-org ledger) must be in the server's lists. If the server leaves
+  local per-org ledger) must be in the server's lists. Member ids are
+  recorded each time the org is opened and verified; item ids each time the
+  org's items are loaded and verify (opening the org loads them), and after
+  every rotation. Until the device has loaded an org's items once, its first
+  rotation cannot detect an omitted item. No client reads org items for
+  display yet, and vault sync does not carry org items, so opening the org is
+  currently the only load.
+- Ledger entries the server no longer lists can be acknowledged as gone by
+  the owner (account deleted, invite declined or expired, removed on another
+  device). They are shown in the confirm step and dropped from the ledger only
+  once the rotation succeeds; anything not acknowledged still blocks it. If the server leaves
   one out, the rotation is refused and the owner sees exactly what is
   missing; it continues only if the owner says they removed it on another
   device.

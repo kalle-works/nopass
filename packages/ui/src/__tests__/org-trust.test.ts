@@ -26,6 +26,7 @@ import {
   checkOrgKey,
   decryptOrgItem,
   openOrgKey,
+  recordVerifiedOrgItems,
 } from "../lib/org-trust";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -357,6 +358,28 @@ describe("buildRotation", () => {
     const plan = await buildRotation({ ...base, dropItemIds: [ITEM] });
     expect(plan.request.items).toEqual([]);
     expect(plan.request.deleteItemIds).toEqual([ITEM]);
+  });
+
+  it("remembers verified org items on every load, so a later rotation notices one the server drops", async () => {
+    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+    const tampered = { ...item, id: "88888888-8888-4888-8888-888888888888", blob: item.blob.slice(0, -4) + "AAAA" };
+    const seen: Record<string, string[]> = {};
+    const ledger = {
+      remember: (orgId: string, s: { items?: string[] }) => void (seen[orgId] = [...(seen[orgId] ?? []), ...(s.items ?? [])]),
+    };
+
+    const result = await recordVerifiedOrgItems(ORG, [item, tampered], { current: oldKey, retired: [] }, new MemoryRevisionStore(), ledger);
+    expect(result.failed).toEqual([tampered.id]);
+    expect(seen[ORG]).toEqual([ITEM]);
+
+    await expect(
+      buildRotation({
+        ...rotationBase(oldKey, identity, pins),
+        items: [],
+        members: [owner.member("owner"), bob.member("member")],
+        known: { items: seen[ORG]!, members: [] },
+      }),
+    ).rejects.toBeInstanceOf(RotationSetIncompleteError);
   });
 
   it("reads items written before a rotation with a retired key, but prefers the current one", async () => {

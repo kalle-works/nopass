@@ -317,15 +317,47 @@ export interface OrgKeyring {
  * reads that were in flight during a rotation. Writes must always use
  * `ring.current`; nothing here encrypts.
  */
-export async function decryptOrgItem(item: EncryptedVaultItem, orgId: string, ring: OrgKeyring) {
+export async function decryptOrgItem(
+  item: EncryptedVaultItem,
+  orgId: string,
+  ring: OrgKeyring,
+  revisions?: RevisionStore,
+) {
   const binding = bindingForItem({ ...item, orgId });
   let lastError: unknown;
   for (const key of [ring.current, ...ring.retired]) {
     try {
-      return await decryptVaultItem(item, binding, { vaultEncKey: key, vaultMacKey: key });
+      return await decryptVaultItem(item, binding, { vaultEncKey: key, vaultMacKey: key }, revisions);
     } catch (err) {
       lastError = err;
     }
   }
   throw lastError;
+}
+
+/**
+ * Every time a client loads an org's items, it verifies them and records the
+ * ids that verified in the local ledger, so a later rotation notices if the
+ * server leaves one out. Items that fail to verify are not recorded (they
+ * prove nothing about the org) and are returned for the caller to surface.
+ */
+export async function recordVerifiedOrgItems(
+  orgId: string,
+  items: EncryptedVaultItem[],
+  ring: OrgKeyring,
+  revisions: RevisionStore,
+  ledger: { remember(orgId: string, seen: Partial<OrgLedgerEntry>): void },
+): Promise<{ verified: string[]; failed: string[] }> {
+  const verified: string[] = [];
+  const failed: string[] = [];
+  for (const item of items) {
+    try {
+      await decryptOrgItem(item, orgId, ring, revisions);
+      verified.push(item.id);
+    } catch {
+      failed.push(item.id);
+    }
+  }
+  ledger.remember(orgId, { items: verified });
+  return { verified, failed };
 }
