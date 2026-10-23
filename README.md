@@ -26,7 +26,9 @@ including what nopwd deliberately *cannot* protect you from, is on the
   password health score, trusted-device list, account activity log
 - **Surfaces** — web app, Chrome extension (autofill + passkeys), CLI
   (`nopwd run` injects secrets into processes; `--via-socket` keeps them out
-  of the environment entirely), Tauri desktop with biometric unlock and an
+  of the environment entirely; `nopwd adopt` moves a secret out of a `.env`
+  file into the vault and leaves a `nopwd://` reference that
+  `nopwd run --dotenv` resolves), Tauri desktop with biometric unlock and an
   SSH agent
 - **Import** — lossless 1Password `.1pux`
 

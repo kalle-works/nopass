@@ -5,6 +5,7 @@ import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
 import { runCommand } from "./commands/run.js";
 import { recoverCommand } from "./commands/recover.js";
+import { adoptCommand } from "./commands/adopt.js";
 
 const program = new Command();
 
@@ -19,5 +20,6 @@ program.addCommand(getCommand);
 program.addCommand(listCommand);
 program.addCommand(lockCommand);
 program.addCommand(runCommand);
+program.addCommand(adoptCommand);
 
 await program.parseAsync(process.argv);

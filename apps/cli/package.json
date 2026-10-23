@@ -1,7 +1,7 @@
 {
   "name": "@nopass/cli",
   "version": "0.1.0",
-  "description": "nopass CLI — fetch vault secrets for AI agents and scripts",
+  "description": "nopass CLI \u2014 fetch vault secrets for AI agents and scripts",
   "type": "module",
   "bin": {
     "nopwd": "./dist/index.js"
@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@nopass/crypto": "workspace:*",
@@ -21,7 +22,8 @@
     "@nopass/config": "workspace:*",
     "@types/node": "^20",
     "tsup": "^8.5.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
   },
   "engines": {
     "node": ">=18"
