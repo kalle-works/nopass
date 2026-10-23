@@ -17,6 +17,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: resolve(__dirname, "src/popup/index.html"),
+        consent: resolve(__dirname, "src/consent/index.html"),
         background: resolve(__dirname, "src/background/index.ts"),
         content: resolve(__dirname, "src/content/index.ts"),
         "webauthn-inject": resolve(__dirname, "src/webauthn/inject.ts"),

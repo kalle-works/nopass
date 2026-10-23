@@ -228,15 +228,25 @@ export async function signAssertion(
  * A page may only use an rp.id that is a registrable suffix of its origin's
  * host (per WebAuthn §5.1.3). This rejects cross-site credential creation —
  * evil.com cannot register or request a credential for bank.com.
+ * The origin must also be a secure context, as browsers require for
+ * WebAuthn: https, or http only on a loopback host. A credential for
+ * bank.com must not be usable from http://bank.com, where anyone on the
+ * network path can run script.
  * (Public-suffix checks are the browser's job; this guards the extension.)
  */
 export function rpIdMatchesOrigin(rpId: string, origin: string): boolean {
-  let host: string;
+  let url: URL;
   try {
-    host = new URL(origin).hostname;
+    url = new URL(origin);
   } catch {
     return false;
   }
+  const host = url.hostname;
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(host))) return false;
   if (!rpId || rpId.startsWith(".") || rpId.endsWith(".")) return false;
   return host === rpId || host.endsWith(`.${rpId}`);
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1" || host === "[::1]";
 }

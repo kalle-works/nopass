@@ -126,13 +126,26 @@ async function armAutoLock(): Promise<void> {
   await chrome.alarms.create(AUTO_LOCK_ALARM, { delayInMinutes: minutes });
 }
 
-/** Wipes keys and session token from memory and storage.session. */
+/**
+ * Wipes keys and session token from memory and storage.session, then revokes
+ * the session server-side so a copied token dies with the lock. The revoke is
+ * best effort: locking must work offline, and the local wipe has already
+ * happened by the time the request goes out.
+ */
 async function lockVault(reason: string): Promise<void> {
   lockGeneration++; // a restore in flight must not resurrect the session
+  const sessionToken =
+    vaultState?.sessionToken ??
+    ((await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY] as PersistedSession | undefined)?.sessionToken;
   vaultState = null;
   await chrome.storage.session.remove(SESSION_KEY);
   await chrome.alarms.clear(AUTO_LOCK_ALARM);
   log.info("vault locked", { reason });
+  if (sessionToken) {
+    api.auth.logout(sessionToken).catch((err: unknown) => {
+      log.warn("server-side session revoke failed", { err: String(err) });
+    });
+  }
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -217,13 +230,16 @@ type Message =
       userDisplayName: string;
       userHandleB64u: string;
       excludeCredentialIdsB64u: string[];
+      challengeB64u: string;
     }
   | {
       type: "WEBAUTHN_GET";
       rpId: string;
-      clientDataJSONB64u: string;
+      challengeB64u: string;
       allowCredentialIdsB64u: string[];
-    };
+    }
+  | { type: "CONSENT_DETAILS"; requestId: string }
+  | { type: "CONSENT_RESULT"; requestId: string; approved: boolean };
 
 chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
   const t0 = performance.now();
@@ -477,6 +493,11 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         return { error: "already registered" };
       }
 
+      const clientDataJSON = buildClientDataJSON("webauthn.create", message.challengeB64u, origin);
+      if (!clientDataJSON) return { error: "invalid challenge" };
+      if (!(await requestConsent({ kind: "create", rpId: message.rpId, origin }))) return { error: "declined" };
+      if (!vaultState) return { error: "locked" };
+
       await armAutoLock();
       const cred = await generateCredential();
       const authData = await buildAuthenticatorData(
@@ -528,6 +549,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
           attestationObjectB64u: bytesToB64u(attestationObject),
           authDataB64u: bytesToB64u(authData),
           publicKeySpkiB64u: bytesToB64u(cred.publicKeySpki),
+          clientDataJSONB64u: bytesToB64u(clientDataJSON),
         },
       };
     }
@@ -542,6 +564,14 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
 
       const candidates = await findPasskeyLogins(message.rpId, message.allowCredentialIdsB64u);
       if (candidates.length === 0) return { error: "no matching credential" };
+
+      // The signed clientDataJSON is built here from the browser-set sender
+      // origin. Taking it from the page would let script sign any origin,
+      // type, or challenge with the user's key.
+      const clientDataJSON = buildClientDataJSON("webauthn.get", message.challengeB64u, origin);
+      if (!clientDataJSON) return { error: "invalid challenge" };
+      if (!(await requestConsent({ kind: "get", rpId: message.rpId, origin }))) return { error: "declined" };
+      if (!vaultState) return { error: "locked" };
       await armAutoLock();
 
       // Most recently created wins when the RP doesn't narrow it down
@@ -561,7 +591,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         newCount,
       );
       const clientDataHash = new Uint8Array(
-        await crypto.subtle.digest("SHA-256", b64uToBytes(message.clientDataJSONB64u)),
+        await crypto.subtle.digest("SHA-256", clientDataJSON),
       );
       const pkcs8 = new Uint8Array(base64ToBytes(passkey.privateKeyPkcs8B64));
       const signature = await signAssertion(pkcs8, authData, clientDataHash);
@@ -593,8 +623,21 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
           authDataB64u: bytesToB64u(authData),
           signatureB64u: bytesToB64u(signature),
           userHandleB64u: passkey.userHandleB64u,
+          clientDataJSONB64u: bytesToB64u(clientDataJSON),
         },
       };
+    }
+
+    case "CONSENT_DETAILS": {
+      if (!isConsentPage(sender)) return { error: "unauthorized" };
+      const pending = pendingConsents.get(message.requestId);
+      return pending ? { request: pending.request } : { error: "expired" };
+    }
+
+    case "CONSENT_RESULT": {
+      if (!isConsentPage(sender)) return { error: "unauthorized" };
+      pendingConsents.get(message.requestId)?.settle(message.approved === true);
+      return { ok: true };
     }
 
     default:
@@ -602,8 +645,95 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
   }
 }
 
+// ─── WebAuthn ceremony helpers ─────────────────────────────────────────────────
+
+/** WebAuthn §13.4.3: challenges must carry at least 16 random bytes. */
+const MIN_CHALLENGE_BYTES = 16;
+
 /**
- * User presence only. The consent overlay proves a human clicked, but nothing
+ * Collected client data for a ceremony, serialized as the browser would.
+ * Returns null for a malformed or too-short challenge.
+ */
+function buildClientDataJSON(
+  type: "webauthn.create" | "webauthn.get",
+  challengeB64u: string,
+  origin: string,
+): Uint8Array<ArrayBuffer> | null {
+  if (typeof challengeB64u !== "string" || !/^[A-Za-z0-9_-]+$/.test(challengeB64u)) return null;
+  let challenge: Uint8Array;
+  try {
+    challenge = b64uToBytes(challengeB64u);
+  } catch {
+    return null;
+  }
+  if (challenge.length < MIN_CHALLENGE_BYTES) return null;
+  // The relay only runs in top frames, so the request is never cross-origin
+  return new TextEncoder().encode(
+    JSON.stringify({ type, challenge: bytesToB64u(challenge), origin, crossOrigin: false }),
+  );
+}
+
+export interface ConsentRequest {
+  kind: "create" | "get";
+  rpId: string;
+  origin: string;
+}
+
+const CONSENT_PAGE = "src/consent/index.html";
+const CONSENT_TIMEOUT_MS = 115_000;
+
+const pendingConsents = new Map<string, { request: ConsentRequest; settle: (approved: boolean) => void }>();
+
+/** True only for our own consent window, never a content script or other extension page. */
+function isConsentPage(sender: chrome.runtime.MessageSender): boolean {
+  return (
+    sender.id === chrome.runtime.id &&
+    (sender.url?.startsWith(chrome.runtime.getURL(CONSENT_PAGE)) ?? false)
+  );
+}
+
+/**
+ * Asks the user in an extension-owned window. The page cannot style, cover,
+ * or script that window, so it cannot trick a click into it (an overlay in
+ * the page's own DOM could be made transparent and clickjacked). Closing the
+ * window, or no answer before the timeout, counts as a decline.
+ */
+async function requestConsent(request: ConsentRequest): Promise<boolean> {
+  const requestId = crypto.randomUUID();
+  let windowId: number | undefined;
+  const decision = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => settle(false), CONSENT_TIMEOUT_MS);
+    const onRemoved = (closedId: number) => {
+      if (closedId === windowId) settle(false);
+    };
+    function settle(approved: boolean) {
+      clearTimeout(timer);
+      chrome.windows.onRemoved.removeListener(onRemoved);
+      pendingConsents.delete(requestId);
+      resolve(approved);
+    }
+    chrome.windows.onRemoved.addListener(onRemoved);
+    pendingConsents.set(requestId, { request, settle });
+  });
+  try {
+    const win = await chrome.windows.create({
+      url: chrome.runtime.getURL(`${CONSENT_PAGE}?id=${requestId}`),
+      type: "popup",
+      width: 380,
+      height: 240,
+      focused: true,
+    });
+    windowId = win?.id;
+  } catch {
+    pendingConsents.get(requestId)?.settle(false);
+  }
+  const approved = await decision;
+  if (windowId !== undefined) chrome.windows.remove(windowId).catch(() => {});
+  return approved;
+}
+
+/**
+ * User presence only. The consent window proves a human clicked, but nothing
  * re-verifies who they are at ceremony time (the vault may have been unlocked
  * minutes ago by someone else), so asserting UV would be a lie the RP relies
  * on. The MAIN-world interceptor hands userVerification: "required" requests
