@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -13,7 +13,7 @@ use crate::{
     middleware::auth::AuthUser,
     models::org::{
         CreateOrgBody, InviteMemberBody, OrgDetailsResponse,
-        OrgSummaryResponse, PendingInviteResponse, PublicKeyResponse,
+        OrgSummaryResponse, PendingInviteResponse, PublicKeyResponse, RewrapBody,
     },
     state::AppState,
 };
@@ -26,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/{org_id}/members", post(invite_member))
         .route("/{org_id}/members/{user_id}", delete(remove_member))
         .route("/{org_id}/accept", post(accept_invite))
+        .route("/{org_id}/wraps", put(rewrap_members))
         // Look up a user's public key by email hash (needed before sending an invite)
         .route("/public-key/{email_hash}", get(get_public_key))
 }
@@ -69,6 +70,7 @@ async fn create_org(
         auth.user_id,
         &body.encrypted_org_key,
         body.wrap_signature.as_deref(),
+        body.key_epoch,
     )
     .await?;
 
@@ -116,8 +118,7 @@ async fn get_org(
         created_at: org.created_at,
         members,
         encrypted_org_key,
-        wrap_signature: member.wrap_signature,
-        wrap_signer_id: member.invited_by.unwrap_or(auth.user_id),
+        wrap_chain: db_orgs::wrap_chain(&state.db, org_id, auth.user_id).await?,
     }))
 }
 
@@ -158,8 +159,8 @@ async fn invite_member(
         .await?
         .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
 
-    if B64.decode(&body.wrap_signature).map(|s| s.len()) != Ok(64) {
-        return Err(ApiError::BadRequest("wrapSignature must be 64 bytes of base64".into()));
+    if B64.decode(&body.wrap_signature).map(|s| s.len()) != Ok(64) || body.key_epoch < 1 {
+        return Err(ApiError::BadRequest("wrapSignature must be 64 bytes of base64 and keyEpoch >= 1".into()));
     }
 
     db_orgs::invite_member(
@@ -169,10 +170,36 @@ async fn invite_member(
         &body.role,
         &body.encrypted_org_key,
         &body.wrap_signature,
+        body.key_epoch,
         auth.user_id,
     )
     .await?;
 
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Owner-only: replace members' org-key wraps with owner-signed ones, e.g. to
+/// bring an org created before signed wraps under verification.
+async fn rewrap_members(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(org_id): Path<Uuid>,
+    Json(body): Json<RewrapBody>,
+) -> ApiResult<StatusCode> {
+    let caller = db_orgs::get_org_member(&state.db, org_id, auth.user_id)
+        .await?
+        .ok_or_else(|| ApiError::Forbidden("not a member of this org".into()))?;
+    if caller.status != "active" || caller.role != "owner" {
+        return Err(ApiError::Forbidden("only the owner can re-sign org keys".into()));
+    }
+    for w in &body.wraps {
+        if B64.decode(&w.wrap_signature).map(|s| s.len()) != Ok(64) || w.key_epoch < 1 {
+            return Err(ApiError::BadRequest("each wrap needs a 64-byte signature and an epoch >= 1".into()));
+        }
+    }
+    if !db_orgs::rewrap_members(&state.db, org_id, auth.user_id, &body.wraps).await? {
+        return Err(ApiError::BadRequest("every wrap must be for a member of this org".into()));
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

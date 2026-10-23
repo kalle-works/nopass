@@ -20,6 +20,7 @@ pub struct OrgMember {
     pub encrypted_org_key: Option<String>,
     pub invited_by: Option<Uuid>,
     pub wrap_signature: Option<String>,
+    pub key_epoch: Option<i32>,
     pub joined_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -40,6 +41,9 @@ pub struct CreateOrgBody {
     /// Creator's identity-key signature over their own org-key wrap
     #[serde(default)]
     pub wrap_signature: Option<String>,
+    /// Org key epoch the creator's wrap was signed for
+    #[serde(default)]
+    pub key_epoch: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +55,38 @@ pub struct InviteMemberBody {
     pub encrypted_org_key: String,
     /// Inviter's identity-key signature over the wrap, verified by the invitee
     pub wrap_signature: String,
+    /// Org key epoch the wrap was signed for
+    pub key_epoch: i32,
+}
+
+/// Owner-only replacement of members' org-key wraps (re-signing a legacy org).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewrapBody {
+    pub wraps: Vec<RewrapEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewrapEntry {
+    pub user_id: Uuid,
+    pub encrypted_org_key: String,
+    pub wrap_signature: String,
+    pub key_epoch: i32,
+}
+
+/// One signed wrap in the chain that vouches for a member's org key: the
+/// member's wrap, and the key bundle of whoever signed it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WrapLinkResponse {
+    pub recipient_user_id: Uuid,
+    pub role: String,
+    pub encrypted_org_key: String,
+    pub wrap_signature: Option<String>,
+    pub key_epoch: Option<i32>,
+    pub signer_user_id: Uuid,
+    pub signer: KeyBundleResponse,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,17 +103,15 @@ pub struct KeyBundleResponse {
     pub public_key_signature: Option<String>,
 }
 
-/// A pending invite as the invitee sees it, with what they need to check it
-/// came from the inviter before accepting.
+/// A pending invite as the invitee sees it. `wrap_chain[0]` is the invitee's
+/// own wrap; the rest vouch for whoever signed it, up to the owner.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingInviteResponse {
     pub org_id: Uuid,
     pub org_name: String,
     pub role: String,
-    pub encrypted_org_key: String,
-    pub wrap_signature: Option<String>,
-    pub inviter: KeyBundleResponse,
+    pub wrap_chain: Vec<WrapLinkResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,10 +147,9 @@ pub struct OrgDetailsResponse {
     pub created_at: DateTime<Utc>,
     pub members: Vec<OrgMemberResponse>,
     pub encrypted_org_key: String,
-    /// Signature over the caller's wrap and who made it, so the org key can be
-    /// checked on every load, not only when the invite was accepted
-    pub wrap_signature: Option<String>,
-    pub wrap_signer_id: Uuid,
+    /// Signed chain for the caller's wrap, so the org key is verified on every
+    /// load, not only when the invite was accepted
+    pub wrap_chain: Vec<WrapLinkResponse>,
 }
 
 #[derive(Debug, Serialize)]
