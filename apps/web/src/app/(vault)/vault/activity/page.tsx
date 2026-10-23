@@ -21,7 +21,6 @@ const EVENT_LABELS: Record<string, { label: string; review?: boolean }> = {
   device_registered: { label: "Registered new device", review: true },
   device_revoked: { label: "Revoked device" },
   sessions_revoked: { label: "Signed out all other devices" },
-  sessions_revoked: { label: "Signed out all other devices" },
   vault_created: { label: "Created vault" },
   vault_deleted: { label: "Deleted vault" },
 };
