@@ -91,6 +91,41 @@ pub async fn reset(pool: &PgPool, keys: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// A network the account has logged in from before. Expires after a quarter
+/// without a successful login from it.
+const TRUSTED_NETWORK_TTL_SECS: i64 = 90 * 24 * 60 * 60;
+
+pub async fn is_trusted_network(pool: &PgPool, account_key: &str, network_hash: &str) -> Result<bool> {
+    let trusted = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM trusted_login_networks
+            WHERE account_key = $1 AND network_hash = $2
+              AND last_success_at > NOW() - ($3 * INTERVAL '1 second'))
+        "#,
+    )
+    .bind(account_key)
+    .bind(network_hash)
+    .bind(TRUSTED_NETWORK_TTL_SECS)
+    .fetch_one(pool)
+    .await?;
+    Ok(trusted)
+}
+
+pub async fn trust_network(pool: &PgPool, account_key: &str, network_hash: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO trusted_login_networks (account_key, network_hash) VALUES ($1, $2)
+        ON CONFLICT (account_key, network_hash) DO UPDATE SET last_success_at = NOW()
+        "#,
+    )
+    .bind(account_key)
+    .bind(network_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn prune_stale(pool: &PgPool) -> Result<u64> {
     let result = sqlx::query(
         r#"
@@ -102,7 +137,11 @@ pub async fn prune_stale(pool: &PgPool) -> Result<u64> {
     .bind(DECAY_SECS)
     .execute(pool)
     .await?;
-    Ok(result.rows_affected())
+    let trusted = sqlx::query("DELETE FROM trusted_login_networks WHERE last_success_at < NOW() - ($1 * INTERVAL '1 second')")
+        .bind(TRUSTED_NETWORK_TTL_SECS)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() + trusted.rows_affected())
 }
 
 #[cfg(test)]

@@ -133,7 +133,6 @@ async fn recovery_init(
 
     Ok(Json(RecoveryInitResponse {
         recovery_token: recovery_token.to_string(),
-        user_id: user.id,
         recovery_blob: B64.encode(blob),
         recovery_blob_iv: B64.encode(blob_iv),
         protected_private_key: user.protected_private_key.clone(),

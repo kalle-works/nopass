@@ -266,3 +266,106 @@ pub fn generate_srp_verifier(email: &str, password: &str) -> (Vec<u8>, Vec<u8>) 
     let verifier = client.compute_verifier(email.as_bytes(), password.as_bytes(), &salt);
     (salt, verifier)
 }
+
+/// A fresh password proof for `token`'s account (`/auth/proof/start` plus the
+/// client's OPAQUE finalization), as the JSON object endpoints accept. With a
+/// wrong password the client can't finish, so this returns a proof built from
+/// a different handshake — which the server must refuse.
+pub async fn password_proof(server: &TestServer, token: &str, email: &str, password: &str) -> serde_json::Value {
+    let client = ClientLogin::<Suite>::start(&mut OsRng, password.as_bytes()).unwrap();
+    let resp = from_random_ip(server.post("/v1/auth/proof/start").authorization_bearer(token).json(&serde_json::json!({
+        "emailHash": compute_email_hash(email),
+        "startLoginRequest": B64URL.encode(client.message.serialize()),
+    })))
+    .await;
+    resp.assert_status_ok();
+    let start: serde_json::Value = resp.json();
+    let finish = client
+        .state
+        .finish(
+            &mut OsRng,
+            password.as_bytes(),
+            CredentialResponse::deserialize(&B64URL.decode(start["loginResponse"].as_str().unwrap()).unwrap()).unwrap(),
+            ClientLoginFinishParameters::new(None, Default::default(), Some(&ksf(&test_kdf()))),
+        )
+        .map(|f| B64URL.encode(f.message.serialize()))
+        .unwrap_or_else(|_| B64URL.encode([0u8; 64]));
+    serde_json::json!({ "proofId": start["proofId"], "finishLoginRequest": finish })
+}
+
+/// SRP → OPAQUE upgrade as the client runs it in `token`'s session: a fresh
+/// SRP proof with `srp_password` and an OPAQUE registration for `password`.
+pub async fn srp_upgrade(server: &TestServer, token: &str, email: &str, srp_password: &str, password: &str) -> axum_test::TestResponse {
+    let srp = SrpClient::<Sha256>::new(&G_2048);
+    let mut a = [0u8; 64];
+    rand::thread_rng().fill_bytes(&mut a);
+    let reg = ClientRegistration::<Suite>::start(&mut OsRng, password.as_bytes()).unwrap();
+    let resp = from_random_ip(server.post("/v1/auth/upgrade/start").authorization_bearer(token).json(&serde_json::json!({
+        "emailHash": compute_email_hash(email),
+        "clientPublicA": B64.encode(srp.compute_public_ephemeral(&a)),
+        "registrationRequest": B64URL.encode(reg.message.serialize()),
+    })))
+    .await;
+    resp.assert_status_ok();
+    let start: serde_json::Value = resp.json();
+    let b64 = |k: &str| B64.decode(start[k].as_str().unwrap()).unwrap();
+    let proof = srp
+        .process_reply(&a, email.as_bytes(), srp_password.as_bytes(), &b64("srpSalt"), &b64("serverPublicB"))
+        .unwrap()
+        .proof()
+        .to_vec();
+    let record = reg
+        .state
+        .finish(
+            &mut OsRng,
+            password.as_bytes(),
+            RegistrationResponse::deserialize(&B64URL.decode(start["registrationResponse"].as_str().unwrap()).unwrap())
+                .unwrap(),
+            ClientRegistrationFinishParameters::new(Default::default(), Some(&ksf(&test_kdf()))),
+        )
+        .unwrap()
+        .message
+        .serialize();
+    from_random_ip(server.post("/v1/auth/upgrade/finish").authorization_bearer(token).json(&serde_json::json!({
+        "upgradeId": start["upgradeId"],
+        "clientProofM1": B64.encode(proof),
+        "registrationRecord": B64URL.encode(record),
+        "wrappedAccountKey": B64.encode([5u8; 80]),
+        "wrappedAccountKeyIv": B64.encode([5u8; 12]),
+    })))
+    .await
+}
+
+/// Full OPAQUE login from a fixed client IP; returns the finish response.
+pub async fn login_from_ip(server: &TestServer, email: &str, password: &str, ip: &str) -> axum_test::TestResponse {
+    let client = ClientLogin::<Suite>::start(&mut OsRng, password.as_bytes()).unwrap();
+    let resp = server
+        .post("/v1/auth/opaque/login/start")
+        .add_header("x-forwarded-for", ip.to_string())
+        .json(&serde_json::json!({
+            "emailHash": compute_email_hash(email),
+            "startLoginRequest": B64URL.encode(client.message.serialize()),
+        }))
+        .await;
+    if resp.status_code() != StatusCode::OK {
+        return resp;
+    }
+    let start: OpaqueLoginStartResponse = resp.json();
+    let finish = client
+        .state
+        .finish(
+            &mut OsRng,
+            password.as_bytes(),
+            CredentialResponse::deserialize(&B64URL.decode(&start.login_response).unwrap()).unwrap(),
+            ClientLoginFinishParameters::new(None, Default::default(), Some(&ksf(&start.kdf_params))),
+        )
+        .unwrap();
+    server
+        .post("/v1/auth/opaque/login/finish")
+        .add_header("x-forwarded-for", ip.to_string())
+        .json(&serde_json::json!({
+            "loginId": start.login_id,
+            "finishLoginRequest": B64URL.encode(finish.message.serialize()),
+        }))
+        .await
+}

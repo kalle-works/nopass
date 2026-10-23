@@ -5,6 +5,7 @@ pub mod devices;
 pub mod keys;
 pub mod orgs;
 pub mod password;
+pub mod proof;
 pub mod recovery;
 pub mod shares;
 pub mod sync;
@@ -63,6 +64,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .nest("/auth", auth::protected_router())
         .nest("/auth/recovery", recovery::protected_router())
         .nest("/auth/password", password::router())
+        .nest("/auth/proof", proof::router())
         .nest("/shares", shares::router())
         .nest("/billing", billing::router())
         .nest("/activity", activity::router())

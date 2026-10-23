@@ -410,7 +410,6 @@ async fn recovery_with_the_account_key_leaves_items_untouched(pool: PgPool) {
         .json(&json!({ "emailHash": compute_email_hash(EMAIL), "recoveryAuthKey": auth_key }))
         .await
         .json();
-    assert_eq!(init.user_id, session.user_id);
     let record = opaque_registration(
         &server,
         "/v1/auth/recovery/opaque/start",

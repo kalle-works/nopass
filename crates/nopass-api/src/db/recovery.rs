@@ -211,6 +211,10 @@ pub async fn rotate_master_password(
         }
     }
 
+    crate::db::auth::drop_pending_logins(&mut tx, user_id)
+        .await
+        .map_err(CompleteRecoveryError::Db)?;
+
     // Sessions authenticated against the old password are revoked
     let keep_session = match authority {
         RotationAuthority::Session(id) => Some(id),

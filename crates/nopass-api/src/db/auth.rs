@@ -73,26 +73,68 @@ pub async fn create_user(pool: &PgPool, new: NewUser<'_>) -> Result<Option<User>
     Ok(Some(user))
 }
 
-/// Store a new OPAQUE record and drop any SRP verifier in the same write: after
-/// this the account is OPAQUE-only and the brute-forceable verifier is gone.
-pub async fn set_opaque_record(pool: &PgPool, user_id: Uuid, record: &[u8]) -> Result<()> {
-    sqlx::query(
+/// SRP → OPAQUE upgrade in one transaction: OPAQUE record and wrapped account
+/// key in, SRP verifier out, pending handshakes dropped, every session but
+/// `keep_session` revoked. Returns false (and changes nothing) if the account
+/// no longer has an SRP verifier, e.g. a concurrent upgrade won.
+pub async fn complete_srp_upgrade(
+    pool: &PgPool,
+    user_id: Uuid,
+    keep_session: Uuid,
+    record: &[u8],
+    wrapped: (&[u8], &[u8]),
+    protected_private_key: Option<(&str, &str)>,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let updated = sqlx::query(
         r#"
         UPDATE users
-        SET opaque_record = $2, srp_salt = NULL, srp_verifier = NULL, updated_at = NOW()
-        WHERE id = $1
+        SET opaque_record = $2, srp_salt = NULL, srp_verifier = NULL,
+            wrapped_account_key = $3, wrapped_account_key_iv = $4,
+            protected_private_key = COALESCE($5, protected_private_key),
+            protected_private_key_iv = COALESCE($6, protected_private_key_iv),
+            updated_at = NOW()
+        WHERE id = $1 AND srp_verifier IS NOT NULL
         "#,
     )
     .bind(user_id)
     .bind(record)
-    .execute(pool)
+    .bind(wrapped.0)
+    .bind(wrapped.1)
+    .bind(protected_private_key.map(|k| k.0))
+    .bind(protected_private_key.map(|k| k.1))
+    .execute(&mut *tx)
     .await?;
+    if updated.rows_affected() != 1 {
+        return Ok(false);
+    }
+    drop_pending_logins(&mut tx, user_id).await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND id <> $2")
+        .bind(user_id)
+        .bind(keep_session)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// In-flight login handshakes were started against the old credential; a
+/// credential change must not let one finish afterwards.
+pub async fn drop_pending_logins(tx: &mut sqlx::PgConnection, user_id: Uuid) -> Result<()> {
+    sqlx::query("DELETE FROM pending_opaque_logins WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM pending_srp_sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
     Ok(())
 }
 
 /// One-time migration to the wrapped account key; also moves the private key
 /// to its account-key-derived wrap. Returns false if the account already has
-/// one, so a later (possibly stolen-session) call can't replace it.
+/// one: the wrap is only ever replaced by a password change or recovery.
 pub async fn set_account_key(
     pool: &PgPool,
     user_id: Uuid,

@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use axum::http::StatusCode;
 use helpers::{
     build_test_server, compute_email_hash, from_random_ip, insert_legacy_srp_user, login,
-    opaque_login_finish, opaque_login_start, opaque_registration, register_user, srp_login,
-    srp_login_ok, stored_account_key, test_kdf,
+    login_from_ip, opaque_login_finish, opaque_login_start, opaque_registration, register_user,
+    srp_login, srp_login_ok, srp_upgrade, stored_account_key, test_kdf,
 };
 use nopass_api::db::{
     pending::MAX_PENDING_LOGINS_PER_ACCOUNT,
@@ -126,57 +126,48 @@ async fn login_start_looks_the_same_for_known_unknown_and_unmigrated_accounts(po
 // ─── SRP → OPAQUE migration ──────────────────────────────────────────────────
 
 #[sqlx::test(migrations = "src/db/migrations")]
-async fn srp_account_migrates_to_opaque_and_loses_its_verifier(pool: PgPool) {
+async fn srp_account_upgrades_with_a_fresh_srp_proof_and_loses_its_verifier(pool: PgPool) {
     let server = build_test_server(pool.clone());
     let user_id = insert_legacy_srp_user(&pool, EMAIL, PASSWORD).await;
 
     // The old account still logs in (after its email hash was keyed at startup)…
-    let srp = srp_login_ok(&server, EMAIL, PASSWORD).await;
-    let token = srp.session.session_token;
+    let token = srp_login_ok(&server, EMAIL, PASSWORD).await.session.session_token;
+    let other = srp_login_ok(&server, EMAIL, PASSWORD).await.session.session_token;
 
-    // …and re-registers with OPAQUE inside that session.
-    let record = opaque_registration(&server, "/v1/auth/opaque/reregister/start", Some(&token), json!({}), EMAIL, PASSWORD).await;
-    server
-        .post("/v1/auth/opaque/reregister/finish")
-        .authorization_bearer(&token)
-        .json(&json!({ "registrationRecord": record }))
-        .await
-        .assert_status(StatusCode::NO_CONTENT);
+    // …and upgrades in that session, proving the password again.
+    srp_upgrade(&server, &token, EMAIL, PASSWORD, PASSWORD).await.assert_status_ok();
 
-    let (salt, verifier, has_record): (Option<Vec<u8>>, Option<Vec<u8>>, bool) = sqlx::query_as(
-        "SELECT srp_salt, srp_verifier, opaque_record IS NOT NULL FROM users WHERE id = $1",
+    let (salt, verifier, has_record, has_key): (Option<Vec<u8>>, Option<Vec<u8>>, bool, bool) = sqlx::query_as(
+        "SELECT srp_salt, srp_verifier, opaque_record IS NOT NULL, wrapped_account_key IS NOT NULL FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!((salt, verifier, has_record), (None, None, true));
+    assert_eq!((salt, verifier, has_record, has_key), (None, None, true, true));
 
     login(&server, EMAIL, PASSWORD).await;
     srp_login(&server, EMAIL, PASSWORD).await.assert_status(StatusCode::UNAUTHORIZED);
+    // The upgrade replaced the credential, so other sessions are gone.
+    server.get("/v1/vaults").authorization_bearer(&token).await.assert_status_ok();
+    server.get("/v1/vaults").authorization_bearer(&other).await.assert_status(StatusCode::UNAUTHORIZED);
 }
 
+/// A stolen session token alone must not be enough to replace the login
+/// credential of an account still on SRP.
 #[sqlx::test(migrations = "src/db/migrations")]
-async fn reregister_needs_a_fresh_session(pool: PgPool) {
+async fn srp_upgrade_without_the_password_changes_nothing(pool: PgPool) {
     let server = build_test_server(pool.clone());
     insert_legacy_srp_user(&pool, EMAIL, PASSWORD).await;
     let token = srp_login_ok(&server, EMAIL, PASSWORD).await.session.session_token;
 
-    // A token stolen later must not be enough to replace the password.
-    sqlx::query("UPDATE sessions SET created_at = NOW() - INTERVAL '1 hour'")
-        .execute(&pool)
+    srp_upgrade(&server, &token, EMAIL, "not the password", "attacker password")
         .await
-        .unwrap();
+        .assert_status(StatusCode::UNAUTHORIZED);
 
-    server
-        .post("/v1/auth/opaque/reregister/start")
-        .authorization_bearer(&token)
-        .json(&json!({ "emailHash": compute_email_hash(EMAIL), "registrationRequest": "AAAA" }))
-        .await
-        .assert_status(StatusCode::FORBIDDEN);
+    srp_login_ok(&server, EMAIL, PASSWORD).await;
+    assert!(opaque_login_start(&server, EMAIL, "attacker password").await.finish_request.is_none());
 }
-
-// ─── Throttling and pending-login bounds ─────────────────────────────────────
 
 async fn start_from(server: &axum_test::TestServer, path: &str, ip: &str) -> axum_test::TestResponse {
     server
@@ -209,6 +200,40 @@ async fn a_stranger_trips_only_their_own_network_and_the_owner_still_logs_in(poo
 
     // The owner, elsewhere, is unaffected.
     login(&server, EMAIL, PASSWORD).await;
+}
+
+/// Registration attempts for an existing address are answered under a decoy
+/// key, so they are no guessing oracle and nothing is charged to the account.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn registration_attempts_do_not_lock_out_an_existing_account(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+
+    for _ in 0..=PER_NETWORK.free {
+        server
+            .post("/v1/auth/opaque/register/start")
+            .add_header("x-forwarded-for", "203.0.113.7")
+            .json(&json!({ "emailHash": compute_email_hash(EMAIL), "registrationRequest": "AAAA" }))
+            .await;
+    }
+    login_from_ip(&server, EMAIL, PASSWORD, "203.0.113.8").await.assert_status_ok();
+}
+
+/// Once the owner has logged in from a network, guesses from everywhere else
+/// can exhaust the account-wide ceiling without locking that network out.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn the_owners_known_network_survives_the_account_wide_ceiling(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+    login_from_ip(&server, EMAIL, PASSWORD, "192.0.2.10").await.assert_status_ok();
+
+    for n in 0..=PER_ACCOUNT.free {
+        start_from(&server, "/v1/auth/opaque/login/start", &format!("198.{}.{}.1", n / 256, n % 256)).await;
+    }
+    start_from(&server, "/v1/auth/opaque/login/start", "198.51.100.1")
+        .await
+        .assert_status(StatusCode::TOO_MANY_REQUESTS);
+    login_from_ip(&server, EMAIL, PASSWORD, "192.0.2.11").await.assert_status_ok();
 }
 
 #[sqlx::test(migrations = "src/db/migrations")]
