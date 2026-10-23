@@ -274,3 +274,154 @@ pub async fn remove_member(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result
             .await?;
     Ok(rows.rows_affected() > 0)
 }
+
+pub async fn current_key_epoch(pool: &PgPool, org_id: Uuid) -> Result<Option<i32>> {
+    let epoch = sqlx::query_scalar::<_, i32>("SELECT key_epoch FROM organizations WHERE id = $1")
+        .bind(org_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(epoch)
+}
+
+#[derive(sqlx::FromRow)]
+pub struct OrgItemRow {
+    pub id: Uuid,
+    pub vault_id: Uuid,
+    pub user_id: Uuid,
+    pub org_id: Uuid,
+    pub item_type: String,
+    pub blob: Vec<u8>,
+    pub blob_iv: Vec<u8>,
+    pub blob_mac: Vec<u8>,
+    pub version: i64,
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Every item in the org, tombstones included: a rotation must re-encrypt all of them.
+pub async fn list_org_items(pool: &PgPool, org_id: Uuid) -> Result<Vec<OrgItemRow>> {
+    let rows = sqlx::query_as::<_, OrgItemRow>(
+        r#"SELECT id, vault_id, user_id, org_id, item_type, blob, blob_iv, blob_mac, version,
+                  deleted_at, created_at, updated_at
+           FROM vault_items WHERE org_id = $1 ORDER BY created_at"#,
+    )
+    .bind(org_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Decoded rotation payload, validated for shape by the route.
+pub struct Rotation<'a> {
+    pub new_epoch: i32,
+    pub remove_user_id: Option<Uuid>,
+    pub wraps: &'a [RewrapEntry],
+    /// (item id, blob, blob_iv, blob_mac)
+    pub items: Vec<(Uuid, Vec<u8>, Vec<u8>, Vec<u8>)>,
+}
+
+pub enum RotationOutcome {
+    Rotated,
+    /// new_epoch is not current + 1 (a concurrent rotation won, or a replay)
+    StaleEpoch,
+    /// The member to remove does not exist or is the owner
+    BadRemoval,
+    /// Wraps don't cover exactly the remaining members
+    IncompleteWraps,
+    /// Items don't cover exactly the org's items
+    IncompleteItems,
+}
+
+/// Apply a rotation atomically: the org row and every member and item row are
+/// locked, and the request must cover exactly the remaining members and all
+/// org items, or nothing changes.
+pub async fn rotate_key(pool: &PgPool, org_id: Uuid, owner_id: Uuid, r: Rotation<'_>) -> Result<RotationOutcome> {
+    use std::collections::HashSet;
+
+    let mut tx = pool.begin().await?;
+    let current: i32 = sqlx::query_scalar("SELECT key_epoch FROM organizations WHERE id = $1 FOR UPDATE")
+        .bind(org_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if r.new_epoch != current + 1 {
+        return Ok(RotationOutcome::StaleEpoch);
+    }
+
+    if let Some(removed) = r.remove_user_id {
+        let deleted = sqlx::query(
+            "DELETE FROM organization_members WHERE org_id = $1 AND user_id = $2 AND role != 'owner'",
+        )
+        .bind(org_id)
+        .bind(removed)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if deleted != 1 {
+            return Ok(RotationOutcome::BadRemoval);
+        }
+    }
+
+    let members: HashSet<Uuid> = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM organization_members WHERE org_id = $1 FOR UPDATE",
+    )
+    .bind(org_id)
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .collect();
+    let wrapped: HashSet<Uuid> = r.wraps.iter().map(|w| w.user_id).collect();
+    if wrapped.len() != r.wraps.len() || wrapped != members || r.wraps.iter().any(|w| w.key_epoch != r.new_epoch) {
+        return Ok(RotationOutcome::IncompleteWraps);
+    }
+
+    let existing: HashSet<Uuid> =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM vault_items WHERE org_id = $1 FOR UPDATE")
+            .bind(org_id)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .collect();
+    let submitted: HashSet<Uuid> = r.items.iter().map(|i| i.0).collect();
+    if submitted.len() != r.items.len() || submitted != existing {
+        return Ok(RotationOutcome::IncompleteItems);
+    }
+
+    for (id, blob, blob_iv, blob_mac) in &r.items {
+        sqlx::query(
+            r#"UPDATE vault_items
+               SET blob = $3, blob_iv = $4, blob_mac = $5, version = version + 1, updated_at = NOW()
+               WHERE org_id = $1 AND id = $2"#,
+        )
+        .bind(org_id)
+        .bind(id)
+        .bind(blob)
+        .bind(blob_iv)
+        .bind(blob_mac)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for w in r.wraps {
+        sqlx::query(
+            r#"UPDATE organization_members
+               SET encrypted_org_key = $3, wrap_signature = $4, key_epoch = $5,
+                   invited_by = CASE WHEN user_id = $6 THEN NULL ELSE $6 END
+               WHERE org_id = $1 AND user_id = $2"#,
+        )
+        .bind(org_id)
+        .bind(w.user_id)
+        .bind(&w.encrypted_org_key)
+        .bind(&w.wrap_signature)
+        .bind(w.key_epoch)
+        .bind(owner_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query("UPDATE organizations SET key_epoch = $2 WHERE id = $1")
+        .bind(org_id)
+        .bind(r.new_epoch)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(RotationOutcome::Rotated)
+}

@@ -75,6 +75,46 @@ pub struct RewrapEntry {
     pub key_epoch: i32,
 }
 
+/// Owner-only org key rotation: optionally remove one member, then replace
+/// every org item and every remaining member's wrap at `new_epoch`, all in one
+/// transaction.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateKeyBody {
+    pub new_epoch: i32,
+    #[serde(default)]
+    pub remove_user_id: Option<Uuid>,
+    pub wraps: Vec<RewrapEntry>,
+    pub items: Vec<ReencryptedOrgItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReencryptedOrgItem {
+    pub id: Uuid,
+    pub blob: String,
+    pub blob_iv: String,
+    pub blob_mac: String,
+}
+
+/// An org item as served to members (base64 fields, like personal items).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgItemResponse {
+    pub id: Uuid,
+    pub vault_id: Uuid,
+    pub user_id: Uuid,
+    pub org_id: Uuid,
+    pub item_type: String,
+    pub blob: String,
+    pub blob_iv: String,
+    pub blob_mac: String,
+    pub version: i64,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// One signed wrap in the chain that vouches for a member's org key: the
 /// member's wrap, and the key bundle of whoever signed it.
 #[derive(Debug, Serialize)]
