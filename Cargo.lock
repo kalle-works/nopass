@@ -1454,6 +1454,7 @@ name = "nopass-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "axum",
  "axum-test",
  "base64",
@@ -1465,6 +1466,7 @@ dependencies = [
  "ipnet",
  "nopass-crypto",
  "nopass-models",
+ "opaque-ke",
  "rand 0.8.6",
  "reqwest",
  "serde",

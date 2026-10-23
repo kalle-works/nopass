@@ -15,7 +15,10 @@ pub enum ApiError {
     Forbidden(String),
     BadRequest(String),
     Conflict(String),
+    Gone(String),
     TooManyRequests,
+    /// Per-account login backoff; sets Retry-After.
+    Throttled { retry_after_secs: i64 },
     Internal(anyhow::Error),
 }
 
@@ -27,10 +30,21 @@ impl IntoResponse for ApiError {
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            ApiError::Gone(msg) => (StatusCode::GONE, msg),
             ApiError::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "too many requests — try again later".into(),
             ),
+            ApiError::Throttled { retry_after_secs } => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(axum::http::header::RETRY_AFTER, retry_after_secs.to_string())],
+                    Json(ErrorResponse {
+                        error: "too many login attempts — try again later".into(),
+                    }),
+                )
+                    .into_response();
+            }
             ApiError::Internal(err) => {
                 error!("internal error: {err:#}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".into())

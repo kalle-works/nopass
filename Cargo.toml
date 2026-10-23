@@ -56,3 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 anyhow = "1"
 thiserror = "1"
 dotenvy = "0.15"
+
+# Argon2id at debug opt-level makes every OPAQUE login in tests take seconds.
+[profile.dev.package.argon2]
+opt-level = 3

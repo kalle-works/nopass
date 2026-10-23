@@ -9,4 +9,5 @@ pub mod sessions;
 pub mod shares;
 pub mod subscriptions;
 pub mod sync;
+pub mod throttle;
 pub mod vaults;

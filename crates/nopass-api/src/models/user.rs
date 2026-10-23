@@ -6,9 +6,11 @@ use uuid::Uuid;
 #[derive(Debug, Clone, FromRow)]
 pub struct User {
     pub id: Uuid,
+    /// Keyed account key once `email_hash_keyed`, see AppState::account_key
     pub email_hash: String,
-    pub srp_salt: Vec<u8>,
-    pub srp_verifier: Vec<u8>,
+    /// Legacy SRP credentials — NULL once the account has migrated to OPAQUE
+    pub srp_salt: Option<Vec<u8>>,
+    pub srp_verifier: Option<Vec<u8>>,
     pub kdf_params: Value,
     pub protected_symmetric_key: Vec<u8>,
     pub protected_symmetric_key_iv: Vec<u8>,
@@ -24,4 +26,6 @@ pub struct User {
     pub recovery_updated_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub opaque_record: Option<Vec<u8>>,
+    pub email_hash_keyed: bool,
 }

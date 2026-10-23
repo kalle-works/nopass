@@ -5,8 +5,11 @@ use axum::{
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
+use nopass_crypto::opaque;
 use nopass_models::{
-    EncryptedVaultItem, RecoveryCompleteRequest, RecoveryInitRequest, RecoveryInitResponse,
+    EncryptedVaultItem, OpaqueRegisterStartResponse, RecoveryCompleteRequest,
+    RecoveryInitRequest, RecoveryInitResponse, RecoveryOpaqueStartRequest,
     RecoveryStatusResponse, SetRecoveryRequest,
 };
 use sha2::{Digest, Sha256};
@@ -16,13 +19,18 @@ use crate::{
     db::{activity, auth as db_auth, pending, recovery as db_recovery},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
-    routes::{vault::parse_item_type, ClientIp},
+    routes::{
+        auth::{decode_opaque, parse_email_hash},
+        vault::parse_item_type,
+        ClientIp,
+    },
     state::{AppState, RECOVERY_SESSION_TTL_SECS},
 };
 
 pub fn public_router() -> Router<AppState> {
     Router::new()
         .route("/init", post(recovery_init))
+        .route("/opaque/start", post(recovery_opaque_start))
         .route("/complete", post(recovery_complete))
 }
 
@@ -102,7 +110,8 @@ async fn recovery_init(
     // Same error for unknown email, no kit, and wrong code — no enumeration
     let invalid = || ApiError::Unauthorized("invalid recovery code".into());
 
-    let user = db_auth::find_user_by_email_hash(&state.db, &req.email_hash)
+    let email_hash = parse_email_hash(&req.email_hash)?;
+    let user = db_auth::find_user_by_account_key(&state.db, &state.account_key(&email_hash))
         .await?
         .ok_or_else(invalid)?;
 
@@ -150,30 +159,74 @@ async fn recovery_init(
     }))
 }
 
+/// Live recovery session for `token`, or 401.
+async fn live_recovery_session(state: &AppState, token: &str) -> ApiResult<pending::PendingRecoverySession> {
+    let token: Uuid = token
+        .parse()
+        .map_err(|_| ApiError::Unauthorized("invalid recovery token".into()))?;
+    let session = pending::peek_recovery(&state.db, token)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
+    if (chrono::Utc::now() - session.created_at).num_seconds() > RECOVERY_SESSION_TTL_SECS as i64 {
+        return Err(ApiError::Unauthorized("recovery session expired".into()));
+    }
+    Ok(session)
+}
+
+/// OPAQUE registration round 1 for the new master password. The recovery
+/// token authorizes it; the record itself arrives with recovery/complete so
+/// the credential, keys and items rotate in one transaction.
+async fn recovery_opaque_start(
+    State(state): State<AppState>,
+    Json(req): Json<RecoveryOpaqueStartRequest>,
+) -> ApiResult<Json<OpaqueRegisterStartResponse>> {
+    let email_hash = parse_email_hash(&req.email_hash)?;
+    let request = decode_opaque(&req.registration_request, "registrationRequest")?;
+    let session = live_recovery_session(&state, &req.recovery_token).await?;
+    let user = db_auth::get_user_by_id(&state.db, session.user_id)
+        .await?
+        .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
+    if state.account_key(&email_hash) != user.email_hash {
+        return Err(ApiError::BadRequest("emailHash does not match this account".into()));
+    }
+
+    let response = opaque::registration_start(&state.opaque_setup, &request, email_hash.as_bytes())
+        .map_err(|_| ApiError::BadRequest("invalid registrationRequest".into()))?;
+    Ok(Json(OpaqueRegisterStartResponse {
+        registration_response: B64URL.encode(response),
+    }))
+}
+
 async fn recovery_complete(
     State(state): State<AppState>,
     Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<RecoveryCompleteRequest>,
 ) -> ApiResult<StatusCode> {
-    let token: Uuid = req
-        .recovery_token
-        .parse()
-        .map_err(|_| ApiError::Unauthorized("invalid recovery token".into()))?;
-
     // Peek without consuming: a transient failure (DB hiccup, bad field) must
     // leave the token usable so the client can retry without restarting the
     // whole code-entry flow. The token holder already has full recovery power,
     // so single-use isn't load-bearing; it's consumed on success below.
-    let pending_session = pending::peek_recovery(&state.db, token)
-        .await?
-        .ok_or_else(|| ApiError::Unauthorized("recovery session not found or expired".into()))?;
+    let pending_session = live_recovery_session(&state, &req.recovery_token).await?;
+    let token = pending_session.token;
 
-    if (chrono::Utc::now() - pending_session.created_at).num_seconds() > RECOVERY_SESSION_TTL_SECS as i64 {
-        return Err(ApiError::Unauthorized("recovery session expired".into()));
-    }
-
-    let srp_salt = decode_b64(&req.srp_salt, "srp_salt")?;
-    let srp_verifier = decode_b64(&req.srp_verifier, "srp_verifier")?;
+    let credential = match (&req.registration_record, &req.srp_salt, &req.srp_verifier) {
+        (Some(record), None, None) => {
+            let upload = decode_opaque(record, "registrationRecord")?;
+            db_recovery::NewCredential::Opaque(
+                opaque::registration_finish(&upload)
+                    .map_err(|_| ApiError::BadRequest("invalid registrationRecord".into()))?,
+            )
+        }
+        (None, Some(salt), Some(verifier)) => db_recovery::NewCredential::Srp {
+            salt: decode_b64(salt, "srp_salt")?,
+            verifier: decode_b64(verifier, "srp_verifier")?,
+        },
+        _ => {
+            return Err(ApiError::BadRequest(
+                "send either registrationRecord or srpSalt and srpVerifier".into(),
+            ))
+        }
+    };
     let protected_key = decode_b64(&req.protected_symmetric_key, "protected_symmetric_key")?;
     let protected_key_iv = decode_b64(&req.protected_symmetric_key_iv, "protected_symmetric_key_iv")?;
     let new_auth_key = decode_b64(&req.recovery_auth_key, "recovery_auth_key")?;
@@ -214,8 +267,7 @@ async fn recovery_complete(
         token,
         pending_session.user_id,
         db_recovery::RecoveryCompletion {
-            srp_salt: &srp_salt,
-            srp_verifier: &srp_verifier,
+            credential: &credential,
             protected_symmetric_key: &protected_key,
             protected_symmetric_key_iv: &protected_key_iv,
             protected_private_key: req.protected_private_key.as_deref(),

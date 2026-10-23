@@ -25,15 +25,31 @@ impl Default for KdfParams {
     }
 }
 
+// OPAQUE (RFC 9807) messages are base64url without padding, exactly as
+// @serenity-kit/opaque produces and consumes them.
+
+/// Registration round 1. Used for new accounts (public route) and for
+/// re-registration in an authenticated session (SRP migration).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RegisterRequest {
-    /// SHA-256("nopass-v1-email:" + lowercase(email)) — server never stores plaintext email
+pub struct OpaqueRegisterStartRequest {
+    /// SHA-256("nopass-v1-email:" + lowercase(email)), hex — also the OPAQUE credential identifier
     pub email_hash: String,
-    /// Base64-encoded random salt used for SRP verifier derivation
-    pub srp_salt: String,
-    /// Base64-encoded SRP-6a verifier (g^x mod N)
-    pub srp_verifier: String,
+    pub registration_request: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueRegisterStartResponse {
+    pub registration_response: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueRegisterFinishRequest {
+    pub email_hash: String,
+    pub registration_record: String,
+    /// Argon2id parameters for both the vault KDF and the OPAQUE KSF
     pub kdf_params: KdfParams,
     /// AES-256-GCM encrypted vault key (encrypted with stretchedMasterKey)
     pub protected_symmetric_key: String,
@@ -53,6 +69,60 @@ pub struct RegisterRequest {
 pub struct RegisterResponse {
     pub user_id: Uuid,
 }
+
+/// Authenticated re-registration finish: replaces the account's credential
+/// (and deletes any SRP verifier).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueReregisterFinishRequest {
+    pub registration_record: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueLoginStartRequest {
+    pub email_hash: String,
+    pub start_login_request: String,
+}
+
+/// Identical in status and shape whether or not the account exists.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueLoginStartResponse {
+    pub login_id: Uuid,
+    pub login_response: String,
+    pub kdf_params: KdfParams,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpaqueLoginFinishRequest {
+    pub login_id: Uuid,
+    pub finish_login_request: String,
+    /// Optional device UUID — if provided, links the new session to this trusted device
+    /// and updates device.last_seen_at. Silently ignored if the device doesn't belong to the user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<Uuid>,
+}
+
+/// A successful login, by OPAQUE or legacy SRP.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginResponse {
+    pub session_token: String,
+    pub user_id: Uuid,
+    pub default_vault_id: Uuid,
+    pub protected_symmetric_key: String,
+    pub protected_symmetric_key_iv: String,
+    /// RSA-OAEP key pair — only present if the user has one registered
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protected_private_key_iv: Option<String>,
+}
+
+// Legacy SRP login — only for accounts that haven't logged in since OPAQUE
+// shipped. See DESIGN.md "SRP removal" for the plan to delete it.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,16 +159,8 @@ pub struct SrpVerifyRequest {
 pub struct SrpVerifyResponse {
     /// Base64-encoded server proof M2 (client must verify)
     pub server_proof_m2: String,
-    pub session_token: String,
-    pub user_id: Uuid,
-    pub default_vault_id: Uuid,
-    pub protected_symmetric_key: String,
-    pub protected_symmetric_key_iv: String,
-    /// RSA-OAEP key pair — only present if the user has one registered
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub protected_private_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub protected_private_key_iv: Option<String>,
+    #[serde(flatten)]
+    pub session: LoginResponse,
 }
 
 // ─── Recovery ────────────────────────────────────────────────────────────────
@@ -143,6 +205,15 @@ pub struct RecoveryInitResponse {
     pub items: Vec<crate::EncryptedVaultItem>,
 }
 
+/// OPAQUE registration round 1 during recovery, authorized by the recovery token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryOpaqueStartRequest {
+    pub recovery_token: String,
+    pub email_hash: String,
+    pub registration_request: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReencryptedItem {
@@ -156,9 +227,16 @@ pub struct ReencryptedItem {
 #[serde(rename_all = "camelCase")]
 pub struct RecoveryCompleteRequest {
     pub recovery_token: String,
-    /// New SRP credentials derived from the new master password
-    pub srp_salt: String,
-    pub srp_verifier: String,
+    /// New OPAQUE record for the new master password (from recovery/opaque/start)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_record: Option<String>,
+    /// Legacy: SRP credentials from clients that predate OPAQUE. Accepted so an
+    /// old client can still finish a recovery; the account then migrates to
+    /// OPAQUE on its next login.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srp_salt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srp_verifier: Option<String>,
     pub protected_symmetric_key: String,
     pub protected_symmetric_key_iv: String,
     /// RSA private key re-wrapped under the new stretched master key

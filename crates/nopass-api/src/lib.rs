@@ -33,10 +33,17 @@ pub async fn run() -> Result<()> {
 
     sqlx::migrate!("src/db/migrations").run(&pool).await?;
 
+    // Key legacy email hashes before serving: until a row is keyed, its
+    // account can't be found by login.
+    let keyed = db::auth::key_email_hashes(&pool, |h| state::account_key(&config.email_lookup_key.0, h)).await?;
+    if keyed > 0 {
+        info!("keyed {keyed} legacy email hashes");
+    }
+
     let state = Arc::new(AppState::new(pool, config.clone()));
 
-    // Evict expired SRP sessions every 60s to prevent memory exhaustion.
-    state.spawn_srp_cleanup();
+    // Prune expired login handshakes and other housekeeping every 60s.
+    state.spawn_housekeeping();
 
     let app = build_router((*state).clone());
 

@@ -148,7 +148,7 @@ async fn invite_member(
 
     // Compute email hash client-side and pass it; server looks up user by it.
     // The invite body contains the email hash (not plaintext email) for privacy.
-    let (invitee_id, _) = db_auth::get_public_key_by_email_hash(&state.db, &body.email_hash)
+    let (invitee_id, _) = db_auth::get_public_key_by_account_key(&state.db, &state.account_key(&body.email_hash))
         .await?
         .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
 
@@ -213,7 +213,7 @@ async fn get_public_key(
     Path(email_hash): Path<String>,
 ) -> ApiResult<Json<PublicKeyResponse>> {
     let (user_id, public_key) =
-        db_auth::get_public_key_by_email_hash(&state.db, &email_hash)
+        db_auth::get_public_key_by_account_key(&state.db, &state.account_key(&email_hash))
             .await?
             .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
 

@@ -70,9 +70,15 @@ pub async fn list_all_items_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec
     Ok(items)
 }
 
+/// The login credential for the new master password.
+pub enum NewCredential {
+    Opaque(Vec<u8>),
+    /// From clients that predate OPAQUE; migrates on the next login.
+    Srp { salt: Vec<u8>, verifier: Vec<u8> },
+}
+
 pub struct RecoveryCompletion<'a> {
-    pub srp_salt: &'a [u8],
-    pub srp_verifier: &'a [u8],
+    pub credential: &'a NewCredential,
     pub protected_symmetric_key: &'a [u8],
     pub protected_symmetric_key_iv: &'a [u8],
     pub protected_private_key: Option<&'a str>,
@@ -112,10 +118,15 @@ pub async fn complete_recovery(
         return Err(CompleteRecoveryError::TokenConsumed);
     }
 
+    let (srp_salt, srp_verifier, opaque_record) = match completion.credential {
+        NewCredential::Opaque(record) => (None, None, Some(record.as_slice())),
+        NewCredential::Srp { salt, verifier } => (Some(salt.as_slice()), Some(verifier.as_slice()), None),
+    };
+
     sqlx::query(
         r#"
         UPDATE users
-        SET srp_salt = $2, srp_verifier = $3,
+        SET srp_salt = $2, srp_verifier = $3, opaque_record = $11,
             protected_symmetric_key = $4, protected_symmetric_key_iv = $5,
             protected_private_key = COALESCE($6, protected_private_key),
             protected_private_key_iv = COALESCE($7, protected_private_key_iv),
@@ -125,8 +136,8 @@ pub async fn complete_recovery(
         "#,
     )
     .bind(user_id)
-    .bind(completion.srp_salt)
-    .bind(completion.srp_verifier)
+    .bind(srp_salt)
+    .bind(srp_verifier)
     .bind(completion.protected_symmetric_key)
     .bind(completion.protected_symmetric_key_iv)
     .bind(completion.protected_private_key)
@@ -134,6 +145,7 @@ pub async fn complete_recovery(
     .bind(completion.recovery_auth_hash)
     .bind(completion.recovery_blob)
     .bind(completion.recovery_blob_iv)
+    .bind(opaque_record)
     .execute(&mut *tx)
     .await?;
 
