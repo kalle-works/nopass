@@ -19,6 +19,7 @@ import {
   v2OnlyMarker,
 } from "@nopass/crypto";
 import type { ApiClient } from "./api-client";
+import type { OrgLedgerEntry } from "./org-trust";
 
 function readJson<T>(key: string, fallback: T): T {
   if (typeof localStorage === "undefined") return fallback;
@@ -132,6 +133,38 @@ export async function openOrgEpochStore(vaultMacKey: CryptoKey): Promise<OrgEpoc
       if (epoch <= (epochs[orgId] ?? 0)) return;
       epochs[orgId] = epoch;
       writeJson(key, epochs);
+    },
+  };
+}
+
+/**
+ * What this device has seen of each org (item ids, member ids). A rotation
+ * refuses to proceed if the server's lists lack any of them, so a server
+ * cannot quietly leave an item un-rekeyed or a member out.
+ */
+export interface OrgLedger {
+  get(orgId: string): OrgLedgerEntry;
+  remember(orgId: string, seen: Partial<OrgLedgerEntry>): void;
+  forget(orgId: string, gone: Partial<OrgLedgerEntry>): void;
+}
+
+export async function openOrgLedger(vaultMacKey: CryptoKey): Promise<OrgLedger> {
+  const key = `nopass:org-ledger:v1:${await trustStateId(vaultMacKey)}`;
+  const ledger = readJson<Record<string, OrgLedgerEntry>>(key, {});
+  const entry = (orgId: string) => (ledger[orgId] ??= { items: [], members: [] });
+  return {
+    get: (orgId) => ({ items: [...entry(orgId).items], members: [...entry(orgId).members] }),
+    remember: (orgId, seen) => {
+      const e = entry(orgId);
+      e.items = [...new Set([...e.items, ...(seen.items ?? [])])];
+      e.members = [...new Set([...e.members, ...(seen.members ?? [])])];
+      writeJson(key, ledger);
+    },
+    forget: (orgId, gone) => {
+      const e = entry(orgId);
+      e.items = e.items.filter((id) => !gone.items?.includes(id));
+      e.members = e.members.filter((id) => !gone.members?.includes(id));
+      writeJson(key, ledger);
     },
   };
 }

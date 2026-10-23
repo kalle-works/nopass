@@ -17,11 +17,27 @@ import {
   verifyMemberKey,
   type KeyPinStore,
   type OrgEpochStore,
+  type RevisionStore,
 } from "@nopass/crypto";
 import { useNopassStore } from "../store/vault-store";
 import { ensureIdentityPublished } from "../lib/identity-migration";
-import { openKeyPinStore, openOrgEpochStore } from "../lib/local-trust-state";
-import { buildResignedWraps, buildRotation, checkOrgKey, openOrgKey, type OrgKeyCheck } from "../lib/org-trust";
+import {
+  type OrgLedger,
+  openKeyPinStore,
+  openOrgEpochStore,
+  openOrgLedger,
+  openRevisionStore,
+} from "../lib/local-trust-state";
+import {
+  RotationSetIncompleteError,
+  UndecryptableItemsError,
+  buildResignedWraps,
+  buildRotation,
+  checkOrgKey,
+  openOrgKey,
+  type OrgKeyCheck,
+  type RotationPlan,
+} from "../lib/org-trust";
 import { Button, IconButton } from "../primitives/Button";
 import { Field, inputClass } from "../primitives/Field";
 import { Badge, Banner, Dialog } from "../primitives/Feedback";
@@ -80,6 +96,19 @@ interface PendingInvite {
 interface TrustStores {
   pins: KeyPinStore;
   epochs: OrgEpochStore;
+  ledger: OrgLedger;
+  revisions: RevisionStore;
+}
+
+/** A key rotation being prepared: either a plan to confirm, or what blocks it. */
+interface RotationState {
+  removeUserId: string | null;
+  dropItemIds: string[];
+  plan?: RotationPlan;
+  issue?:
+    | { kind: "missing"; items: string[]; members: string[] }
+    | { kind: "undecryptable"; itemIds: string[] }
+    | { kind: "other"; message: string };
 }
 
 interface OrgPanelProps {
@@ -138,6 +167,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   const [received, setReceived] = useState<ReceivedInvite[]>([]);
   const [resignOpen, setResignOpen] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotation, setRotation] = useState<RotationState | null>(null);
   const [trust, setTrust] = useState<TrustStores | null>(null);
   // Bumped after the user confirms keys, so derived key statuses recompute
   const [pinVersion, setPinVersion] = useState(0);
@@ -154,8 +184,13 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   useEffect(() => {
     if (!vaultMacKey) return;
     let cancelled = false;
-    Promise.all([openKeyPinStore(vaultMacKey), openOrgEpochStore(vaultMacKey)]).then(([pins, epochs]) => {
-      if (!cancelled) setTrust({ pins, epochs });
+    Promise.all([
+      openKeyPinStore(vaultMacKey),
+      openOrgEpochStore(vaultMacKey),
+      openOrgLedger(vaultMacKey),
+      openRevisionStore(vaultMacKey, apiClient, sessionToken),
+    ]).then(([pins, epochs, ledger, revisions]) => {
+      if (!cancelled) setTrust({ pins, epochs, ledger, revisions });
     });
     return () => {
       cancelled = true;
@@ -234,6 +269,8 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       setSelectedOrg(details);
       setOrgCheck(check);
       onOrgVaultKeyChange?.(orgId, orgKey);
+      // Members seen in a verified org; a later rotation that lacks one is refused
+      if (check.status === "ok") trust.ledger.remember(orgId, { members: details.members.map((m) => m.userId) });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load org");
     } finally {
@@ -254,7 +291,8 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       const orgKey = await decryptOwnOrgKey(selectedOrg.encryptedOrgKey);
       const { wraps, skipped } = await buildResignedWraps({
         orgId: selectedOrg.id,
-        epoch: 1,
+        // A legacy (unsigned) org has never rotated, so it is still at epoch 1
+        epoch: orgCheck?.status === "ok" ? orgCheck.wrap.epoch : 1,
         ownerUserId: userId,
         orgKey,
         members: selectedOrg.members,
@@ -420,12 +458,11 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   }
 
   /**
-   * Owner only: replace the org key with a new one at the next epoch,
-   * optionally removing a member in the same step. Every org item and every
-   * remaining member's wrap is replaced in one server transaction, so there
-   * is no state where a removed member is gone but still holds the live key.
+   * Owner only, step 1: build the rotation (new key at the next epoch, every
+   * item re-encrypted, a signed wrap per remaining member) without sending
+   * it, or find out what blocks it. Nothing changes until commitRotation.
    */
-  async function rotateKey(removeUserId: string | null) {
+  async function prepareRotation(removeUserId: string | null, dropItemIds: string[] = []) {
     if (!selectedOrg || orgCheck?.status !== "ok" || !trust || !userId) return;
     if (!stretchedMasterKey || !protectedPrivateKey || !protectedPrivateKeyIv) {
       setError("No private key found. Please re-login.");
@@ -433,26 +470,63 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     }
     setSaving(true);
     setError(null);
+    setMemberToRemove(null);
+    setRotateOpen(false);
+    const base = { removeUserId, dropItemIds };
     try {
       const oldKey = await decryptOwnOrgKey(orgCheck.wrap.encryptedOrgKey);
       const items = await apiClient.orgs.items(selectedOrg.id, sessionToken);
-      const { request } = await buildRotation({
+      const plan = await buildRotation({
         orgId: selectedOrg.id,
         ownerUserId: userId,
         currentEpoch: orgCheck.wrap.epoch,
         oldKey,
         items,
-        remainingMembers: selectedOrg.members.filter((m) => m.userId !== removeUserId),
+        members: selectedOrg.members,
+        removeUserId,
+        known: trust.ledger.get(selectedOrg.id),
+        dropItemIds,
         pins: trust.pins,
+        revisions: trust.revisions,
         identity: { protectedPrivateKey, protectedPrivateKeyIv, stretchedMasterKey },
       });
+      setRotation({ ...base, plan });
+    } catch (e) {
+      if (e instanceof RotationSetIncompleteError) {
+        setRotation({ ...base, issue: { kind: "missing", items: e.missingItems, members: e.missingMembers } });
+      } else if (e instanceof UndecryptableItemsError) {
+        setRotation({ ...base, issue: { kind: "undecryptable", itemIds: e.itemIds } });
+      } else {
+        setRotation({ ...base, issue: { kind: "other", message: e instanceof Error ? e.message : "Cannot rotate the key" } });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Step 2, after the owner has seen who loses access: upload the whole
+   * rotation. The server applies it in one transaction, so there is no state
+   * where a removed member is gone but still holds the live key.
+   */
+  async function commitRotation() {
+    if (!selectedOrg || !trust || !rotation?.plan) return;
+    const { plan, removeUserId, dropItemIds } = rotation;
+    setSaving(true);
+    setError(null);
+    try {
       await apiClient.orgs.rotate(
         selectedOrg.id,
-        { ...request, ...(removeUserId ? { removeUserId } : {}) },
+        { ...plan.request, ...(removeUserId ? { removeUserId } : {}) },
         sessionToken,
       );
-      setMemberToRemove(null);
-      setRotateOpen(false);
+      for (const [itemId, revision] of plan.revisions) trust.revisions.record(itemId, revision);
+      trust.ledger.forget(selectedOrg.id, { items: dropItemIds, members: plan.losesAccess });
+      trust.ledger.remember(selectedOrg.id, {
+        items: plan.request.items.map((i) => i.id),
+        members: plan.keepsAccess,
+      });
+      setRotation(null);
       // Re-verifies the new chain, records the new epoch and hands out the new key
       await selectOrg(selectedOrg.id);
     } catch (e) {
@@ -460,6 +534,12 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     } finally {
       setSaving(false);
     }
+  }
+
+  function memberLabel(id: string): string {
+    const status = memberKeys.get(id);
+    const number = status && "safetyNumber" in status ? ` (safety number ${status.safetyNumber})` : "";
+    return `${id.slice(0, 8)}…${number}`;
   }
 
   const canManage =
@@ -664,9 +744,14 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
             <p className="text-meta font-medium text-fg">Members ({selectedOrg.members.length})</p>
             <div className="flex gap-2">
               {canManage && selectedOrg.role === "owner" && (
-                <Button size="sm" variant="ghost" onClick={() => setRotateOpen(true)}>
-                  Rotate key
-                </Button>
+                <>
+                  <Button size="sm" variant="ghost" onClick={() => setResignOpen(true)}>
+                    Re-sign members
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setRotateOpen(true)}>
+                    Rotate key
+                  </Button>
+                </>
               )}
               {canManage && (
                 <Button size="sm" onClick={() => setShowInviteForm(true)}>
@@ -817,7 +902,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
         title={`Remove member ${memberToRemove?.userId.slice(0, 8) ?? ""}…?`}
         description={
           selectedOrg
-            ? `Removing a member rotates ${selectedOrg.name}'s key: every shared item is re-encrypted and every other member gets the new key. They cannot read anything written afterwards, but may still have copies of items they already opened. Every remaining member's safety number must be confirmed first.`
+            ? `Removing a member rotates ${selectedOrg.name}'s key: every shared item is re-encrypted and every other member gets the new key. You'll see exactly who keeps and loses access before anything changes. Every remaining member's safety number must be confirmed first.`
             : undefined
         }
         footer={
@@ -827,11 +912,11 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
             </Button>
             <Button
               variant="danger"
-              onClick={() => memberToRemove && rotateKey(memberToRemove.userId)}
+              onClick={() => memberToRemove && prepareRotation(memberToRemove.userId)}
               pending={saving}
-              pendingLabel="Re-encrypting…"
+              pendingLabel="Preparing…"
             >
-              Remove and rotate key
+              Continue
             </Button>
           </>
         }
@@ -847,12 +932,91 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
             <Button variant="ghost" onClick={() => setRotateOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={() => rotateKey(null)} pending={saving} pendingLabel="Re-encrypting…">
-              Rotate key
+            <Button variant="primary" onClick={() => prepareRotation(null)} pending={saving} pendingLabel="Preparing…">
+              Continue
             </Button>
           </>
         }
       />
+
+      <Dialog
+        open={rotation !== null}
+        onClose={() => setRotation(null)}
+        title={rotation?.plan ? "Confirm the key rotation" : "The key rotation is blocked"}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRotation(null)}>
+              Cancel
+            </Button>
+            {rotation?.plan && (
+              <Button variant="danger" onClick={commitRotation} pending={saving} pendingLabel="Re-encrypting…">
+                Rotate key
+              </Button>
+            )}
+            {rotation?.issue?.kind === "undecryptable" && (
+              <Button
+                variant="danger"
+                onClick={() =>
+                  rotation.issue?.kind === "undecryptable" &&
+                  prepareRotation(rotation.removeUserId, [...rotation.dropItemIds, ...rotation.issue.itemIds])
+                }
+                pending={saving}
+              >
+                Delete them and continue
+              </Button>
+            )}
+            {rotation?.issue?.kind === "missing" && (
+              <Button
+                variant="danger"
+                onClick={() => {
+                  if (!selectedOrg || !trust || rotation.issue?.kind !== "missing") return;
+                  trust.ledger.forget(selectedOrg.id, { items: rotation.issue.items, members: rotation.issue.members });
+                  void prepareRotation(rotation.removeUserId, rotation.dropItemIds);
+                }}
+                pending={saving}
+              >
+                They were removed elsewhere — continue
+              </Button>
+            )}
+          </>
+        }
+      >
+        {rotation?.plan && (
+          <div className="space-y-2 text-ui text-fg">
+            <p>
+              {rotation.plan.losesAccess.length > 0
+                ? `Loses access: ${rotation.plan.losesAccess.map(memberLabel).join(", ")}. They can't read anything written after this, but may keep copies of items they already opened.`
+                : "Nobody loses access."}
+            </p>
+            <p>
+              Keeps access ({rotation.plan.keepsAccess.length}): {rotation.plan.keepsAccess.map(memberLabel).join(", ")}
+            </p>
+            <p>
+              {rotation.plan.request.items.length} item{rotation.plan.request.items.length === 1 ? "" : "s"} re-encrypted
+              {rotation.plan.request.deleteItemIds?.length
+                ? `, ${rotation.plan.request.deleteItemIds.length} undecryptable item(s) deleted`
+                : ""}
+              .
+            </p>
+          </div>
+        )}
+        {rotation?.issue?.kind === "missing" && (
+          <p className="text-ui text-fg">
+            The server's lists are missing what this device has seen before:
+            {rotation.issue.members.length > 0 && ` members ${rotation.issue.members.map(memberLabel).join(", ")}`}
+            {rotation.issue.items.length > 0 && ` items ${rotation.issue.items.map((i) => `${i.slice(0, 8)}…`).join(", ")}`}.
+            Rotating now would leave them out. Continue only if you removed them yourself on another device.
+          </p>
+        )}
+        {rotation?.issue?.kind === "undecryptable" && (
+          <p className="text-ui text-fg">
+            {rotation.issue.itemIds.length} item(s) can't be decrypted (damaged, tampered with, or an old copy), so they
+            can't move to the new key: {rotation.issue.itemIds.map((i) => `${i.slice(0, 8)}…`).join(", ")}. You can
+            delete them as part of the rotation, or cancel.
+          </p>
+        )}
+        {rotation?.issue?.kind === "other" && <p className="text-ui text-danger">{rotation.issue.message}</p>}
+      </Dialog>
     </div>
   );
 }

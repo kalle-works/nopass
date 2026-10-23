@@ -6,8 +6,9 @@
 import {
   type KeyPinStore,
   bindingForItem,
+  type RevisionStore,
   decryptVaultItem,
-  encryptItemV2,
+  encryptVaultItem,
   generateOrgKey,
   type OrgEpochStore,
   type OrgKeyWrap,
@@ -40,7 +41,8 @@ export function checkOrgKey(
 ): OrgKeyCheck {
   const own = chain[0];
   if (own && own.recipientUserId === me.userId && own.wrapSignature === null) {
-    return { status: "unsigned", canResign: me.role === "owner" && own.signerUserId === me.userId };
+    // The owner can always re-sign their org, whatever the server claims signed their copy
+    return { status: "unsigned", canResign: me.role === "owner" };
   }
   try {
     const wrap = verifyOrgKeyChain(chainFromServer(orgId, chain), { orgId, recipientUserId: me.userId }, pins, epochs);
@@ -167,30 +169,85 @@ export class UnconfirmedMembersError extends Error {
   }
 }
 
+/** What this device has seen of an org before: used to notice a server leaving things out. */
+export interface OrgLedgerEntry {
+  items: string[];
+  members: string[];
+}
+
+/** The org's item or member list from the server lacks entries this device knows about. */
+export class RotationSetIncompleteError extends Error {
+  constructor(readonly missingItems: string[], readonly missingMembers: string[]) {
+    super(
+      [
+        missingItems.length > 0 ? `${missingItems.length} item(s) this device has seen are missing from the server's list` : "",
+        missingMembers.length > 0 ? `${missingMembers.length} member(s) this device has seen are missing from the server's list` : "",
+      ]
+        .filter(Boolean)
+        .join("; ") + ". Rotating now would silently leave them out.",
+    );
+    this.name = "RotationSetIncompleteError";
+  }
+}
+
+/** Some org items cannot be decrypted (damaged, tampered or rolled back). */
+export class UndecryptableItemsError extends Error {
+  constructor(readonly itemIds: string[]) {
+    super(
+      `${itemIds.length} organization item(s) cannot be decrypted, so they cannot be moved to the new key. Delete them as part of the rotation, or cancel.`,
+    );
+    this.name = "UndecryptableItemsError";
+  }
+}
+
 export interface RotationInput {
   orgId: string;
   ownerUserId: string;
   currentEpoch: number;
   /** The key being retired: used here only to read items, never to write */
   oldKey: CryptoKey;
-  /** Every org item, tombstones included */
+  /** Every org item the server listed, tombstones included */
   items: EncryptedVaultItem[];
-  /** Members who keep access (the removed member, if any, is not in this list) */
-  remainingMembers: OrgMember[];
+  /** Every member the server listed */
+  members: OrgMember[];
+  /** The member to remove in this rotation, if any */
+  removeUserId: string | null;
+  /** What this device saw of the org before; anything missing from the server lists is refused */
+  known: OrgLedgerEntry;
+  /** Items the owner chose to delete because they cannot be decrypted */
+  dropItemIds: string[];
   pins: KeyPinStore;
+  revisions: RevisionStore;
   identity: ResignInput["identity"];
+}
+
+export interface RotationPlan {
+  request: RotateKeyRequest;
+  /** Revisions to record once the server accepted the rotation */
+  revisions: Array<[string, number]>;
+  keepsAccess: string[];
+  losesAccess: string[];
 }
 
 /**
  * Build a complete org key rotation: a fresh key at currentEpoch + 1, every
- * org item re-encrypted under it (v2 envelope, org scope, next revision),
- * and an owner-signed wrap for every remaining member. Refuses to build a
- * partial rotation: every remaining member must be confirmed.
+ * org item re-encrypted under it (v2 envelope, org scope, next revision), and
+ * an owner-signed wrap for every remaining member. It refuses to build a
+ * partial rotation: every remaining member must be confirmed, every item and
+ * member this device has seen must be in the server's lists, and every item
+ * must decrypt (through the revision store, so a rolled-back item counts as
+ * undecryptable) unless the owner chose to delete it.
  */
-export async function buildRotation(input: RotationInput): Promise<{
-  newKey: CryptoKey;
-  request: RotateKeyRequest;
-}> {
+export async function buildRotation(input: RotationInput): Promise<RotationPlan> {
+  const serverItems = new Set(input.items.map((i) => i.id));
+  const serverMembers = new Set(input.members.map((m) => m.userId));
+  const missingItems = input.known.items.filter((id) => !serverItems.has(id) && !input.dropItemIds.includes(id));
+  const missingMembers = input.known.members.filter((id) => !serverMembers.has(id));
+  if (missingItems.length > 0 || missingMembers.length > 0) {
+    throw new RotationSetIncompleteError(missingItems, missingMembers);
+  }
+
+  const remaining = input.members.filter((m) => m.userId !== input.removeUserId);
   const newEpoch = input.currentEpoch + 1;
   const newKey = await generateOrgKey();
   const { wraps, skipped } = await buildResignedWraps({
@@ -198,21 +255,44 @@ export async function buildRotation(input: RotationInput): Promise<{
     epoch: newEpoch,
     ownerUserId: input.ownerUserId,
     orgKey: newKey,
-    members: input.remainingMembers,
+    members: remaining,
     pins: input.pins,
     identity: input.identity,
   });
   if (skipped.length > 0) throw new UnconfirmedMembersError(skipped);
 
   const items = [];
+  const revisions: Array<[string, number]> = [];
+  const undecryptable: string[] = [];
   for (const item of input.items) {
+    if (input.dropItemIds.includes(item.id)) continue;
     const binding = bindingForItem({ ...item, orgId: input.orgId });
-    // Org items have no v1 form, so the AES key doubles as the unused MAC key
-    const current = await decryptVaultItem(item, binding, { vaultEncKey: input.oldKey, vaultMacKey: input.oldKey });
-    const encrypted = await encryptItemV2(current.plaintext, binding, current.revision + 1, newKey);
+    let current;
+    try {
+      // Org items have no v1 form, so the AES key doubles as the unused MAC key
+      current = await decryptVaultItem(
+        item,
+        binding,
+        { vaultEncKey: input.oldKey, vaultMacKey: input.oldKey },
+        input.revisions,
+      );
+    } catch {
+      undecryptable.push(item.id);
+      continue;
+    }
+    const { encrypted, revision } = await encryptVaultItem(current.plaintext, binding, newKey, input.revisions, current);
     items.push({ id: item.id, ...encrypted });
+    revisions.push([item.id, revision]);
   }
-  return { newKey, request: { newEpoch, wraps, items } };
+  if (undecryptable.length > 0) throw new UndecryptableItemsError(undecryptable);
+
+  const deleteItemIds = input.dropItemIds.filter((id) => serverItems.has(id));
+  return {
+    request: { newEpoch, wraps, items, ...(deleteItemIds.length > 0 ? { deleteItemIds } : {}) },
+    revisions,
+    keepsAccess: remaining.map((m) => m.userId),
+    losesAccess: input.removeUserId ? [input.removeUserId] : [],
+  };
 }
 
 /** The org keys a client holds: the current one, and retired ones kept only to read. */

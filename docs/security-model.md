@@ -38,6 +38,16 @@ The store is named by `trustStateId`, an HMAC under the account's vault MAC
 key. The server cannot change that name (unlike user or vault ids it serves),
 so it cannot point a device at an empty store.
 
+Earlier versions named the revision store and the key pins by ids the server
+supplied (`nopass:item-revisions:<vault id>`, `nopass:key-pins:<user id>`;
+`itemRevisions:<vault id>` in the extension; `item-revisions-<vault id>.json`
+for the CLI). On first open, those records are folded into the new stores
+(highest revision per item; existing pins win) and deleted. The browser and
+extension migrate only when exactly one such record exists, because its name
+is the only local evidence of which account it belonged to. With several, they
+are left untouched. The CLI uses the default vault id in its saved session
+file.
+
 Limits:
 
 - A device with no history accepts whatever it is served first.
@@ -149,6 +159,27 @@ after which wraps from the old epoch are refused. A client may keep the
 retired key only to finish reads that were in flight; it never writes with
 it. The removed member gets no new wrap, so items written after the rotation
 are unreadable to them.
+
+**Retired keys:** the org item AAD does not bind the key epoch today, because
+items are only ever written with the current key. Before a retired key is
+used for anything beyond finishing an in-flight read (for example offline
+reading, or trying several keys on every read), the epoch must be bound into
+the item AAD. Otherwise a server could serve an item encrypted under an old
+key, which the removed member also holds, and have it accepted.
+
+Before uploading, the owner's client checks what it builds against what it
+has seen of the org:
+
+- Every item id and member id this device has seen in the org (kept in a
+  local per-org ledger) must be in the server's lists. If the server leaves
+  one out, the rotation is refused and the owner sees exactly what is
+  missing; it continues only if the owner says they removed it on another
+  device.
+- Items are decrypted through the revision store. An item that can't be
+  decrypted, including one served at an older revision, blocks the rotation
+  until the owner either cancels or chooses to delete it in the same
+  transaction.
+- The owner sees who loses access and who keeps it before anything is sent.
 
 ## Known limits and future work
 
