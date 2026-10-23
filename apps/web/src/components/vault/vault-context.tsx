@@ -300,6 +300,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const keys = { vaultEncKey, vaultMacKey };
     let rolledBack = 0;
+    let failed = 0;
 
     Promise.all(
       activeItems.map(async (item) => {
@@ -308,6 +309,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           return [item.id, plaintext] as const;
         } catch (err) {
           if (err instanceof ItemRollbackError || err instanceof LegacyItemRejectedError) rolledBack++;
+          else failed++;
           return null;
         }
       }),
@@ -321,6 +323,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       if (rolledBack > 0) {
         setError(
           `${rolledBack} item${rolledBack === 1 ? " was" : "s were"} served in an older version than this device has already seen, so ${rolledBack === 1 ? "it is" : "they are"} hidden. The server may be replaying old data.`,
+        );
+      } else if (failed > 0) {
+        setError(
+          `${failed} item${failed === 1 ? "" : "s"} could not be decrypted and ${failed === 1 ? "is" : "are"} hidden. ${failed === 1 ? "It" : "They"} may be damaged or tampered with.`,
         );
       }
     });
@@ -341,16 +347,16 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   }, [vaultMacKey, sessionToken]);
 
   // One background pass per unlock re-encrypts items still in the v1 format,
-  // so they gain id/type/revision binding without waiting for an edit. Once
-  // nothing is left in v1, the account is marked v2-only so no device accepts
-  // a v1 blob again.
+  // trash included, so they gain id/type/revision binding without waiting for
+  // an edit. Only when no v1 blob of any kind is left is the account marked
+  // v2-only, after which no device accepts a v1 blob again.
   useEffect(() => {
     if (legacyUpgradeStarted.current || isLoading || !sessionToken || !vaultEncKey || !vaultMacKey || !revisions) return;
     if (revisions.v2Only) return;
     legacyUpgradeStarted.current = true;
     void (async () => {
-      const { failed } = await upgradeLegacyItems(
-        activeItems,
+      const { legacyLeft } = await upgradeLegacyItems(
+        allItems,
         { vaultEncKey, vaultMacKey },
         revisions,
         async (item, encrypted) => {
@@ -363,9 +369,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           upsertItem({ ...item, ...encrypted, version, updatedAt });
         },
       );
-      if (failed === 0) await publishV2Only(vaultMacKey, revisions, api, sessionToken).catch(() => undefined);
+      if (legacyLeft === 0) await publishV2Only(vaultMacKey, revisions, api, sessionToken).catch(() => undefined);
     })();
-  }, [activeItems, isLoading, sessionToken, vaultEncKey, vaultMacKey, revisions, upsertItem]);
+  }, [allItems, isLoading, sessionToken, vaultEncKey, vaultMacKey, revisions, upsertItem]);
 
   // --- Derived data ---------------------------------------------------------
 

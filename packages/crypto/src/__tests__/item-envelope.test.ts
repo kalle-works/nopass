@@ -146,10 +146,37 @@ describe("upgradeLegacyItems", () => {
       written.set(item.id, { ...item, ...encrypted });
     });
 
-    expect(result).toEqual({ upgraded: 1, failed: 0 });
+    expect(result).toEqual({ upgraded: 1, failed: 0, legacyLeft: 0 });
     expect([...written.keys()]).toEqual([ITEM_A]);
     const upgraded = await decryptVaultItem(written.get(ITEM_A)!, bindingA, keys, store);
     expect(upgraded).toMatchObject({ plaintext: LOGIN, format: 2 });
+  });
+});
+
+describe("upgradeLegacyItems before sealing the account as v2-only", () => {
+  const ITEM_C = "66666666-6666-4666-8666-666666666666";
+
+  it("upgrades deleted items too, so a restored tombstone stays readable", async () => {
+    const keys = await keysPromise;
+    const tombstone = { ...row(ITEM_C, await encryptItem(LOGIN, keys.vaultEncKey, keys.vaultMacKey)), deletedAt: "2026-01-01" };
+    const written: string[] = [];
+
+    const result = await upgradeLegacyItems([tombstone], keys, new MemoryRevisionStore(), async (item) => {
+      written.push(item.id);
+    });
+    expect(written).toEqual([ITEM_C]);
+    expect(result.legacyLeft).toBe(0);
+  });
+
+  it("reports v1 items it could not upgrade as left over", async () => {
+    const keys = await keysPromise;
+    const legacy = row(ITEM_A, await encryptItem(LOGIN, keys.vaultEncKey, keys.vaultMacKey));
+    const corrupt = { ...row(ITEM_C, await encryptItem(LOGIN, keys.vaultEncKey, keys.vaultMacKey)), blob: btoa("garbage") };
+
+    const result = await upgradeLegacyItems([legacy, corrupt], keys, new MemoryRevisionStore(), async (item) => {
+      if (item.id === ITEM_A) throw new Error("409 conflict");
+    });
+    expect(result).toEqual({ upgraded: 0, failed: 2, legacyLeft: 2 });
   });
 });
 
