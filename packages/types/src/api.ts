@@ -249,11 +249,25 @@ export interface OrgSummary {
   createdAt: string;
 }
 
+/** A user's published keys; verify with verifyKeyBundle before trusting publicKey. */
+export interface KeyBundle {
+  userId: string;
+  /** RSA-OAEP SPKI, base64 */
+  publicKey: string;
+  /** Ed25519 public key, base64; null until the user's client has migrated */
+  identityPublicKey: string | null;
+  /** Ed25519 signature over the bundle, base64 */
+  publicKeySignature: string | null;
+}
+
 export interface OrgMember {
   userId: string;
   role: OrgRole;
   status: OrgMemberStatus;
   joinedAt: string | null;
+  publicKey: string | null;
+  identityPublicKey: string | null;
+  publicKeySignature: string | null;
 }
 
 export interface OrgDetails extends OrgSummary {
@@ -274,9 +288,11 @@ export interface AcceptInviteRequest {
   orgId: string;
 }
 
-export interface PublicKeyResponse {
-  userId: string;
-  publicKey: string;
+export type PublicKeyResponse = KeyBundle;
+
+export interface SetIdentityRequest {
+  identityPublicKey: string;
+  publicKeySignature: string;
 }
 
 // ─── Billing ─────────────────────────────────────────────────────────────────

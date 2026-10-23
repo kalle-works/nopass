@@ -8,3 +8,4 @@ export * from "./srp-client";
 export * from "./sync-engine";
 export * from "./types";
 export * from "./item-envelope";
+export * from "./identity";
