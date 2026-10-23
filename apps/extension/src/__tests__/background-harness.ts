@@ -22,6 +22,7 @@ export const env = {
   localStore: {} as Record<string, unknown>,
   alarmListeners: [] as Array<(alarm: { name: string }) => void>,
   idleListeners: [] as Array<(state: string) => void>,
+  windowRemovedListeners: [] as Array<(windowId: number) => void>,
   itemsResponse: async (): Promise<Response> => new Response(JSON.stringify([]), { status: 200 }),
 };
 
@@ -32,6 +33,7 @@ interface ChromeMock {
   runtime: Record<string, unknown>;
   alarms: { create: Mock; clear: Mock; [key: string]: unknown };
   tabs: { sendMessage: Mock; get: Mock };
+  windows: { create: Mock; remove: Mock; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -53,6 +55,7 @@ function makeChromeMock(): ChromeMock {
   return {
     runtime: {
       id: EXTENSION_ID,
+      getURL: (path: string) => `chrome-extension://${EXTENSION_ID}/${path}`,
       onMessage: { addListener: (fn: Listener) => env.listeners.push(fn) },
     },
     storage: {
@@ -68,6 +71,16 @@ function makeChromeMock(): ChromeMock {
     idle: {
       setDetectionInterval: vi.fn(),
       onStateChanged: { addListener: (fn: (state: string) => void) => env.idleListeners.push(fn) },
+    },
+    windows: {
+      create: vi.fn(async () => ({ id: 99 })),
+      remove: vi.fn(async () => {}),
+      onRemoved: {
+        addListener: (fn: (windowId: number) => void) => env.windowRemovedListeners.push(fn),
+        removeListener: (fn: (windowId: number) => void) => {
+          env.windowRemovedListeners = env.windowRemovedListeners.filter((l) => l !== fn);
+        },
+      },
     },
     tabs: {
       sendMessage: vi.fn(),
@@ -106,6 +119,7 @@ export async function startServiceWorker() {
   env.listeners = [];
   env.alarmListeners = [];
   env.idleListeners = [];
+  env.windowRemovedListeners = [];
   await import("../background/index");
 }
 
@@ -163,4 +177,23 @@ export async function serveLogins(logins: Array<{ id: string } & Partial<LoginIt
     }),
   );
   env.itemsResponse = async () => new Response(JSON.stringify(items), { status: 200 });
+}
+
+/** Waits until the background has opened a consent window; returns its request id. */
+export async function consentRequestId(): Promise<string> {
+  for (let i = 0; i < 100; i++) {
+    const call = currentChrome.windows.create.mock.calls.at(-1) as [{ url: string }] | undefined;
+    if (call) return new URL(call[0].url).searchParams.get("id")!;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error("no consent window opened");
+}
+
+/** Sender shape of the extension-owned consent window. */
+export function consentSender(requestId: string): chrome.runtime.MessageSender {
+  return {
+    id: EXTENSION_ID,
+    url: `chrome-extension://${EXTENSION_ID}/src/consent/index.html?id=${requestId}`,
+    tab: { id: 50 } as chrome.tabs.Tab,
+  };
 }

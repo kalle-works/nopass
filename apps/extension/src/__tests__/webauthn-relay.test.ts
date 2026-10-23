@@ -5,13 +5,14 @@ import { chromeMock, contentSender, env, resetEnvironment, send, serveLogins, UN
 /**
  * Contract between the isolated-world relay and the background: with the
  * vault unlocked and a passkey for the page's own rpId, a WebAuthn request
- * must reach the consent overlay instead of falling back to the browser.
+ * must reach the consent window instead of falling back to the browser.
  * The relay runs against the real background listener, with the sender a
  * content script in this page.
  */
 
 const PAGE_URL = `${window.location.origin}/`;
 const RP_ID = window.location.hostname;
+const CHALLENGE = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 beforeEach(async () => {
   await resetEnvironment();
@@ -46,7 +47,7 @@ function request(kind: "create" | "get", payload: Record<string, unknown>) {
 
 async function consentShown(): Promise<boolean> {
   for (let i = 0; i < 50; i++) {
-    if (document.body.children.length > 0) return true;
+    if (chromeMock().windows.create.mock.calls.length > 0) return true;
     await new Promise((r) => setTimeout(r, 10));
   }
   return false;
@@ -70,26 +71,26 @@ describe("WebAuthn relay pre-checks", () => {
     ]);
     await send(UNLOCK_MSG);
 
-    void request("get", { rpId: RP_ID, clientDataJSONB64u: "", allowCredentialIdsB64u: [] });
+    void request("get", { rpId: RP_ID, challengeB64u: CHALLENGE, allowCredentialIdsB64u: [] });
     expect(await consentShown()).toBe(true);
   });
 
   it("offers to save a passkey when unlocked", async () => {
     await send(UNLOCK_MSG);
 
-    void request("create", { rpId: RP_ID });
+    void request("create", { rpId: RP_ID, challengeB64u: CHALLENGE });
     expect(await consentShown()).toBe(true);
   });
 
   it("falls back to the browser without an overlay when locked", async () => {
-    expect(await request("create", { rpId: RP_ID })).toMatchObject({ ok: false, fallback: true });
-    expect(document.body.children.length).toBe(0);
+    expect(await request("create", { rpId: RP_ID, challengeB64u: CHALLENGE })).toMatchObject({ ok: false, fallback: true });
+    expect(chromeMock().windows.create).not.toHaveBeenCalled();
   });
 
   it("falls back for an rpId the page does not own", async () => {
     await send(UNLOCK_MSG);
     expect(await request("create", { rpId: "bank.example" })).toMatchObject({ ok: false, fallback: true });
     expect(env.sessionStore["vaultSession"]).toBeDefined();
-    expect(document.body.children.length).toBe(0);
+    expect(chromeMock().windows.create).not.toHaveBeenCalled();
   });
 });

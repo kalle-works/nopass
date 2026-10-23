@@ -3,8 +3,9 @@
  * as a platform authenticator for passkeys.
  *
  * Runs in the page's own JS world (no chrome.* access). Talks to the isolated
- * content script via window.postMessage; the content script shows the consent
- * overlay and relays to the background service worker, which holds the vault.
+ * content script via window.postMessage; the content script relays to the
+ * background service worker, which holds the vault and asks for consent in
+ * its own window.
  *
  * Anything we can't or shouldn't handle (no publicKey options, conditional
  * mediation, locked vault, user decline, unsupported algorithms, required
@@ -90,22 +91,11 @@ interface RelayResponse {
     });
   }
 
-  function clientDataJson(type: "webauthn.create" | "webauthn.get", challenge: BufferSource): string {
-    return JSON.stringify({
-      type,
-      challenge: toB64u(challenge as ArrayBuffer),
-      origin: window.location.origin,
-      crossOrigin: false,
-    });
-  }
-
-  function makeCredential(
-    fields: Record<string, string>,
-    cdj: string,
-    kind: "create" | "get",
-  ): Credential {
+  // clientDataJSON comes back from the background, which builds it from the
+  // browser-verified origin; this world could otherwise forge what gets signed
+  function makeCredential(fields: Record<string, string>, kind: "create" | "get"): Credential {
     const rawId = fromB64u(fields["credentialIdB64u"]!);
-    const clientDataJSON = new TextEncoder().encode(cdj).buffer as ArrayBuffer;
+    const clientDataJSON = fromB64u(fields["clientDataJSONB64u"]!);
 
     const base = {
       authenticatorAttachment: "platform" as const,
@@ -196,11 +186,12 @@ interface RelayResponse {
           excludeCredentialIdsB64u: (pk.excludeCredentials ?? []).map((c) =>
             toB64u(c.id as ArrayBuffer),
           ),
+          challengeB64u: toB64u(pk.challenge as ArrayBuffer),
         },
         options?.signal,
       );
       if (!resp.ok || !resp.data) return nativeCreate(options);
-      return makeCredential(resp.data, clientDataJson("webauthn.create", pk.challenge), "create");
+      return makeCredential(resp.data, "create");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       return nativeCreate(options);
@@ -216,13 +207,12 @@ interface RelayResponse {
     if (!pk || options?.mediation === "conditional") return nativeGet(options);
     if (pk.userVerification === "required") return nativeGet(options);
 
-    const cdj = clientDataJson("webauthn.get", pk.challenge);
     try {
       const resp = await relay(
         "get",
         {
           rpId: pk.rpId ?? window.location.hostname,
-          clientDataJSONB64u: toB64u(new TextEncoder().encode(cdj)),
+          challengeB64u: toB64u(pk.challenge as ArrayBuffer),
           allowCredentialIdsB64u: (pk.allowCredentials ?? []).map((c) =>
             toB64u(c.id as ArrayBuffer),
           ),
@@ -230,7 +220,7 @@ interface RelayResponse {
         options?.signal,
       );
       if (!resp.ok || !resp.data) return nativeGet(options);
-      return makeCredential(resp.data, cdj, "get");
+      return makeCredential(resp.data, "get");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       return nativeGet(options);
