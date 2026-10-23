@@ -201,15 +201,21 @@ async fn create_item(
     }
 
     let item_type_str = item_type_to_str(&req.item_type);
-    let item =
-        db_vaults::create_item(&state.db, req.id, vault_id, auth.user_id, item_type_str, &blob, &blob_iv, &blob_mac)
-            .await
-            .map_err(|e| match e.downcast_ref::<sqlx::Error>() {
-                Some(sqlx::Error::Database(db)) if db.is_unique_violation() => {
-                    ApiError::Conflict("item id already exists".into())
-                }
-                _ => e.into(),
-            })?;
+    let new_item = db_vaults::NewItem {
+        id: req.id,
+        item_type: item_type_str,
+        blob: &blob,
+        blob_iv: &blob_iv,
+        blob_mac: &blob_mac,
+    };
+    let item = db_vaults::create_item(&state.db, vault_id, auth.user_id, new_item)
+        .await
+        .map_err(|e| match e.downcast_ref::<sqlx::Error>() {
+            Some(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+                ApiError::Conflict("item id already exists".into())
+            }
+            _ => e.into(),
+        })?;
 
     Ok((
         StatusCode::CREATED,
