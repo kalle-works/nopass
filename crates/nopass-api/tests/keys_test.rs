@@ -33,7 +33,7 @@ fn identity(byte: u8) -> serde_json::Value {
 /// The first publish carries a fresh password proof.
 async fn first_identity(server: &TestServer, token: &str, email: &str, byte: u8) -> serde_json::Value {
     let mut body = identity(byte);
-    body["proof"] = password_proof(server, token, email, "password").await;
+    body["proof"] = password_proof(server, token, email, "password", "identity_key").await;
     body
 }
 
@@ -241,7 +241,7 @@ async fn first_identity_publish_needs_the_password(pool: PgPool) {
 
     put(identity(1)).await.assert_status(StatusCode::UNAUTHORIZED);
     let mut wrong = identity(1);
-    wrong["proof"] = password_proof(&server, &alice.session_token, "alice@example.com", "not the password").await;
+    wrong["proof"] = password_proof(&server, &alice.session_token, "alice@example.com", "not the password", "identity_key").await;
     put(wrong).await.assert_status(StatusCode::UNAUTHORIZED);
 
     let me: serde_json::Value = server.get("/v1/keys/me").authorization_bearer(&alice.session_token).await.json();

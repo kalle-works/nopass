@@ -47,6 +47,7 @@ export async function fakeServer(email: string) {
   const serverSetup = opaque.server.createSetup();
   const account: ServerAccount = { emailHash: computeEmailHash(email), kdfParams: DEFAULT_KDF_PARAMS };
   const logins = new Map<string, string>();
+  const proofPurposes = new Map<string, string>();
   const srpSessions = new Map<string, { A: string; B: string; b: string }>();
   const id = () => crypto.randomUUID();
   const credentialId = account.emailHash;
@@ -111,11 +112,13 @@ export async function fakeServer(email: string) {
     },
     srpInit: async ({ clientPublicA }) => ({ ...srpChallenge(clientPublicA), kdfParams: account.kdfParams }),
     srpVerify: async ({ sessionId, clientProofM1 }) => ({ ...session(), serverProofM2: srpCheck(sessionId, clientProofM1) }),
-    proofStart: async ({ emailHash, startLoginRequest }) => {
+    proofStart: async ({ emailHash, startLoginRequest, purpose }) => {
       const { loginId, ...rest } = startLogin(emailHash, startLoginRequest);
+      proofPurposes.set(loginId, purpose);
       return { proofId: loginId, ...rest };
     },
     setAccountKey: async (req) => {
+      if (proofPurposes.get(req.proof.proofId) !== "account_key") throw new HttpError(401);
       finishLogin(req.proof.proofId, req.proof.finishLoginRequest);
       if (account.wrappedAccountKey) throw new HttpError(409);
       Object.assign(account, {

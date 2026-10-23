@@ -241,7 +241,12 @@ export async function unlockAccount(
         await upgradeFromSrp(api, { email, password, sessionToken: session.sessionToken, wrapped, privateKey });
         await accountState.update(emailHash, { opaque: true, accountKey: true });
       } else {
-        const proof = await provePassword(api, { email, password, sessionToken: session.sessionToken });
+        const proof = await provePassword(api, {
+          email,
+          password,
+          sessionToken: session.sessionToken,
+          purpose: "account_key",
+        });
         await api.setAccountKey({ proof, ...wrapped, ...privateKey }, session.sessionToken);
         await accountState.update(emailHash, { accountKey: true });
       }

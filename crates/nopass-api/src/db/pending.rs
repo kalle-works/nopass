@@ -17,7 +17,14 @@ pub struct PendingOpaqueLogin {
     pub user_id: Option<Uuid>,
     pub server_state: Vec<u8>,
     pub created_at: DateTime<Utc>,
+    /// What finishing this handshake authorizes; see `PURPOSE_*`
+    pub purpose: String,
 }
+
+pub const PURPOSE_LOGIN: &str = "login";
+pub const PURPOSE_ACCOUNT_KEY: &str = "account_key";
+pub const PURPOSE_IDENTITY_KEY: &str = "identity_key";
+pub const PURPOSE_PASSWORD_CHANGE: &str = "password_change";
 
 pub async fn insert_opaque_login(
     pool: &PgPool,
@@ -25,15 +32,17 @@ pub async fn insert_opaque_login(
     account_key: &str,
     user_id: Option<Uuid>,
     server_state: &[u8],
+    purpose: &str,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     sqlx::query(
-        "INSERT INTO pending_opaque_logins (id, account_key, user_id, server_state) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO pending_opaque_logins (id, account_key, user_id, server_state, purpose) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(account_key)
     .bind(user_id)
     .bind(server_state)
+    .bind(purpose)
     .execute(&mut *tx)
     .await?;
     sqlx::query(

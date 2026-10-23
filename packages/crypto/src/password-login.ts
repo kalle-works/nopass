@@ -20,6 +20,7 @@ import type {
   PasswordProof,
   PasswordProofStartRequest,
   PasswordProofStartResponse,
+  ProofPurpose,
   SrpInitRequest,
   SrpInitResponse,
   SrpVerifyRequest,
@@ -153,11 +154,16 @@ export async function loginWithPassword(
  */
 export async function provePassword(
   api: PasswordProofApi,
-  { email, password, sessionToken }: { email: string; password: string; sessionToken: string },
+  {
+    email,
+    password,
+    sessionToken,
+    purpose,
+  }: { email: string; password: string; sessionToken: string; purpose: ProofPurpose },
 ): Promise<PasswordProof> {
   await opaque.ready;
   const { clientLoginState, startLoginRequest } = opaque.client.startLogin({ password });
-  const started = await api.proofStart({ emailHash: computeEmailHash(email), startLoginRequest }, sessionToken);
+  const started = await api.proofStart({ emailHash: computeEmailHash(email), startLoginRequest, purpose }, sessionToken);
   const finished = opaque.client.finishLogin({
     clientLoginState,
     loginResponse: started.loginResponse,

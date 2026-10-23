@@ -90,7 +90,7 @@ async fn set_identity(
             .proof
             .as_ref()
             .ok_or_else(|| ApiError::Unauthorized("publishing an identity key needs a password proof".into()))?;
-        verify_password_proof(&state, &auth, client_ip, proof).await?;
+        verify_password_proof(&state, &auth, client_ip, proof, crate::db::pending::PURPOSE_IDENTITY_KEY).await?;
     }
 
     match db_keys::set_identity(&state.db, auth.user_id, &body.identity_public_key, &body.public_key_signature)

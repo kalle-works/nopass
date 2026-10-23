@@ -315,7 +315,14 @@ async fn login_start(
     .map_err(|_| ApiError::BadRequest("invalid startLoginRequest".into()))?;
 
     let login_id = Uuid::new_v4();
-    pending::insert_opaque_login(&state.db, login_id, &account_key, user.as_ref().map(|u| u.id), &started.state)
+    pending::insert_opaque_login(
+        &state.db,
+        login_id,
+        &account_key,
+        user.as_ref().map(|u| u.id),
+        &started.state,
+        pending::PURPOSE_LOGIN,
+    )
         .await?;
 
     Ok(Json(OpaqueLoginStartResponse {
@@ -331,7 +338,10 @@ async fn login_finish(
     Json(req): Json<OpaqueLoginFinishRequest>,
 ) -> ApiResult<Json<LoginResponse>> {
     let finalization = decode_opaque(&req.finish_login_request, "finishLoginRequest")?;
-    let Some(pending) = pending::take_opaque_login(&state.db, req.login_id).await? else {
+    let Some(pending) = pending::take_opaque_login(&state.db, req.login_id)
+        .await?
+        .filter(|p| p.purpose == pending::PURPOSE_LOGIN)
+    else {
         crate::metrics::record_login_failure();
         return Err(auth_failed());
     };
@@ -637,7 +647,7 @@ async fn set_account_key(
     let wrapped = decode_b64(&req.wrapped_account_key, "wrappedAccountKey")?;
     let wrapped_iv = decode_b64(&req.wrapped_account_key_iv, "wrappedAccountKeyIv")?;
     let private_key = private_key_pair(&req.protected_private_key, &req.protected_private_key_iv)?;
-    verify_password_proof(&state, &auth, client_ip, &req.proof).await?;
+    verify_password_proof(&state, &auth, client_ip, &req.proof, pending::PURPOSE_ACCOUNT_KEY).await?;
 
     if !db_auth::set_account_key(&state.db, auth.user_id, (&wrapped, &wrapped_iv), private_key).await? {
         return Err(ApiError::Conflict("account key already set".into()));
