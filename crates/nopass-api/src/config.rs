@@ -10,6 +10,10 @@ pub struct Config {
     /// Trusted proxy CIDRs — only trust X-Forwarded-For from these IPs.
     /// Leave empty to always use the direct TCP connection IP (safe default).
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// Per-IP request budget per minute for the auth endpoints; the burst is
+    /// half of it. The default (20) is the production setting; browser e2e
+    /// runs raise it because every test signs in from 127.0.0.1.
+    pub auth_rate_limit_per_minute: u32,
 
     // ─── Stripe (optional — billing routes return 503 when unset) ────────────
     pub stripe_secret_key: Option<String>,
@@ -55,6 +59,13 @@ impl Config {
             })
             .collect();
 
+        let auth_rate_limit_per_minute = std::env::var("NOPASS_AUTH_RATE_LIMIT_PER_MIN")
+            .unwrap_or_else(|_| "20".into())
+            .parse::<u32>()
+            .ok()
+            .filter(|n| *n >= 2)
+            .context("NOPASS_AUTH_RATE_LIMIT_PER_MIN must be an integer >= 2")?;
+
         let stripe_secret_key = std::env::var("STRIPE_SECRET_KEY").ok();
         let stripe_webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").ok();
         let stripe_pro_monthly_price_id = std::env::var("STRIPE_PRO_MONTHLY_PRICE_ID").ok();
@@ -67,6 +78,7 @@ impl Config {
             port,
             allowed_origins,
             trusted_proxies,
+            auth_rate_limit_per_minute,
             stripe_secret_key,
             stripe_webhook_secret,
             stripe_pro_monthly_price_id,

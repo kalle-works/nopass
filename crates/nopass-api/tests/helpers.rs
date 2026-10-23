@@ -15,6 +15,7 @@ pub fn test_config() -> Config {
         port: 3001,
         allowed_origins: vec!["http://localhost:3000".into()],
         trusted_proxies: vec![],
+        auth_rate_limit_per_minute: 20,
         stripe_secret_key: None,
         stripe_webhook_secret: None,
         stripe_pro_monthly_price_id: None,

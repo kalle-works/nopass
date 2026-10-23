@@ -1,0 +1,4 @@
+{
+  "production": "https://api.nopwd.dev",
+  "development": "http://localhost:3001"
+}

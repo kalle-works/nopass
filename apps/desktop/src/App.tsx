@@ -7,11 +7,12 @@ import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nop
 import { createApiClient } from "@nopass/ui";
 import { useBiometric } from "./hooks/useBiometric";
 import { keychain, DEVICE_KEY_ACCOUNT } from "./hooks/useKeychain";
+import { resolveApiBase } from "./api-base";
 import { loadLocalItems, upsertLocalItem } from "./hooks/useLocalDb";
 import { sshAgent } from "./hooks/useSshAgent";
 import type { SshKeyItem } from "@nopass/types";
 
-const API_BASE = import.meta.env["VITE_API_URL"] ?? "http://localhost:3001";
+const API_BASE = resolveApiBase({ PROD: import.meta.env.PROD, VITE_API_URL: import.meta.env["VITE_API_URL"] });
 const api = createApiClient(API_BASE);
 
 type Screen = "unlock-mode-select" | "unlock-srp" | "unlock-register" | "vault";
