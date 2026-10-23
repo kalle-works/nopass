@@ -65,7 +65,7 @@ spec:
                   memory: "256Mi"
                   cpu: "100m"
                 limits:
-                  memory: "1Gi"
+                  memory: "2Gi"
                   cpu: "1000m"
               securityContext:
                 allowPrivilegeEscalation: false
@@ -88,7 +88,14 @@ spec:
                 items:
                   - key: age-identity
                     path: identity
+            # The throwaway database holds a full copy of production data
+            # (ciphertext, email hashes, SRP verifiers). In memory it cannot
+            # outlive the pod on a node disk; the size limit bounds the
+            # restore, and the memory it takes counts against the container
+            # limit. Raise both together when the database outgrows 1Gi.
             - name: tmp
-              emptyDir: {}
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Gi
             - name: pg-run
               emptyDir: {}

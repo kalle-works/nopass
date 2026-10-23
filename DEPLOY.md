@@ -95,6 +95,19 @@ Non-secret settings are in `k8s/configmap.yaml`:
   reach the API pods. Rate limiting and the activity log read the client IP
   from `X-Forwarded-For` only when the peer is in this list.
 
+  The trade-off: a /16 trusts about 65,000 addresses, not only the two Traefik
+  pods, and k3s gives each node its own /24 of it. A narrower list is not
+  viable. Per-pod /32s change on every reschedule, and per-node /24s (the
+  nodes Traefik runs on) go stale when Traefik moves or a node is replaced; in
+  both cases the API then sees the proxy as an untrusted peer, drops
+  `X-Forwarded-For`, and rate limits every user as one client. What holds the
+  line is the network policy, not the CIDR: if another workload ever gets a
+  path to port 3001 (a policy change, a hostNetwork pod, a node-level
+  compromise), it can forge client IPs, evade per-IP rate limits and write
+  false addresses into the activity log. Review `NOPASS_TRUSTED_PROXIES` and
+  `k8s/network-policies.yaml` together, and re-check the nopwd
+  `default-deny-ingress` in `hetzner-k3s-flux-mail`, whenever either changes.
+
 ### Health probes
 
 Liveness and readiness are exec probes (`nopass-api healthcheck` for the API, a

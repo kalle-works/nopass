@@ -88,6 +88,7 @@ jobs:
       - run: ops/test.sh
       - run: scripts/bump-images.test.sh
       - run: scripts/check-egress-excepts.sh
+      - run: scripts/check-egress-excepts.test.sh
       # Manifests must render and validate, with the release pins applied
       - run: kubectl kustomize k8s > /dev/null
 

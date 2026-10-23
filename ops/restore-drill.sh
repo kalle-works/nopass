@@ -8,6 +8,9 @@
 #
 # Env: AGE_IDENTITY_FILE (default /age/identity), BACKUP_PASSPHRASE (legacy dumps only)
 set -eu
+# busybox ash, the shell in the ops image, has pipefail
+# shellcheck disable=SC3040
+set -o pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 WORK_DIR="${WORK_DIR:-/tmp}"
@@ -34,19 +37,21 @@ BACKUP_EPOCH=$(date -u -d "$(echo "$STAMP" | sed -E 's/^(....)(..)(..)(..)(..)(.
 AGE_HOURS=$(( ($(date -u +%s) - BACKUP_EPOCH) / 3600 ))
 [ "$AGE_HOURS" -le "$MAX_AGE_HOURS" ] || fail "newest backup is ${AGE_HOURS}h old (limit ${MAX_AGE_HOURS}h)"
 
-case "$LATEST" in
-  *.dump.age)
-    [ -r "$AGE_IDENTITY_FILE" ] || fail "no age identity at $AGE_IDENTITY_FILE"
-    age -d -i "$AGE_IDENTITY_FILE" -o "$WORK_DIR/restore.dump" "$LATEST" || fail "decryption failed"
-    ;;
-  *.dump.enc)
-    [ -n "${BACKUP_PASSPHRASE:-}" ] || fail "legacy dump needs BACKUP_PASSPHRASE"
-    openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-      -in "$LATEST" -out "$WORK_DIR/restore.dump" -pass env:BACKUP_PASSPHRASE \
-      || fail "decryption failed"
-    ;;
-esac
-trap 'rm -f "$WORK_DIR/restore.dump"; pg_ctl -D "$PGDATA" -m immediate stop >/dev/null 2>&1 || true' EXIT
+# Prints the decrypted dump on stdout. It is piped straight into pg_restore, so
+# the plaintext dump is never written to a file.
+decrypt() {
+  case "$LATEST" in
+    *.dump.age)
+      [ -r "$AGE_IDENTITY_FILE" ] || fail "no age identity at $AGE_IDENTITY_FILE"
+      age -d -i "$AGE_IDENTITY_FILE" "$LATEST"
+      ;;
+    *.dump.enc)
+      [ -n "${BACKUP_PASSPHRASE:-}" ] || fail "legacy dump needs BACKUP_PASSPHRASE"
+      openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in "$LATEST" -pass env:BACKUP_PASSPHRASE
+      ;;
+  esac
+}
+trap 'pg_ctl -D "$PGDATA" -m immediate stop >/dev/null 2>&1 || true' EXIT
 
 rm -rf "$PGDATA" "$SOCKET_DIR"
 mkdir -p "$SOCKET_DIR"
@@ -56,8 +61,8 @@ pg_ctl -D "$PGDATA" -w -o "-c listen_addresses='' -c unix_socket_directories=$SO
 export PGHOST="$SOCKET_DIR" PGUSER=drill
 createdb drill
 # --no-owner/--no-privileges: the production roles do not exist here
-pg_restore -d drill --no-owner --no-privileges --exit-on-error "$WORK_DIR/restore.dump" \
-  || fail "pg_restore reported errors"
+decrypt | pg_restore -d drill --no-owner --no-privileges --exit-on-error \
+  || fail "decryption or pg_restore reported errors"
 
 # Prints the first column of the single-row result of a query
 q() { psql -d drill -At -v ON_ERROR_STOP=1 -c "$1"; }
