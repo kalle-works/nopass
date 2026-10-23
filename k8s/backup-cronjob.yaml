@@ -1,3 +1,7 @@
+# Nightly encrypted dump (scripts: ops/backup.sh). The Job fails, and
+# NopwdBackupFailed fires, when the dump, its decrypt check, the offsite push
+# or the offsite verification fails. kube_cronjob_status_last_successful_time
+# is the last-success metric: it only advances when every step passed.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -21,46 +25,21 @@ spec:
             app.kubernetes.io/name: nopwd-backup
         spec:
           restartPolicy: Never
+          automountServiceAccountToken: false
+          imagePullSecrets:
+            - name: ghcr-pull-secret
+          securityContext:
+            runAsUser: 70
+            runAsGroup: 70
+            runAsNonRoot: true
+            fsGroup: 70
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: backup
-              image: postgres:17-alpine
-              command: ["/bin/sh", "-ec"]
-              args:
-                - |
-                  apk add --no-cache openssl git openssh-client >/dev/null
-                  TS=$(date -u +%Y%m%d-%H%M%S)
-                  echo "dumping nopwd database…"
-                  pg_dump "$DATABASE_URL" -Fc -f /tmp/nopwd-$TS.dump
-                  echo "encrypting…"
-                  openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
-                    -in /tmp/nopwd-$TS.dump -out /backups/nopwd-$TS.dump.enc \
-                    -pass env:BACKUP_PASSPHRASE
-                  rm /tmp/nopwd-$TS.dump
-                  # Tier 1 retention: 14 most recent on the Hetzner volume
-                  ls -1t /backups/nopwd-*.dump.enc | tail -n +15 | xargs -r rm -f
-
-                  echo "pushing offsite (rolling 7, constant-size repo)…"
-                  export HOME=/tmp
-                  mkdir -p /tmp/.ssh
-                  cp /secrets/deploy-key /tmp/.ssh/id_ed25519
-                  chmod 600 /tmp/.ssh/id_ed25519
-                  # ssh resolves ~ from passwd, not $HOME — be explicit about both files
-                  export GIT_SSH_COMMAND="ssh -i /tmp/.ssh/id_ed25519 -o UserKnownHostsFile=/tmp/.ssh/known_hosts -o StrictHostKeyChecking=accept-new"
-                  rm -rf /tmp/off
-                  if ! git clone --depth 1 git@github.com:kalle-works/nopwd-backups.git /tmp/off 2>/dev/null; then
-                    mkdir -p /tmp/off && cd /tmp/off && git init -q -b main
-                    git remote add origin git@github.com:kalle-works/nopwd-backups.git
-                  fi
-                  cd /tmp/off
-                  rm -f nopwd-*.dump.enc
-                  cp $(ls -1t /backups/nopwd-*.dump.enc | head -7) .
-                  git add -A
-                  git -c user.email=backup@nopwd.dev -c user.name=nopwd-backup \
-                    commit -q --amend -m "nopwd encrypted backups (rolling)" 2>/dev/null \
-                  || git -c user.email=backup@nopwd.dev -c user.name=nopwd-backup \
-                    commit -q -m "nopwd encrypted backups (rolling)"
-                  git push -q --force origin main
-                  echo "backup complete: nopwd-$TS.dump.enc ($(stat -c%s /backups/nopwd-$TS.dump.enc) bytes), offsite synced"
+              image: ghcr.io/kalle-works/nopwd-ops
+              imagePullPolicy: IfNotPresent
+              command: ["backup.sh"]
               env:
                 - name: DATABASE_URL
                   valueFrom:
@@ -72,11 +51,16 @@ spec:
                     secretKeyRef:
                       name: nopwd-backup-secrets
                       key: passphrase
+                - name: OFFSITE_REPO
+                  value: git@github.com:kalle-works/nopwd-backups.git
               volumeMounts:
                 - name: backups
                   mountPath: /backups
                 - name: secrets
                   mountPath: /secrets
+                  readOnly: true
+                - name: known-hosts
+                  mountPath: /known-hosts
                   readOnly: true
                 - name: tmp
                   mountPath: /tmp
@@ -89,6 +73,10 @@ spec:
                   cpu: "500m"
               securityContext:
                 allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
           volumes:
             - name: backups
               persistentVolumeClaim:
@@ -97,5 +85,8 @@ spec:
               secret:
                 secretName: nopwd-backup-secrets
                 defaultMode: 0400
+            - name: known-hosts
+              configMap:
+                name: nopwd-backup-known-hosts
             - name: tmp
               emptyDir: {}

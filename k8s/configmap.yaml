@@ -7,8 +7,13 @@ data:
   NOPASS_HOST: "0.0.0.0"
   NOPASS_PORT: "3001"
   NOPASS_ALLOWED_ORIGINS: "https://nopwd.dev"
-  # Traefik pods carry dynamic pod-CIDR IPs — trust the pod network so
-  # X-Forwarded-For resolves real client IPs for rate limiting + activity log
+  # Traefik runs as two pods on k3s, which hands every node its own /24 out of
+  # 10.42.0.0/16 and gives pods new addresses on every reschedule, so a /32
+  # list or a per-node /24 goes stale silently and rate limiting would then
+  # key on the proxy. The whole pod CIDR is the narrowest value that stays
+  # correct, and it is only safe because network-policies.yaml lets nothing
+  # but the traefik namespace reach the api pods: no other pod can connect to
+  # port 3001 to forge X-Forwarded-For. If that policy is relaxed, narrow this.
   NOPASS_TRUSTED_PROXIES: "10.42.0.0/16"
   RUST_LOG: "info"
   LOG_FORMAT: "json"
