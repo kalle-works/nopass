@@ -271,11 +271,18 @@ pub fn generate_srp_verifier(email: &str, password: &str) -> (Vec<u8>, Vec<u8>) 
 /// client's OPAQUE finalization), as the JSON object endpoints accept. With a
 /// wrong password the client can't finish, so this returns a proof built from
 /// a different handshake — which the server must refuse.
-pub async fn password_proof(server: &TestServer, token: &str, email: &str, password: &str) -> serde_json::Value {
+pub async fn password_proof(
+    server: &TestServer,
+    token: &str,
+    email: &str,
+    password: &str,
+    purpose: &str,
+) -> serde_json::Value {
     let client = ClientLogin::<Suite>::start(&mut OsRng, password.as_bytes()).unwrap();
     let resp = from_random_ip(server.post("/v1/auth/proof/start").authorization_bearer(token).json(&serde_json::json!({
         "emailHash": compute_email_hash(email),
         "startLoginRequest": B64URL.encode(client.message.serialize()),
+        "purpose": purpose,
     })))
     .await;
     resp.assert_status_ok();

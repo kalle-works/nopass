@@ -73,11 +73,21 @@ pub struct RegisterResponse {
 /// A fresh OPAQUE proof of the password inside an authenticated request.
 /// Changes that replace key material require one, so a stolen session token
 /// alone can't make them.
+/// What a password proof authorizes. A proof is redeemable only by the
+/// endpoint of its own purpose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofPurpose {
+    AccountKey,
+    IdentityKey,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PasswordProofStartRequest {
     pub email_hash: String,
     pub start_login_request: String,
+    pub purpose: ProofPurpose,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

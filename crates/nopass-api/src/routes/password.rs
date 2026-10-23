@@ -9,6 +9,7 @@ use nopass_models::{
 };
 
 use crate::{
+    db::pending::PURPOSE_PASSWORD_CHANGE,
     db::{activity, recovery as db_recovery},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
@@ -58,7 +59,7 @@ async fn start(
         return Err(ApiError::Conflict("sign in again before changing your password".into()));
     };
     let (change_id, login_response) =
-        start_proof(&state, &user, &email_hash, &req.start_login_request, client_ip).await?;
+        start_proof(&state, &user, &email_hash, &req.start_login_request, client_ip, PURPOSE_PASSWORD_CHANGE).await?;
     let registration_response =
         opaque::registration_start(&state.opaque_setup, &registration_request, email_hash.as_bytes())
             .map_err(|_| ApiError::BadRequest("invalid registrationRequest".into()))?;
@@ -91,6 +92,7 @@ async fn finish(
         &auth,
         client_ip,
         &PasswordProof { proof_id: req.change_id, finish_login_request: req.finish_login_request.clone() },
+        PURPOSE_PASSWORD_CHANGE,
     )
     .await?;
 

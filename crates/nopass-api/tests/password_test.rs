@@ -91,7 +91,7 @@ fn finish_body(s: &Started, proof: &str) -> Value {
 }
 
 async fn set_account_key_with(server: &TestServer, token: &str, password: &str) -> axum_test::TestResponse {
-    let proof = password_proof(server, token, EMAIL, password).await;
+    let proof = password_proof(server, token, EMAIL, password, "account_key").await;
     server
         .post("/v1/auth/account-key")
         .authorization_bearer(token)
@@ -277,4 +277,44 @@ async fn an_aged_session_cannot_change_the_password(pool: PgPool) {
 
     login(&server, EMAIL, OLD).await;
     assert!(opaque_login_start(&server, EMAIL, NEW).await.finish_request.is_none());
+}
+
+/// A proof authorizes only the change it was started for. Otherwise one
+/// started for the identity key (or a password change, or a login) could be
+/// redeemed to plant an account key.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn a_proof_for_another_purpose_is_refused(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, OLD).await;
+    let token = login(&server, EMAIL, OLD).await.session_token;
+    let set_key = |proof: Value| {
+        server.post("/v1/auth/account-key").authorization_bearer(&token).json(&json!({
+            "proof": proof,
+            "wrappedAccountKey": B64.encode([5u8; 80]),
+            "wrappedAccountKeyIv": B64.encode([5u8; 12]),
+        }))
+    };
+
+    let identity = password_proof(&server, &token, EMAIL, OLD, "identity_key").await;
+    set_key(identity).await.assert_status(StatusCode::UNAUTHORIZED);
+
+    // Nor does a proof finish as a login.
+    let proof = password_proof(&server, &token, EMAIL, OLD, "account_key").await;
+    opaque_login_finish(
+        &server,
+        proof["proofId"].as_str().unwrap().parse().unwrap(),
+        proof["finishLoginRequest"].as_str().unwrap(),
+    )
+    .await
+    .assert_status(StatusCode::UNAUTHORIZED);
+
+    set_key(password_proof(&server, &token, EMAIL, OLD, "account_key").await)
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    // A password-change handshake is checked before "already set" would answer.
+    let change = start_change(&server, &token, OLD).await;
+    set_key(json!({ "proofId": change.resp.change_id, "finishLoginRequest": change.finish_login_request.unwrap() }))
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
 }
