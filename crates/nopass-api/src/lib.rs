@@ -34,6 +34,7 @@ pub async fn run() -> Result<()> {
         .await?;
 
     sqlx::migrate!("src/db/migrations").run(&pool).await?;
+    db::schema::ensure_indexes_valid(&pool).await?;
 
     metrics::spawn_server();
     // Key legacy email hashes before serving: until a row is keyed, its
