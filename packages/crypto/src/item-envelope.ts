@@ -43,10 +43,29 @@ export interface ItemBinding {
   itemType: VaultItemType;
 }
 
-/** Highest revision seen per item. `record` must never lower a stored value. */
+/**
+ * Highest revision seen per item. `record` must never lower a stored value.
+ * `v2Only` is set once the account is known to hold no v1 items any more;
+ * from then on v1 blobs are refused like any other rollback.
+ */
 export interface RevisionStore {
   get(itemId: string): number | undefined;
   record(itemId: string, revision: number): void;
+  readonly v2Only: boolean;
+  markV2Only(): void;
+}
+
+/** Persisted form of a MemoryRevisionStore. */
+export interface RevisionSnapshot {
+  revisions: Record<string, number>;
+  v2Only: boolean;
+}
+
+export class LegacyItemRejectedError extends Error {
+  constructor(itemId: string) {
+    super(`vault item ${itemId} was served in the old v1 format after this account finished moving to v2 — refusing it`);
+    this.name = "LegacyItemRejectedError";
+  }
 }
 
 export class ItemRollbackError extends Error {
@@ -60,13 +79,15 @@ export class ItemRollbackError extends Error {
 
 export class MemoryRevisionStore implements RevisionStore {
   private readonly revisions: Map<string, number>;
+  private legacyClosed: boolean;
 
-  /** `onChange` receives a snapshot after every raise, for persisting it. */
+  /** `onChange` receives a snapshot after every change, for persisting it. */
   constructor(
-    initial: Record<string, number> = {},
-    private readonly onChange?: (snapshot: Record<string, number>) => void,
+    initial: Partial<RevisionSnapshot> = {},
+    private readonly onChange?: (snapshot: RevisionSnapshot) => void,
   ) {
-    this.revisions = new Map(Object.entries(initial));
+    this.revisions = new Map(Object.entries(initial.revisions ?? {}));
+    this.legacyClosed = initial.v2Only === true;
   }
 
   get(itemId: string): number | undefined {
@@ -79,9 +100,69 @@ export class MemoryRevisionStore implements RevisionStore {
     this.onChange?.(this.toJSON());
   }
 
-  toJSON(): Record<string, number> {
-    return Object.fromEntries(this.revisions);
+  get v2Only(): boolean {
+    return this.legacyClosed;
   }
+
+  markV2Only(): void {
+    if (this.legacyClosed) return;
+    this.legacyClosed = true;
+    this.onChange?.(this.toJSON());
+  }
+
+  toJSON(): RevisionSnapshot {
+    return { revisions: Object.fromEntries(this.revisions), v2Only: this.legacyClosed };
+  }
+}
+
+// ── Account-bound identifiers ────────────────────────────────────────────────
+//
+// Both are HMACs under the vault MAC key, which only this account's clients
+// hold: the server can neither choose them nor forge them.
+
+const subtleEnc = new TextEncoder();
+
+async function macLabel(vaultMacKey: CryptoKey, label: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.sign("HMAC", vaultMacKey, subtleEnc.encode(label)));
+}
+
+/**
+ * Stable name for this account's local trust state (revision high-water
+ * marks, pins). Derived from the account key, so a server cannot point a
+ * device at a fresh, empty store by changing ids it serves.
+ */
+export async function trustStateId(vaultMacKey: CryptoKey): Promise<string> {
+  const mac = await macLabel(vaultMacKey, "nopwd-trust-state-id-v1");
+  return Array.from(mac.subarray(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const V2_ONLY_LABEL = "nopwd-vault-format-v2-only-v1";
+
+/** Account-level marker, stored on the server, saying every item is v2. */
+export async function v2OnlyMarker(vaultMacKey: CryptoKey): Promise<string> {
+  return toBase64(await macLabel(vaultMacKey, V2_ONLY_LABEL));
+}
+
+/**
+ * Apply a marker fetched from the server: if it verifies under this account's
+ * key, refuse v1 items from now on. A missing or forged marker changes
+ * nothing — the server can withhold it, but cannot fake it or undo a device
+ * that has already seen it.
+ */
+export async function applyV2OnlyMarker(
+  marker: string | null,
+  vaultMacKey: CryptoKey,
+  revisions: RevisionStore,
+): Promise<boolean> {
+  if (!marker) return revisions.v2Only;
+  let ok = false;
+  try {
+    ok = await crypto.subtle.verify("HMAC", vaultMacKey, fromBase64(marker), subtleEnc.encode(V2_ONLY_LABEL));
+  } catch {
+    ok = false;
+  }
+  if (ok) revisions.markV2Only();
+  return revisions.v2Only;
 }
 
 export function bindingForItem(item: Pick<EncryptedVaultItem, "id" | "itemType" | "orgId">): ItemBinding {
@@ -193,6 +274,7 @@ export async function decryptVaultItem(
   revisions?: RevisionStore,
 ): Promise<DecryptedItem> {
   let result: DecryptedItem;
+  if (isLegacyItemBlob(encrypted) && revisions?.v2Only) throw new LegacyItemRejectedError(binding.itemId);
   if (isLegacyItemBlob(encrypted)) {
     result = { plaintext: await decryptItem(encrypted, keys.vaultEncKey, keys.vaultMacKey), revision: 0, format: 1 };
   } else {
@@ -200,7 +282,11 @@ export async function decryptVaultItem(
     if (blob.length <= HEADER_LEN || blob[0] !== FORMAT_V2) {
       throw new Error(`vault item ${binding.itemId} has an unknown envelope format`);
     }
-    const revision = Number(new DataView(blob.buffer).getBigUint64(1));
+    const rawRevision = new DataView(blob.buffer).getBigUint64(1);
+    if (rawRevision > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(`vault item ${binding.itemId} has an out-of-range revision`);
+    }
+    const revision = Number(rawRevision);
     const pt = await crypto.subtle
       .decrypt(
         { name: "AES-GCM", iv: fromBase64(encrypted.blobIv), additionalData: itemAad(binding, revision) },
@@ -232,16 +318,20 @@ export async function decryptVaultItem(
 }
 
 /**
- * Encrypt an item for writing at the next revision. Record the returned
+ * Encrypt an item for writing at the next revision. `current` is the result
+ * of decrypting the blob being replaced (null for a new item): the new
+ * revision has to beat it even on a device that has never seen the item,
+ * or other devices would refuse the edit as a rollback. Record the returned
  * revision in the store only once the server has accepted the write.
  */
 export async function encryptVaultItem(
   plaintext: VaultItemPlaintext,
   binding: ItemBinding,
   vaultEncKey: CryptoKey,
-  revisions?: RevisionStore,
+  revisions: RevisionStore | undefined,
+  current: Pick<DecryptedItem, "revision"> | null,
 ): Promise<{ encrypted: EncryptedBlob; revision: number }> {
-  const revision = (revisions?.get(binding.itemId) ?? 0) + 1;
+  const revision = Math.max(revisions?.get(binding.itemId) ?? 0, current?.revision ?? 0) + 1;
   return { encrypted: await encryptItemV2(plaintext, binding, revision, vaultEncKey), revision };
 }
 
@@ -262,8 +352,14 @@ export async function upgradeLegacyItems(
     if (item.deletedAt !== null || !isLegacyItemBlob(item)) continue;
     const binding = bindingForItem(item);
     try {
-      const { plaintext } = await decryptVaultItem(item, binding, keys, revisions);
-      const { encrypted, revision } = await encryptVaultItem(plaintext, binding, keys.vaultEncKey, revisions);
+      const current = await decryptVaultItem(item, binding, keys, revisions);
+      const { encrypted, revision } = await encryptVaultItem(
+        current.plaintext,
+        binding,
+        keys.vaultEncKey,
+        revisions,
+        current,
+      );
       await write(item, encrypted);
       revisions.record(item.id, revision);
       upgraded++;
