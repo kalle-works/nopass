@@ -63,12 +63,31 @@ fn sign_with_flags(key: &PrivateKey, data: &[u8], _flags: u32) -> Result<Signatu
     key.try_sign(data).map_err(|e| io_err(e.to_string()))
 }
 
+/// Create the directory (and parents) with mode 0700.
+fn create_private_dir(dir: &std::path::Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)
+}
+
+/// Force an existing directory down to 0700, including one an older version
+/// created with the umask default. Only call this for directories we own
+/// outright (~/.nopass), never for a caller-supplied parent such as /tmp.
+pub fn ensure_private_dir(dir: &std::path::Path) -> io::Result<()> {
+    create_private_dir(dir)?;
+    restrict_to_owner(dir, 0o700)
+}
+
+fn restrict_to_owner(path: &std::path::Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+
 /// Start the SSH agent Unix socket server. Runs until cancelled.
 pub async fn start(socket_path: &std::path::Path, keys: SharedKeys) {
     let _ = std::fs::remove_file(socket_path);
 
     if let Some(parent) = socket_path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Err(e) = create_private_dir(parent) {
             eprintln!("[nopass-agent] cannot create dir {}: {e}", parent.display());
             return;
         }
@@ -81,6 +100,13 @@ pub async fn start(socket_path: &std::path::Path, keys: SharedKeys) {
             return;
         }
     };
+
+    // The agent signs with every loaded key, so only the owner may connect.
+    // Set explicitly: the socket's mode otherwise follows the process umask.
+    if let Err(e) = restrict_to_owner(socket_path, 0o600) {
+        eprintln!("[nopass-agent] cannot restrict {}: {e}", socket_path.display());
+        return;
+    }
 
     eprintln!("[nopass-agent] listening on {}", socket_path.display());
 
@@ -236,5 +262,26 @@ mod tests {
         assert_eq!(key.comment(), "overridden-comment");
         let _ = std::fs::remove_file(&key_path);
         let _ = std::fs::remove_file(format!("{}.pub", key_path.display()));
+    }
+
+    /// The socket is owner-only and a directory the agent has to create is 0700,
+    /// whatever the process umask is.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn socket_and_new_dir_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("nopass_perm_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let socket_path = dir.join("agent.sock");
+
+        let keys: SharedKeys = Arc::new(Mutex::new(vec![]));
+        let path = socket_path.clone();
+        tokio::spawn(async move { start(&path, keys).await });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&socket_path), 0o600);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -80,6 +80,12 @@ pub fn run() {
     // Start the SSH agent socket in a background task.
     tauri::async_runtime::spawn(async move {
         let socket_path = agent_socket_path();
+        if let Some(dir) = socket_path.parent() {
+            if let Err(e) = ssh_agent::ensure_private_dir(dir) {
+                tracing::error!(dir = %dir.display(), "cannot secure agent directory: {e}");
+                return;
+            }
+        }
         ssh_agent::start(&socket_path, agent_keys).await;
     });
 
