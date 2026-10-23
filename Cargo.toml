@@ -39,8 +39,11 @@ rand = "0.8"
 hex = "0.4"
 base64 = "0.22"
 
-# SRP (Secure Remote Password)
+# SRP (Secure Remote Password) — legacy login, kept only for accounts not yet migrated to OPAQUE
 srp = "0.6"
+
+# OPAQUE aPAKE (RFC 9807). Must stay wire-compatible with @serenity-kit/opaque on the clients.
+opaque-ke = { version = "=4.0.1", features = ["argon2"] }
 
 # HTTP client (used by Stripe integration)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

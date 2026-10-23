@@ -1,6 +1,7 @@
 pub mod aes_gcm;
 pub mod error;
 pub mod kdf;
+pub mod opaque;
 pub mod srp;
 
 pub use error::CryptoError;
