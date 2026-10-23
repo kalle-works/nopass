@@ -310,7 +310,7 @@ async fn rotate_key(
             if blob_iv.len() != 12 || blob.is_empty() || !(blob_mac.is_empty() || blob_mac.len() == 32) {
                 return Err(ApiError::BadRequest("malformed re-encrypted item".into()));
             }
-            Ok((i.id, blob, blob_iv, blob_mac))
+            Ok(db_orgs::ReencryptedItem { id: i.id, blob, blob_iv, blob_mac })
         })
         .collect::<ApiResult<Vec<_>>>()?;
 

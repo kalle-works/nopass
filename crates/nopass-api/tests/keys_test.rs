@@ -173,7 +173,7 @@ async fn only_the_owner_can_rewrap_and_rewrapped_members_chain_to_the_owner(pool
                 "userId": user_id,
                 "encryptedOrgKey": B64.encode([4u8; 64]),
                 "wrapSignature": B64.encode([5u8; 64]),
-                "keyEpoch": 2,
+                "keyEpoch": 1,
             }]
         }))
     };
@@ -187,7 +187,7 @@ async fn only_the_owner_can_rewrap_and_rewrapped_members_chain_to_the_owner(pool
         .json();
     let chain = org["wrapChain"].as_array().unwrap();
     assert_eq!(chain[0]["wrapSignature"].as_str(), Some(B64.encode([5u8; 64]).as_str()));
-    assert_eq!(chain[0]["keyEpoch"].as_i64(), Some(2));
+    assert_eq!(chain[0]["keyEpoch"].as_i64(), Some(1));
     assert_eq!(chain[0]["signerUserId"].as_str(), Some(alice.user_id.to_string().as_str()));
     assert_eq!(chain[1]["role"].as_str(), Some("owner"));
 }

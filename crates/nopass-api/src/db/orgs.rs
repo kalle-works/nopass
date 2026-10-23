@@ -312,13 +312,20 @@ pub async fn list_org_items(pool: &PgPool, org_id: Uuid) -> Result<Vec<OrgItemRo
     Ok(rows)
 }
 
+/// One org item re-encrypted under the new key, decoded.
+pub struct ReencryptedItem {
+    pub id: Uuid,
+    pub blob: Vec<u8>,
+    pub blob_iv: Vec<u8>,
+    pub blob_mac: Vec<u8>,
+}
+
 /// Decoded rotation payload, validated for shape by the route.
 pub struct Rotation<'a> {
     pub new_epoch: i32,
     pub remove_user_id: Option<Uuid>,
     pub wraps: &'a [RewrapEntry],
-    /// (item id, blob, blob_iv, blob_mac)
-    pub items: Vec<(Uuid, Vec<u8>, Vec<u8>, Vec<u8>)>,
+    pub items: Vec<ReencryptedItem>,
 }
 
 pub enum RotationOutcome {
@@ -382,22 +389,22 @@ pub async fn rotate_key(pool: &PgPool, org_id: Uuid, owner_id: Uuid, r: Rotation
             .await?
             .into_iter()
             .collect();
-    let submitted: HashSet<Uuid> = r.items.iter().map(|i| i.0).collect();
+    let submitted: HashSet<Uuid> = r.items.iter().map(|i| i.id).collect();
     if submitted.len() != r.items.len() || submitted != existing {
         return Ok(RotationOutcome::IncompleteItems);
     }
 
-    for (id, blob, blob_iv, blob_mac) in &r.items {
+    for item in &r.items {
         sqlx::query(
             r#"UPDATE vault_items
                SET blob = $3, blob_iv = $4, blob_mac = $5, version = version + 1, updated_at = NOW()
                WHERE org_id = $1 AND id = $2"#,
         )
         .bind(org_id)
-        .bind(id)
-        .bind(blob)
-        .bind(blob_iv)
-        .bind(blob_mac)
+        .bind(item.id)
+        .bind(&item.blob)
+        .bind(&item.blob_iv)
+        .bind(&item.blob_mac)
         .execute(&mut *tx)
         .await?;
     }
