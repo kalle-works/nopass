@@ -48,6 +48,13 @@ this account recorded its id and no other account on the device did. Records
 belonging to other accounts on a shared browser are left in place for them.
 The CLI uses the default vault id in its saved session file.
 
+The ids recorded at unlock are still the ones the server serves. At the first
+unlock after the upgrade, a malicious server could hand one account another
+local account's old vault or user id, and that other account's legacy record
+would be folded into the wrong store. The other account then starts without
+its old rollback history, which costs it no more than the one rollback such a
+server could already serve to a device with no history.
+
 Limits:
 
 - A device with no history accepts whatever it is served first.
