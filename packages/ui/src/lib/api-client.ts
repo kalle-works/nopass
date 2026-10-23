@@ -23,6 +23,7 @@ import type {
   OrgDetails,
   OrgSummary,
   PendingInvite,
+  RewrapRequest,
   PortalSessionResponse,
   PublicKeyResponse,
   RecoveryCompleteRequest,
@@ -54,6 +55,7 @@ import type {
   SyncRequest,
   SyncResponse,
   UpdateVaultItemRequest,
+  VaultFormatMarker,
   VaultInfo,
   ViewShareResponse,
 } from "@nopass/types";
@@ -195,6 +197,8 @@ export function createApiClient(baseUrl: string) {
       list: (token: string) => get<OrgSummary[]>("/organizations", token),
       get: (orgId: string, token: string) => get<OrgDetails>(`/organizations/${orgId}`, token),
       invites: (token: string) => get<PendingInvite[]>("/organizations/invites", token),
+      rewrap: (orgId: string, req: RewrapRequest, token: string) =>
+        put<void>(`/organizations/${orgId}/wraps`, req, token),
       create: (req: CreateOrgRequest, token: string) => post<OrgSummary>("/organizations", req, token),
       invite: (orgId: string, req: InviteMemberRequest, token: string) =>
         post<void>(`/organizations/${orgId}/members`, req, token),
@@ -208,6 +212,8 @@ export function createApiClient(baseUrl: string) {
     keys: {
       me: (token: string) => get<PublicKeyResponse>("/keys/me", token),
       setIdentity: (req: SetIdentityRequest, token: string) => put<void>("/keys/identity", req, token),
+      vaultFormat: (token: string) => get<VaultFormatMarker>("/keys/vault-format", token),
+      setVaultFormat: (req: { marker: string }, token: string) => put<void>("/keys/vault-format", req, token),
     },
     billing: {
       status: (token: string) => get<BillingStatus>("/billing/status", token),

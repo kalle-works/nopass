@@ -16,7 +16,7 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
-import type { KeyBundle } from "@nopass/types";
+import type { KeyBundle, WrapLink } from "@nopass/types";
 import { decryptBytes } from "./aes-gcm";
 
 const enc = new TextEncoder();
@@ -307,13 +307,13 @@ export function verifyOrgKeyChain(
   for (let i = 0; i < chain.length; i++) {
     const link = chain[i]!;
     const { wrap, signature, signer } = link;
-    if (wrap.orgId !== expected.orgId || wrap.epoch !== own.wrap.epoch) {
-      throw new UntrustedOrgKeyError("This organization's key chain mixes organizations or key versions.");
-    }
     if (!signature) {
       throw new UntrustedOrgKeyError(
         "This organization's key is not signed by whoever shared it. Ask the owner to re-sign the organization.",
       );
+    }
+    if (wrap.orgId !== expected.orgId || wrap.epoch !== own.wrap.epoch) {
+      throw new UntrustedOrgKeyError("This organization's key chain mixes organizations or key versions.");
     }
     if (signer.userId !== wrap.signerUserId) throw new UntrustedOrgKeyError("Key chain signer mismatch.");
 
@@ -348,4 +348,21 @@ export function verifyOrgKeyChain(
   }
   if (unconfirmed.length > 0) throw new UnconfirmedSignersError(unconfirmed);
   return own.wrap;
+}
+
+/** Turn a server-served wrap chain into links for verifyOrgKeyChain. */
+export function chainFromServer(orgId: string, chain: WrapLink[]): SignedWrapLink[] {
+  return chain.map((l) => ({
+    wrap: {
+      orgId,
+      // Unsigned legacy wraps carry no epoch; verifyOrgKeyChain refuses them for the missing signature
+      epoch: l.keyEpoch ?? 0,
+      recipientUserId: l.recipientUserId,
+      signerUserId: l.signerUserId,
+      role: l.role,
+      encryptedOrgKey: l.encryptedOrgKey,
+    },
+    signature: l.keyEpoch === null ? null : l.wrapSignature,
+    signer: l.signer,
+  }));
 }
