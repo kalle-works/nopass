@@ -4,6 +4,7 @@ export * from "./org-crypto";
 export * from "./recovery";
 export * from "./share-crypto";
 export * from "./webauthn";
+export * from "./password-login";
 export * from "./srp-client";
 export * from "./sync-engine";
 export * from "./types";
