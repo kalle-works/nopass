@@ -35,11 +35,17 @@ OPAQUE and once for the vault keys.
 Before this change, the SRP verifier was `g^SHA256(salt || SHA256(email:password))`.
 A database dump was enough to test guesses at SHA-256 speed.
 
-Now, with the database alone, a thief can't test a guess at all, because every
-check needs the OPRF key derived from `NOPASS_OPAQUE_SERVER_SETUP`. With the
-database and that secret together, each guess costs one Argon2id run at the
-vault KDF's parameters, the same cost as attacking the vault ciphertext
-directly.
+Now the login record is no longer a shortcut. With the database alone, a
+thief can't test a guess against the OPAQUE record at all, because every
+check needs the OPRF key derived from `NOPASS_OPAQUE_SERVER_SETUP`. With that
+secret as well, each guess costs one Argon2id run at the vault KDF's
+parameters.
+
+That leaves the attack OPAQUE can't remove. Anyone holding the database who
+also knows a user's email can test guesses against that user's wrapped vault
+key (`protected_symmetric_key`, AES-GCM under a key derived with Argon2id
+from the password and email). Each guess costs a full Argon2id run. The
+marketing copy says exactly this.
 
 ## Endpoints
 
@@ -133,7 +139,9 @@ marks which rows are done. The old, unused `NOPASS_SESSION_SECRET` is gone.
 
 ## Throttling
 
-- Per IP: 20 requests a minute, burst 10, on every `/auth` route (unchanged).
+- Per IP: 60 requests a minute, burst 30, on every public `/auth` route. This
+  was 20 with a burst of 10, but a login now takes two requests (three with
+  the SRP fallback), and guessing is bounded per account below.
 - Per account, keyed by the keyed email hash whether the account exists or
   not, so the throttle reveals nothing. It counts every login start
   (OPAQUE or SRP) and every registration start that isn't followed by a

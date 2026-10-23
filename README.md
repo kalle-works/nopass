@@ -5,8 +5,9 @@ notes, and SSH keys are encrypted on your device before they leave it — the
 server stores ciphertext it cannot read. Not as a promise: as math.
 
 **Crypto**: Argon2id → HKDF subkeys → AES-256-GCM + HMAC-SHA256, OPAQUE
-(RFC 9807) login: your password never crosses the wire, and a stolen server
-database can't be used to test password guesses ([docs/auth.md](docs/auth.md)). The full design,
+(RFC 9807) login: your password never crosses the wire, and the login record
+in a stolen database gives no shortcut for guessing it. Guessing against the
+vault itself costs a full Argon2id run per try ([docs/auth.md](docs/auth.md)). The full design,
 including what nopwd deliberately *cannot* protect you from, is on the
 [landing page threat model](apps/web/src/app/(marketing)/page.tsx) and in
 [DESIGN.md](DESIGN.md).
