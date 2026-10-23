@@ -29,7 +29,7 @@
     "@nopass/config": "workspace:*",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^5.0.5",
     "happy-dom": "^20.9.0",
     "typescript": "^5",
     "vitest": "^4.1.6"
