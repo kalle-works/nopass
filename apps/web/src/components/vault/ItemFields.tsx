@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import type { CardItem, IdentityItem, LoginItem, NoteItem, SshKeyItem, VaultItemPlaintext } from "@nopass/types";
 import { IconButton, SecretRow, computeTotp, cx, useCopyFeedback } from "@nopass/ui";
+import { safeHttpUrl } from "@/lib/safe-url";
 
 type CopyFn = (text: string) => Promise<boolean>;
 
@@ -28,23 +29,30 @@ function LinkRow({ urls, copy }: { urls: string[]; copy: CopyFn }) {
   return (
     <div className="flex flex-col gap-1 border-b border-divider px-4 py-3 last:border-b-0">
       <span className="text-meta text-muted">Website</span>
-      {urls.map((url, i) => (
-        <div key={url} className="flex min-h-8 items-center gap-2">
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="min-w-0 flex-1 break-all text-ui text-accent-text hover:underline"
-          >
-            {url}
-          </a>
-          {i === 0 && (
-            <IconButton label={copied ? "Copied" : "Copy Website"} onClick={() => doCopy(url)}>
-              {copied ? <Check aria-hidden className="size-4 text-success" /> : <Copy aria-hidden className="size-4" />}
-            </IconButton>
-          )}
-        </div>
-      ))}
+      {urls.map((url, i) => {
+        const href = safeHttpUrl(url);
+        return (
+          <div key={url} className="flex min-h-8 items-center gap-2">
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-w-0 flex-1 break-all text-ui text-accent-text hover:underline"
+              >
+                {url}
+              </a>
+            ) : (
+              <span className="min-w-0 flex-1 break-all text-ui text-fg">{url}</span>
+            )}
+            {i === 0 && (
+              <IconButton label={copied ? "Copied" : "Copy Website"} onClick={() => doCopy(url)}>
+                {copied ? <Check aria-hidden className="size-4 text-success" /> : <Copy aria-hidden className="size-4" />}
+              </IconButton>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

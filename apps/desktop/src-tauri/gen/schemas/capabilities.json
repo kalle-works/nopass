@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for nopass desktop","local":true,"windows":["main"],"permissions":["core:default","sql:default","deep-link:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for nopass desktop","local":true,"windows":["main"],"permissions":["core:default","sql:allow-load","sql:allow-select","sql:allow-execute","deep-link:default"]}}

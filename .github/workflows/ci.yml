@@ -133,8 +133,10 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
       - run: ./gitleaks detect --redact --verbose
 
+  # One web e2e job, against the production build: dev mode hides CSP and
+  # hydration failures that only the real build shows.
   web-e2e:
-    name: Web end-to-end (Playwright)
+    name: Web end-to-end (production build)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -148,6 +150,10 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U nopass -d nopass_e2e"
           --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      E2E_PRODUCTION: "1"
+      E2E_API_URL: http://localhost:4010
+      NEXT_PUBLIC_API_URL: http://localhost:4010
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -160,8 +166,6 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm turbo run build --filter='@nopass/web^...'
-      - run: pnpm --filter @nopass/web exec playwright install --with-deps chromium
       - run: cargo build -p nopass-api
       - name: Start API
         env:
@@ -169,9 +173,13 @@ jobs:
           NOPASS_SESSION_SECRET: e2e-only-session-secret-not-used-anywhere-else
           NOPASS_ALLOWED_ORIGINS: http://localhost:4020
           NOPASS_PORT: "4010"
+          # Every test signs in from one IP; the production limit would 429 them
+          NOPASS_AUTH_RATE_LIMIT_PER_MIN: "1000"
         run: |
           target/debug/nopass-api > api.log 2>&1 &
           curl -sf --retry 30 --retry-delay 1 --retry-connrefused http://localhost:4010/v1/health
+      - run: pnpm turbo run build --filter=@nopass/web
+      - run: pnpm --filter @nopass/web exec playwright install --with-deps chromium
       - run: pnpm --filter @nopass/web test:e2e
       - if: failure()
         run: cat api.log

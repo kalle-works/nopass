@@ -149,3 +149,47 @@ async fn share_validates_limits(pool: PgPool) {
         .await
         .assert_status(StatusCode::UNAUTHORIZED);
 }
+
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn share_rejects_malformed_ciphertext(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+    let session = login(&server, EMAIL, PASSWORD).await;
+
+    let mut oversize = share_body(1, 24);
+    oversize["blob"] = json!(random_b64(64 * 1024 + 1));
+    let mut short_iv = share_body(1, 24);
+    short_iv["blobIv"] = json!(random_b64(4));
+    let mut long_label = share_body(1, 24);
+    long_label["labelBlob"] = json!(random_b64(2048));
+    let mut tiny_blob = share_body(1, 24);
+    tiny_blob["blob"] = json!(random_b64(2));
+
+    for body in [oversize, short_iv, long_label, tiny_blob] {
+        server
+            .post("/v1/shares")
+            .authorization_bearer(&session.session_token)
+            .json(&body)
+            .await
+            .assert_status(StatusCode::BAD_REQUEST);
+    }
+}
+
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn share_view_is_rate_limited_per_share(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+    let session = login(&server, EMAIL, PASSWORD).await;
+    let created: CreateShareResponse = server
+        .post("/v1/shares")
+        .authorization_bearer(&session.session_token)
+        .json(&share_body(10, 24))
+        .await
+        .json();
+
+    let url = format!("/v1/shares/{}/view", created.share_id);
+    for _ in 0..3 {
+        server.post(&url).await.assert_status(StatusCode::OK);
+    }
+    server.post(&url).await.assert_status(StatusCode::TOO_MANY_REQUESTS);
+}

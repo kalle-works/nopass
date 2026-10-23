@@ -7,6 +7,7 @@ import type { LoginItem, VaultItemType } from "@nopass/types";
 import { Kbd, computeTotp, cx } from "@nopass/ui";
 import { ItemIcon } from "./ItemIcon";
 import { useVault } from "./vault-context";
+import { safeHttpUrl } from "@/lib/safe-url";
 import { filterItems, primaryCopy, sortItems, TYPE_SINGULAR, type Filter } from "./vault-model";
 
 interface Command {
@@ -108,7 +109,7 @@ function PaletteBody() {
             },
           });
         }
-        const url = login.urls?.[0];
+        const url = safeHttpUrl(login.urls?.[0]);
         if (url) {
           actions.push({ id: "act-url", group: "Actions", label: "Open URL", detail: url, run: () => void window.open(url, "_blank", "noopener,noreferrer") });
         }

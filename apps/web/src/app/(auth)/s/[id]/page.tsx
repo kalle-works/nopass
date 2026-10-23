@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { importShareKey, decryptSharePayload } from "@nopass/crypto";
 import type { VaultItemPlaintext } from "@nopass/types";
-import { AuthShell, Banner, Spinner, SecretRow } from "@nopass/ui";
+import { AuthShell, Banner, Button, Spinner, SecretRow } from "@nopass/ui";
 import { api } from "@/lib/api";
 import { AuthFooter } from "@/components/auth/auth-footer";
 import { copySecret } from "@/components/auth/clipboard";
 
 type State =
+  | { status: "gate" }
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; item: VaultItemPlaintext; remainingViews: number };
@@ -77,59 +78,61 @@ function ItemFields({ item }: { item: VaultItemPlaintext }) {
 
 export default function ShareViewPage() {
   const params = useParams<{ id: string }>();
-  const [state, setState] = useState<State>({ status: "loading" });
-  // Re-read the fragment when it changes (e.g. a second share link opened in
-  // the same tab) — parsing only on mount would decrypt with a stale key
-  const [hash, setHash] = useState<string | null>(null);
+  // Nothing is fetched until the recipient clicks: link scanners and chat
+  // unfurlers that render the page must not burn one of the share's views.
+  const [state, setState] = useState<State>({ status: "gate" });
 
+  // A different fragment (e.g. a second share link opened in the same tab)
+  // means a different key, so go back to the gate instead of reusing state
   useEffect(() => {
-    const update = () => setHash(window.location.hash);
-    update();
-    window.addEventListener("hashchange", update);
-    return () => window.removeEventListener("hashchange", update);
+    const reset = () => setState({ status: "gate" });
+    window.addEventListener("hashchange", reset);
+    return () => window.removeEventListener("hashchange", reset);
   }, []);
 
-  useEffect(() => {
-    if (hash === null) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const keyB64url = new URLSearchParams(hash.slice(1)).get("k");
-        if (!keyB64url) {
-          throw new Error("This link is missing its decryption key. Make sure you copied the whole URL.");
-        }
-        const key = await importShareKey(keyB64url);
-        const resp = await api.shares.view(params.id);
-        // blobMac is unused for shares — AES-GCM's own auth tag covers
-        // integrity; the separate HMAC only exists for vault items
-        const item = await decryptSharePayload(
-          { blob: resp.blob, blobIv: resp.blobIv, blobMac: "" },
-          key,
-        );
-        if (!cancelled) {
-          setState({ status: "ready", item, remainingViews: resp.remainingViews });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!cancelled) {
-          setState({
-            status: "error",
-            message: msg.includes("404") || msg.toLowerCase().includes("not found")
-              ? "This share doesn't exist anymore. It may have expired, been viewed already, or been revoked."
-              : msg.toLowerCase().includes("operation") || msg.toLowerCase().includes("decrypt")
-                ? "The link's decryption key doesn't match, and this attempt used one of the link's views. Ask the sender to check the URL or share again."
-                : msg,
-          });
-        }
+  async function reveal() {
+    setState({ status: "loading" });
+    try {
+      const keyB64url = new URLSearchParams(window.location.hash.slice(1)).get("k");
+      if (!keyB64url) {
+        throw new Error("This link is missing its decryption key. Make sure you copied the whole URL.");
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [params.id, hash]);
+      const key = await importShareKey(keyB64url);
+      const resp = await api.shares.view(params.id);
+      // blobMac is unused for shares — AES-GCM's own auth tag covers
+      // integrity; the separate HMAC only exists for vault items
+      const item = await decryptSharePayload(
+        { blob: resp.blob, blobIv: resp.blobIv, blobMac: "" },
+        key,
+      );
+      setState({ status: "ready", item, remainingViews: resp.remainingViews });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setState({
+        status: "error",
+        message: msg.includes("404") || msg.toLowerCase().includes("not found")
+          ? "This share doesn't exist anymore. It may have expired, been viewed already, or been revoked."
+          : msg.toLowerCase().includes("operation") || msg.toLowerCase().includes("decrypt")
+            ? "The link's decryption key doesn't match, and this attempt used one of the link's views. Ask the sender to check the URL or share again."
+            : msg,
+      });
+    }
+  }
 
   return (
     <AuthShell homeHref="/" footer={<AuthFooter />}>
+      {state.status === "gate" && (
+        <>
+          <h1 className="text-h1 font-semibold text-fg">Someone shared a secret with you</h1>
+          <p className="mt-2 text-body text-muted">
+            Revealing it uses one of the link&apos;s limited views. Open it only when you are ready to copy what you need.
+          </p>
+          <Button className="mt-6" onClick={reveal}>
+            Reveal secret
+          </Button>
+        </>
+      )}
+
       {state.status === "loading" && (
         <div role="status" className="flex items-center gap-3 text-body text-muted">
           <Spinner />
