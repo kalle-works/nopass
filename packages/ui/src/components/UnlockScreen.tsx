@@ -296,7 +296,13 @@ export function UnlockScreen({
           protectedPrivateKeyIv: account.protectedPrivateKeyIv,
           stretchedMasterKey: keys.stretchedMasterKey,
         },
-        () => provePassword(apiClient.auth, { email, password, sessionToken: auth.sessionToken }),
+        () =>
+          provePassword(apiClient.auth, {
+            email,
+            password,
+            sessionToken: auth.sessionToken,
+            purpose: "identity_key",
+          }),
       ).catch(() => {
         // Publishing is retried on the next sign-in; a key mismatch also shows in the vault.
       });

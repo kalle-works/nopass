@@ -112,8 +112,15 @@ password again:
 - **Upgrade:** a fresh SRP proof.
 - **Account key, first identity-key publish, password change:** a fresh OPAQUE
   proof. `proof/start` (or `password/start`) begins an OPAQUE login bound to
-  the session's account. The request then carries `{proofId,
+  the session's account and to one purpose (`account_key`, `identity_key`;
+  password change has its own). The request then carries `{proofId,
   finishLoginRequest}`, which the server checks like a login finish and burns.
+  A proof started for another purpose, a password-change handshake, or a
+  regular login can't be redeemed there, and a proof can't finish as a login.
+- The upgrade request carries no password or anything equivalent to it: the
+  SRP proof M1 (valid for that one handshake only), the OPAQUE registration
+  record (what the server stores anyway), and the account key wrapped under
+  the password-derived KEK.
 
 ## Changing the master password
 

@@ -49,9 +49,13 @@ export interface RegisterResponse {
 }
 
 /** A fresh OPAQUE proof of the password inside an authenticated request. */
+/** What a proof authorizes; the server redeems it only at that endpoint. */
+export type ProofPurpose = "account_key" | "identity_key";
+
 export interface PasswordProofStartRequest {
   emailHash: string;
   startLoginRequest: string;
+  purpose: ProofPurpose;
 }
 
 export interface PasswordProofStartResponse {
