@@ -128,3 +128,29 @@ async fn invites_carry_the_inviters_signature_and_bundle(pool: PgPool) {
     assert_eq!(pending["inviter"]["userId"].as_str(), Some(alice.user_id.to_string().as_str()));
     assert_eq!(pending["inviter"]["identityPublicKey"].as_str(), Some(B64.encode([1u8; 32]).as_str()));
 }
+
+/// Fresh devices learn the account is v2-only from this marker, so it must be
+/// stored per account and served back unchanged.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn vault_format_marker_round_trips_per_account(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, "alice@example.com", "password").await;
+    register_user(&server, "bob@example.com", "password").await;
+    let alice = login(&server, "alice@example.com", "password").await;
+    let bob = login(&server, "bob@example.com", "password").await;
+    let marker = B64.encode([5u8; 32]);
+
+    server
+        .put("/v1/keys/vault-format")
+        .authorization_bearer(&alice.session_token)
+        .json(&serde_json::json!({ "marker": marker }))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    let mine: serde_json::Value =
+        server.get("/v1/keys/vault-format").authorization_bearer(&alice.session_token).await.json();
+    let theirs: serde_json::Value =
+        server.get("/v1/keys/vault-format").authorization_bearer(&bob.session_token).await.json();
+    assert_eq!(mine["marker"].as_str(), Some(marker.as_str()));
+    assert!(theirs["marker"].is_null());
+}

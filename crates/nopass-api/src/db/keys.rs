@@ -35,6 +35,23 @@ pub async fn get_bundle(pool: &PgPool, user_id: Uuid) -> Result<Option<KeyBundle
     Ok(bundle)
 }
 
+pub async fn get_vault_format_marker(pool: &PgPool, user_id: Uuid) -> Result<Option<String>> {
+    let marker = sqlx::query_scalar::<_, Option<String>>("SELECT vault_format_marker FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(marker)
+}
+
+pub async fn set_vault_format_marker(pool: &PgPool, user_id: Uuid, marker: &str) -> Result<()> {
+    sqlx::query("UPDATE users SET vault_format_marker = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(marker)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub enum SetIdentityOutcome {
     Stored,
     /// The same identity was already stored — a retried migration is harmless.
