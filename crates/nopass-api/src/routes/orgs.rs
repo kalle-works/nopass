@@ -168,9 +168,11 @@ async fn invite_member(
         org_id,
         invitee_id,
         &body.role,
-        &body.encrypted_org_key,
-        &body.wrap_signature,
-        body.key_epoch,
+        db_orgs::SignedWrap {
+            encrypted_org_key: &body.encrypted_org_key,
+            wrap_signature: &body.wrap_signature,
+            key_epoch: body.key_epoch,
+        },
         auth.user_id,
     )
     .await?;

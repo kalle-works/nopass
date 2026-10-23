@@ -106,29 +106,34 @@ pub async fn list_members(pool: &PgPool, org_id: Uuid) -> Result<Vec<OrgMemberRe
     Ok(rows)
 }
 
+/// An org key wrapped for one member, with the signature over it.
+pub struct SignedWrap<'a> {
+    pub encrypted_org_key: &'a str,
+    pub wrap_signature: &'a str,
+    pub key_epoch: i32,
+}
+
 pub async fn invite_member(
     pool: &PgPool,
     org_id: Uuid,
     user_id: Uuid,
     role: &str,
-    encrypted_org_key: &str,
-    wrap_signature: &str,
-    key_epoch: i32,
+    wrap: SignedWrap<'_>,
     invited_by: Uuid,
 ) -> Result<()> {
     sqlx::query(
         r#"INSERT INTO organization_members
            (org_id, user_id, role, status, encrypted_org_key, wrap_signature, key_epoch, invited_by)
-           VALUES ($1, $2, $3, 'pending', $4, $5, $7, $6)
+           VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)
            ON CONFLICT (org_id, user_id) DO NOTHING"#,
     )
     .bind(org_id)
     .bind(user_id)
     .bind(role)
-    .bind(encrypted_org_key)
-    .bind(wrap_signature)
+    .bind(wrap.encrypted_org_key)
+    .bind(wrap.wrap_signature)
+    .bind(wrap.key_epoch)
     .bind(invited_by)
-    .bind(key_epoch)
     .execute(pool)
     .await?;
     Ok(())
