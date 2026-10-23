@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSy
 import { join } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
+import { MemoryRevisionStore } from "@nopass/crypto";
 
 export interface Session {
   sessionToken: string;
@@ -34,6 +35,24 @@ export function saveSession(session: Session): void {
   mkdirSync(SESSION_DIR, { recursive: true });
   chmodSync(SESSION_DIR, 0o700);
   writeFileSync(SESSION_PATH, JSON.stringify(session, null, 2), { encoding: "utf-8", mode: 0o600 });
+}
+
+/**
+ * Highest revision seen per vault item, persisted next to the session so a
+ * server serving an older item blob is refused on later runs too.
+ */
+export function openRevisionStore(defaultVaultId: string): MemoryRevisionStore {
+  const path = join(SESSION_DIR, `item-revisions-${defaultVaultId}.json`);
+  let initial: Record<string, number> = {};
+  try {
+    initial = JSON.parse(readFileSync(path, "utf-8")) as Record<string, number>;
+  } catch {
+    // first run on this machine
+  }
+  return new MemoryRevisionStore(initial, (snapshot) => {
+    mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(path, JSON.stringify(snapshot), { encoding: "utf-8", mode: 0o600 });
+  });
 }
 
 export function clearSession(): void {

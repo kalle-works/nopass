@@ -1,9 +1,11 @@
 import { Command } from "commander";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import { encryptItem } from "@nopass/crypto";
+import { encryptVaultItem } from "@nopass/crypto";
 import { adoptSecret } from "../adopt.js";
 import { createApiClient } from "../api-client.js";
 import { importKeys } from "../auth.js";
+import { openRevisionStore } from "../session.js";
 import { fetchAndDecryptItems, withSession } from "../vault.js";
 
 export const adoptCommand = new Command("adopt")
@@ -29,7 +31,8 @@ the literal with an environment variable yourself.`,
     await withSession(async (session) => {
       const api = createApiClient(session.apiUrl);
       const existing = await fetchAndDecryptItems(session);
-      const { vaultEncKey, vaultMacKey } = await importKeys(session, { write: true });
+      const { vaultEncKey } = await importKeys(session, { write: true });
+      const revisions = openRevisionStore(session.defaultVaultId);
 
       let result;
       try {
@@ -40,8 +43,15 @@ the literal with an environment variable yourself.`,
           match: opts.match,
           existingNames: existing.map((i) => i.name),
           saveItem: async (item) => {
-            const encrypted = await encryptItem(item, vaultEncKey, vaultMacKey);
-            await api.vault.createItem(session.defaultVaultId, { itemType: "login", ...encrypted }, session.sessionToken);
+            const id = randomUUID();
+            const { encrypted, revision } = await encryptVaultItem(
+              item,
+              { scope: { kind: "personal" }, itemId: id, itemType: "login" },
+              vaultEncKey,
+              revisions,
+            );
+            await api.vault.createItem(session.defaultVaultId, { id, itemType: "login", ...encrypted }, session.sessionToken);
+            revisions.record(id, revision);
           },
         });
       } catch (err) {

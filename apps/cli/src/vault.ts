@@ -1,7 +1,7 @@
-import { decryptItem } from "@nopass/crypto";
+import { bindingForItem, decryptVaultItem } from "@nopass/crypto";
 import type { VaultItemPlaintext } from "@nopass/types";
 import { createApiClient, ApiError } from "./api-client.js";
-import { loadSession, clearSession, type Session } from "./session.js";
+import { loadSession, clearSession, openRevisionStore, type Session } from "./session.js";
 import { importKeys } from "./auth.js";
 
 export async function fetchAndDecryptItems(
@@ -15,13 +15,11 @@ export async function fetchAndDecryptItems(
   );
   const active = perVault.flat().filter((i) => i.deletedAt === null);
 
-  const { vaultEncKey, vaultMacKey } = await importKeys(session);
-  const results = await Promise.all(
-    active.map((item) =>
-      decryptItem({ blob: item.blob, blobIv: item.blobIv, blobMac: item.blobMac }, vaultEncKey, vaultMacKey),
-    ),
+  const keys = await importKeys(session);
+  const revisions = openRevisionStore(session.defaultVaultId);
+  return Promise.all(
+    active.map(async (item) => (await decryptVaultItem(item, bindingForItem(item), keys, revisions)).plaintext),
   );
-  return results;
 }
 
 export async function requireSession(): Promise<Session> {

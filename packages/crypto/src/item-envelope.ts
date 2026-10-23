@@ -61,7 +61,11 @@ export class ItemRollbackError extends Error {
 export class MemoryRevisionStore implements RevisionStore {
   private readonly revisions: Map<string, number>;
 
-  constructor(initial: Record<string, number> = {}) {
+  /** `onChange` receives a snapshot after every raise, for persisting it. */
+  constructor(
+    initial: Record<string, number> = {},
+    private readonly onChange?: (snapshot: Record<string, number>) => void,
+  ) {
     this.revisions = new Map(Object.entries(initial));
   }
 
@@ -70,7 +74,9 @@ export class MemoryRevisionStore implements RevisionStore {
   }
 
   record(itemId: string, revision: number): void {
-    if (revision > (this.revisions.get(itemId) ?? -1)) this.revisions.set(itemId, revision);
+    if (revision <= (this.revisions.get(itemId) ?? -1)) return;
+    this.revisions.set(itemId, revision);
+    this.onChange?.(this.toJSON());
   }
 
   toJSON(): Record<string, number> {

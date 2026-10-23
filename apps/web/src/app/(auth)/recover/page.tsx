@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  bindingForItem,
   computeEmailHash,
   decryptBytes,
-  decryptItem,
+  decryptVaultItem,
   deriveMasterKey,
   deriveRecoveryKeys,
   encryptBytes,
-  encryptItem,
+  encryptItemV2,
   generateRecoveryCode,
   generateSrpRegistration,
   stretchMasterKey,
@@ -142,12 +143,12 @@ export default function RecoverPage() {
       setProgress(`Re-encrypting ${init.items.length} item${init.items.length === 1 ? "" : "s"}…`);
       const items: ReencryptedItem[] = [];
       for (const item of init.items) {
-        const plaintext = await decryptItem(
-          { blob: item.blob, blobIv: item.blobIv, blobMac: item.blobMac },
-          oldEncKey,
-          oldMacKey,
-        );
-        const reencrypted = await encryptItem(plaintext, newKeys.vaultEncKey, newKeys.vaultMacKey);
+        const binding = bindingForItem(item);
+        const { plaintext, revision } = await decryptVaultItem(item, binding, {
+          vaultEncKey: oldEncKey,
+          vaultMacKey: oldMacKey,
+        });
+        const reencrypted = await encryptItemV2(plaintext, binding, revision + 1, newKeys.vaultEncKey);
         items.push({
           id: item.id,
           blob: reencrypted.blob,

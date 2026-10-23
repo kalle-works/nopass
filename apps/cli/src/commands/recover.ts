@@ -1,12 +1,13 @@
 import { Command } from "commander";
 import {
+  bindingForItem,
   computeEmailHash,
   decryptBytes,
-  decryptItem,
+  decryptVaultItem,
   deriveMasterKey,
   deriveRecoveryKeys,
   encryptBytes,
-  encryptItem,
+  encryptItemV2,
   generateRecoveryCode,
   generateSrpRegistration,
   stretchMasterKey,
@@ -78,12 +79,12 @@ export const recoverCommand = new Command("recover")
       process.stderr.write("Re-encrypting vault…\n");
       const items: ReencryptedItem[] = [];
       for (const item of init.items) {
-        const plain = await decryptItem(
-          { blob: item.blob, blobIv: item.blobIv, blobMac: item.blobMac },
-          oldEncKey,
-          oldMacKey,
-        );
-        const reencrypted = await encryptItem(plain, newKeys.vaultEncKey, newKeys.vaultMacKey);
+        const binding = bindingForItem(item);
+        const { plaintext, revision } = await decryptVaultItem(item, binding, {
+          vaultEncKey: oldEncKey,
+          vaultMacKey: oldMacKey,
+        });
+        const reencrypted = await encryptItemV2(plaintext, binding, revision + 1, newKeys.vaultEncKey);
         items.push({ id: item.id, ...reencrypted });
       }
 

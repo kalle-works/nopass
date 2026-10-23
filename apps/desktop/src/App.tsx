@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel } from "@nopass/ui";
-import { decryptItem, encryptItem } from "@nopass/crypto";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel, openRevisionStore } from "@nopass/ui";
+import { bindingForItem, decryptVaultItem, encryptVaultItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { createApiClient } from "@nopass/ui";
 import { useBiometric } from "./hooks/useBiometric";
@@ -213,6 +213,7 @@ function VaultScreen({
 }: VaultScreenProps) {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
+  const revisions = useMemo(() => openRevisionStore(defaultVaultId), [defaultVaultId]);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<
@@ -231,7 +232,13 @@ function VaultScreen({
     Promise.all(
       active.map(async (item) => {
         try {
-          return [item.id, await decryptItem(item, vaultEncKey, vaultMacKey)] as const;
+          const { plaintext } = await decryptVaultItem(
+            item,
+            bindingForItem(item),
+            { vaultEncKey, vaultMacKey },
+            revisions,
+          );
+          return [item.id, plaintext] as const;
         } catch {
           return null;
         }
@@ -251,24 +258,29 @@ function VaultScreen({
         }));
       sshAgent.loadVaultKeys(sshKeys).catch(() => {/* agent not running */});
     });
-  }, [items, vaultEncKey, vaultMacKey]);
+  }, [items, vaultEncKey, vaultMacKey, revisions]);
 
   const handleSave = useCallback(async (plaintext: VaultItemPlaintext) => {
     setSaving(true);
     setError(null);
     try {
-      const enc = await encryptItem(plaintext, vaultEncKey, vaultMacKey);
-
       if (modal?.mode === "create") {
-        const created = await api.vault.create(defaultVaultId, {
-          itemType: plaintext.type, blob: enc.blob, blobIv: enc.blobIv, blobMac: enc.blobMac,
-        }, sessionToken);
+        const id = crypto.randomUUID();
+        const { encrypted: enc, revision } = await encryptVaultItem(
+          plaintext, { scope: { kind: "personal" }, itemId: id, itemType: plaintext.type }, vaultEncKey, revisions,
+        );
+        const created = await api.vault.create(defaultVaultId, { id, itemType: plaintext.type, ...enc }, sessionToken);
+        revisions.record(id, revision);
         upsertItem(created);
         await upsertLocalItem(created);
       } else if (modal?.mode === "edit") {
+        const { encrypted: enc, revision } = await encryptVaultItem(
+          plaintext, bindingForItem(modal.entry.item), vaultEncKey, revisions,
+        );
         await api.vault.update(defaultVaultId, modal.entry.item.id, {
-          blob: enc.blob, blobIv: enc.blobIv, blobMac: enc.blobMac, version: modal.entry.item.version,
+          ...enc, version: modal.entry.item.version,
         }, sessionToken);
+        revisions.record(modal.entry.item.id, revision);
         const updated = { ...modal.entry.item, blob: enc.blob, blobIv: enc.blobIv, blobMac: enc.blobMac, version: modal.entry.item.version + 1 };
         upsertItem(updated);
         await upsertLocalItem(updated);
@@ -279,7 +291,7 @@ function VaultScreen({
     } finally {
       setSaving(false);
     }
-  }, [modal, api, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, upsertItem]);
+  }, [modal, api, sessionToken, defaultVaultId, vaultEncKey, revisions, upsertItem]);
 
   const handleDelete = useCallback(async (item: EncryptedVaultItem) => {
     if (!confirm("Delete this item?")) return;
