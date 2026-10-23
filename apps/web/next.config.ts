@@ -22,7 +22,8 @@ const csp = [
   // 'unsafe-inline' is required in prod too (verified: 'self'-only breaks
   // hydration on the live site). 'unsafe-eval' stays dev-only. Hardening
   // path: nonce-based CSP via middleware, at the cost of static rendering.
-  isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self' 'unsafe-inline'",
+  // 'wasm-unsafe-eval' lets the OPAQUE client (wasm) compile; it doesn't allow JS eval.
+  isDev ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'" : "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   // Styles: self only (no CDN fonts)
   "style-src 'self' 'unsafe-inline'",
   // Fonts loaded from self (Martian Mono + IBM Plex Sans are self-hosted)

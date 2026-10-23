@@ -1,12 +1,6 @@
 import { generateKeyPairSync } from "crypto";
 import { hostname, platform } from "os";
-import {
-  deriveMasterKey,
-  stretchMasterKeyRaw,
-  computeEmailHash,
-  srpStep1,
-  srpStep2,
-} from "@nopass/crypto";
+import { deriveMasterKey, loginWithPassword, stretchMasterKeyRaw } from "@nopass/crypto";
 import { DEFAULT_KDF_PARAMS, type DeviceType } from "@nopass/types";
 import { createApiClient } from "./api-client.js";
 import { saveSession, loadDeviceId, saveDeviceId, type Session } from "./session.js";
@@ -36,21 +30,14 @@ export async function loginWithCredentials(
   const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
 
   const api = createApiClient(apiUrl);
-  const emailHash = computeEmailHash(email);
-  const step1 = srpStep1();
-
-  const initResp = await api.auth.srpInit({ emailHash, clientPublicA: step1.clientPublicA });
 
   // Include previously-registered device_id so server links the session
   const existingDeviceId = loadDeviceId();
-  const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-  const verifyResp = await api.auth.srpVerify({
-    sessionId: initResp.sessionId,
-    clientProofM1: step2.clientProofM1,
+  const auth = await loginWithPassword(api.auth, {
+    email,
+    password,
     ...(existingDeviceId ? { deviceId: existingDeviceId } : {}),
   });
-
-  step2.verifyServerProof(verifyResp.serverProofM2);
 
   // Register this machine as a trusted device on first login
   let deviceId = existingDeviceId;
@@ -62,7 +49,7 @@ export async function loginWithCredentials(
           deviceType: deviceType(),
           devicePublicKey: devicePublicKeyB64(),
         },
-        verifyResp.sessionToken,
+        auth.sessionToken,
       );
       deviceId = newId;
       saveDeviceId(deviceId);
@@ -72,11 +59,11 @@ export async function loginWithCredentials(
   }
 
   const session: Session = {
-    sessionToken: verifyResp.sessionToken,
+    sessionToken: auth.sessionToken,
     email,
     vaultEncKeyB64: Buffer.from(encKeyBytes).toString("base64"),
     vaultMacKeyB64: Buffer.from(macKeyBytes).toString("base64"),
-    defaultVaultId: verifyResp.defaultVaultId,
+    defaultVaultId: auth.defaultVaultId,
     apiUrl,
     ...(deviceId ? { deviceId } : {}),
   };

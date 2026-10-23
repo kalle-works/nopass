@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   computeEmailHash,
+  createOpaqueRegistration,
   decryptBytes,
   decryptItem,
   deriveMasterKey,
@@ -11,7 +12,6 @@ import {
   encryptBytes,
   encryptItem,
   generateRecoveryCode,
-  generateSrpRegistration,
   stretchMasterKey,
   stretchMasterKeyAllRaw,
   unwrapVaultSubkeys,
@@ -137,7 +137,13 @@ export default function RecoverPage() {
       const newMasterKey = await deriveMasterKey(newPassword, email, DEFAULT_KDF_PARAMS);
       const newKeys = await stretchMasterKey(newMasterKey, email);
       newRaw = await stretchMasterKeyAllRaw(newMasterKey, email);
-      const { srpSalt, srpVerifier } = generateSrpRegistration(email, newPassword);
+      const registrationRecord = await createOpaqueRegistration(newPassword, DEFAULT_KDF_PARAMS, (registrationRequest) =>
+        api.recovery.opaqueStart({
+          recoveryToken: init.recoveryToken,
+          emailHash: computeEmailHash(email),
+          registrationRequest,
+        }),
+      );
 
       setProgress(`Re-encrypting ${init.items.length} item${init.items.length === 1 ? "" : "s"}…`);
       const items: ReencryptedItem[] = [];
@@ -180,8 +186,7 @@ export default function RecoverPage() {
       setProgress("Applying…");
       await api.recovery.complete({
         recoveryToken: init.recoveryToken,
-        srpSalt,
-        srpVerifier,
+        registrationRecord,
         protectedSymmetricKey: protectedKey.blob,
         protectedSymmetricKeyIv: protectedKey.blobIv,
         ...(protectedPrivateKey ? { protectedPrivateKey, protectedPrivateKeyIv } : {}),

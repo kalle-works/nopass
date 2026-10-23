@@ -23,16 +23,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   computeEmailHash,
+  createOpaqueRegistration,
   deriveMasterKey,
+  loginWithPassword,
   stretchMasterKey,
   stretchMasterKeyRaw,
-  srpStep1,
-  srpStep2,
-  generateSrpRegistration,
   generateUserKeyPair,
   encryptBytes,
   encryptItem,
 } from "@nopass/crypto";
+import { createApiClient } from "@nopass/ui";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 
 const API = "http://127.0.0.1:3001/v1";
@@ -69,14 +69,17 @@ async function seedAccount(siteUrl: string) {
   const masterKey = await deriveMasterKey(PASSWORD, EMAIL, DEFAULT_KDF_PARAMS);
   const keys = await stretchMasterKey(masterKey, EMAIL);
   const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(masterKey, EMAIL);
-  const { srpSalt, srpVerifier } = generateSrpRegistration(EMAIL, PASSWORD);
+  const emailHash = computeEmailHash(EMAIL);
+  const auth = createApiClient(API.replace(/\/v1$/, "")).auth;
+  const registrationRecord = await createOpaqueRegistration(PASSWORD, DEFAULT_KDF_PARAMS, (registrationRequest) =>
+    auth.opaqueRegisterStart({ emailHash, registrationRequest }),
+  );
   const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
   const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-  await apiPost("/auth/register", {
-    emailHash: computeEmailHash(EMAIL),
-    srpSalt,
-    srpVerifier,
+  await auth.opaqueRegisterFinish({
+    emailHash,
+    registrationRecord,
     kdfParams: DEFAULT_KDF_PARAMS,
     protectedSymmetricKey: protectedKey.blob,
     protectedSymmetricKeyIv: protectedKey.blobIv,
@@ -85,17 +88,7 @@ async function seedAccount(siteUrl: string) {
     protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
   });
 
-  const step1 = srpStep1();
-  const initResp = await apiPost("/auth/srp/init", {
-    emailHash: computeEmailHash(EMAIL),
-    clientPublicA: step1.clientPublicA,
-  });
-  const step2 = srpStep2(EMAIL, PASSWORD, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-  const verifyResp = await apiPost("/auth/srp/verify", {
-    sessionId: initResp.sessionId,
-    clientProofM1: step2.clientProofM1,
-  });
-  step2.verifyServerProof(verifyResp.serverProofM2);
+  const session = await loginWithPassword(auth, { email: EMAIL, password: PASSWORD });
 
   const vaultEncKey = await crypto.subtle.importKey(
     "raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
@@ -116,9 +109,9 @@ async function seedAccount(siteUrl: string) {
     vaultMacKey,
   );
   await apiPost(
-    `/vaults/${verifyResp.defaultVaultId}/items`,
+    `/vaults/${session.defaultVaultId}/items`,
     { itemType: "login", blob: blob.blob, blobIv: blob.blobIv, blobMac: blob.blobMac },
-    verifyResp.sessionToken,
+    session.sessionToken,
   );
 }
 

@@ -28,8 +28,16 @@ import type {
   RecoveryInitRequest,
   RecoveryInitResponse,
   RecoveryStatusResponse,
+  LoginResponse,
+  OpaqueLoginFinishRequest,
+  OpaqueLoginStartRequest,
+  OpaqueLoginStartResponse,
+  OpaqueRegisterFinishRequest,
+  OpaqueRegisterStartRequest,
+  OpaqueRegisterStartResponse,
+  OpaqueReregisterFinishRequest,
+  RecoveryOpaqueStartRequest,
   RegisterDeviceRequest,
-  RegisterRequest,
   RegisterResponse,
   SetRecoveryRequest,
   ShareInfo,
@@ -98,7 +106,19 @@ export function createApiClient(baseUrl: string) {
 
   return {
     auth: {
-      register: (req: RegisterRequest) => post<RegisterResponse>("/auth/register", req),
+      opaqueRegisterStart: (req: OpaqueRegisterStartRequest) =>
+        post<OpaqueRegisterStartResponse>("/auth/opaque/register/start", req),
+      opaqueRegisterFinish: (req: OpaqueRegisterFinishRequest) =>
+        post<RegisterResponse>("/auth/opaque/register/finish", req),
+      opaqueLoginStart: (req: OpaqueLoginStartRequest) =>
+        post<OpaqueLoginStartResponse>("/auth/opaque/login/start", req),
+      opaqueLoginFinish: (req: OpaqueLoginFinishRequest) =>
+        post<LoginResponse>("/auth/opaque/login/finish", req),
+      opaqueReregisterStart: (req: OpaqueRegisterStartRequest, token: string) =>
+        post<OpaqueRegisterStartResponse>("/auth/opaque/reregister/start", req, token),
+      opaqueReregisterFinish: (req: OpaqueReregisterFinishRequest, token: string) =>
+        post<void>("/auth/opaque/reregister/finish", req, token),
+      // Legacy SRP, used only by loginWithPassword's fallback for unmigrated accounts
       srpInit: (req: SrpInitRequest) => post<SrpInitResponse>("/auth/srp/init", req),
       srpVerify: (req: SrpVerifyRequest) => post<SrpVerifyResponse>("/auth/srp/verify", req),
       logout: (token: string) => post<void>("/auth/logout", {}, token),
@@ -108,6 +128,8 @@ export function createApiClient(baseUrl: string) {
       set: (req: SetRecoveryRequest, token: string) => put<void>("/auth/recovery", req, token),
       disable: (token: string) => del<void>("/auth/recovery", token),
       init: (req: RecoveryInitRequest) => post<RecoveryInitResponse>("/auth/recovery/init", req),
+      opaqueStart: (req: RecoveryOpaqueStartRequest) =>
+        post<OpaqueRegisterStartResponse>("/auth/recovery/opaque/start", req),
       complete: (req: RecoveryCompleteRequest) => post<void>("/auth/recovery/complete", req),
     },
     activity: {

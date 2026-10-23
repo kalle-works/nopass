@@ -14,7 +14,7 @@ import type { SshKeyItem } from "@nopass/types";
 const API_BASE = import.meta.env["VITE_API_URL"] ?? "http://localhost:3001";
 const api = createApiClient(API_BASE);
 
-type Screen = "unlock-mode-select" | "unlock-srp" | "unlock-register" | "vault";
+type Screen = "unlock-mode-select" | "unlock-password" | "unlock-register" | "vault";
 type SidebarTab = "vault" | "orgs";
 type Filter = "all" | VaultItemType;
 
@@ -28,7 +28,7 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("unlock-mode-select");
-  const [srpMode, setSrpMode] = useState<"login" | "register">("login");
+  const [passwordMode, setPasswordMode] = useState<"login" | "register">("login");
   const biometric = useBiometric();
 
   const {
@@ -118,13 +118,13 @@ export default function App() {
     );
   }
 
-  if (screen === "unlock-srp" || screen === "unlock-register") {
+  if (screen === "unlock-password" || screen === "unlock-register") {
     return (
       <UnlockScreen
         apiClient={api}
-        mode={srpMode}
+        mode={passwordMode}
         onSuccess={async () => {
-          // After SRP login, save keys to Keychain for biometric unlock
+          // After password login, save keys to Keychain for biometric unlock
           const state = useNopassStore.getState();
           if (state.vaultEncKey && state.vaultMacKey && biometric.available) {
             try {
@@ -145,7 +145,7 @@ export default function App() {
           setScreen("vault");
         }}
         onSwitchMode={() => {
-          setSrpMode((m) => (m === "login" ? "register" : "login"));
+          setPasswordMode((m) => (m === "login" ? "register" : "login"));
         }}
       />
     );
@@ -171,7 +171,7 @@ export default function App() {
           )}
 
           <button
-            onClick={() => { setSrpMode("login"); setScreen("unlock-srp"); }}
+            onClick={() => { setPasswordMode("login"); setScreen("unlock-password"); }}
             className={`w-full py-3 px-4 font-medium rounded-xl transition-colors text-sm ${
               biometric.available
                 ? "bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white"
@@ -182,7 +182,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => { setSrpMode("register"); setScreen("unlock-register"); }}
+            onClick={() => { setPasswordMode("register"); setScreen("unlock-register"); }}
             className="w-full py-3 px-4 bg-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm transition-colors"
           >
             Create new account

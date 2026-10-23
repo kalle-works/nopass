@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { useNopassStore } from "../store/vault-store";
-import type { EncryptedVaultItem, SrpVerifyResponse } from "@nopass/types";
+import type { EncryptedVaultItem, LoginResponse } from "@nopass/types";
 import type { DerivedKeys } from "@nopass/crypto";
 
 // Reset store state between tests
@@ -23,12 +23,11 @@ function makeFakeKey(name: string): CryptoKey {
   return { type: "secret", algorithm: { name }, usages: [], extractable: false } as unknown as CryptoKey;
 }
 
-function makeFakeAuthResponse(partial: Partial<SrpVerifyResponse> = {}): SrpVerifyResponse {
+function makeFakeAuthResponse(partial: Partial<LoginResponse> = {}): LoginResponse {
   return {
     sessionToken: "tok-abc",
     userId: "user-1",
     defaultVaultId: "vault-1",
-    serverProofM2: "proof",
     protectedSymmetricKey: "enc-key",
     protectedSymmetricKeyIv: "enc-iv",
     ...partial,

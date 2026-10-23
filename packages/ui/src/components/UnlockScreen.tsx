@@ -2,15 +2,16 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import {
   computeEmailHash,
+  createOpaqueRegistration,
   deriveMasterKey,
   deriveRecoveryKeys,
   generateRecoveryCode,
+  loginWithPassword,
   stretchMasterKey,
   stretchMasterKeyAllRaw,
   wrapVaultSubkeys,
 } from "@nopass/crypto";
-import type { ApiClient } from "../lib/api-client";
-import { srpStep1, srpStep2 } from "@nopass/crypto";
+import { ApiError, type ApiClient } from "../lib/api-client";
 import { useNopassStore } from "../store/vault-store";
 import { Banner } from "../primitives/Feedback";
 import { Button } from "../primitives/Button";
@@ -70,6 +71,11 @@ export function AuthShell({
 }
 
 function humanizeError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) return "Incorrect email or master password.";
+    if (err.status === 409) return "An account with this email already exists.";
+    if (err.status === 429) return "Too many attempts. Wait a moment and try again.";
+  }
   const msg = err instanceof Error ? err.message : String(err);
   if (msg === "Failed to fetch" || msg.includes("NetworkError") || msg.includes("ERR_FAILED")) {
     return "Could not reach the nopwd server. Check your connection and try again.";
@@ -207,14 +213,17 @@ export function UnlockScreen({
   }
 
   async function handleRegister() {
-    const { generateSrpRegistration, stretchMasterKeyRaw } = await import("@nopass/crypto");
+    const { stretchMasterKeyRaw } = await import("@nopass/crypto");
     const kdfParams = DEFAULT_KDF_PARAMS;
+    const emailHash = computeEmailHash(email);
 
     const masterKey = await deriveMasterKey(password, email, kdfParams);
     const keys = await stretchMasterKey(masterKey, email);
 
     const { encKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-    const { srpSalt, srpVerifier } = generateSrpRegistration(email, password);
+    const registrationRecord = await createOpaqueRegistration(password, kdfParams, (registrationRequest) =>
+      apiClient.auth.opaqueRegisterStart({ emailHash, registrationRequest }),
+    );
 
     const { encryptBytes } = await import("@nopass/crypto");
     const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
@@ -223,10 +232,9 @@ export function UnlockScreen({
     const { generateUserKeyPair } = await import("@nopass/crypto");
     const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-    await apiClient.auth.register({
-      emailHash: computeEmailHash(email),
-      srpSalt,
-      srpVerifier,
+    await apiClient.auth.opaqueRegisterFinish({
+      emailHash,
+      registrationRecord,
       kdfParams,
       protectedSymmetricKey: protectedKey.blob,
       protectedSymmetricKeyIv: protectedKey.blobIv,
@@ -257,30 +265,9 @@ export function UnlockScreen({
   }
 
   async function performLogin(keys: Awaited<ReturnType<typeof stretchMasterKey>>): Promise<string> {
-    const emailHash = computeEmailHash(email);
-    const step1 = srpStep1();
-
-    const initResp = await apiClient.auth.srpInit({
-      emailHash,
-      clientPublicA: step1.clientPublicA,
-    });
-
-    const step2 = srpStep2(
-      email,
-      password,
-      initResp.srpSalt,
-      initResp.serverPublicB,
-      step1.privateSession,
-    );
-
-    const verifyResp = await apiClient.auth.srpVerify({
-      sessionId: initResp.sessionId,
-      clientProofM1: step2.clientProofM1,
-    });
-
-    step2.verifyServerProof(verifyResp.serverProofM2);
-    setSession(verifyResp, email, keys);
-    return verifyResp.sessionToken;
+    const auth = await loginWithPassword(apiClient.auth, { email, password });
+    setSession(auth, email, keys);
+    return auth.sessionToken;
   }
 
   /** Wraps the vault keys under a fresh recovery code and uploads the blob. */

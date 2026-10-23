@@ -5,12 +5,10 @@ import { Badge, Banner, Button, Dialog, Field, IconButton, SecretText, useNopass
 import { X } from "lucide-react";
 import { PageShell } from "@/components/vault/PageShell";
 import {
-  computeEmailHash,
   deriveMasterKey,
   deriveRecoveryKeys,
   generateRecoveryCode,
-  srpStep1,
-  srpStep2,
+  loginWithPassword,
   stretchMasterKeyAllRaw,
   wrapVaultSubkeys,
 } from "@nopass/crypto";
@@ -77,19 +75,9 @@ export default function RecoveryPage() {
       // one before uploading a blob a future recovery would depend on.
       const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
 
-      const step1 = srpStep1();
-      const initResp = await api.auth.srpInit({
-        emailHash: computeEmailHash(email),
-        clientPublicA: step1.clientPublicA,
-      });
-      const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-      const verifyResp = await api.auth.srpVerify({
-        sessionId: initResp.sessionId,
-        clientProofM1: step2.clientProofM1,
-      });
-      step2.verifyServerProof(verifyResp.serverProofM2);
+      const check = await loginWithPassword(api.auth, { email, password });
       // The check above opened a session we don't need — close it
-      api.auth.logout(verifyResp.sessionToken).catch(() => {});
+      api.auth.logout(check.sessionToken).catch(() => {});
 
       subkeys = await stretchMasterKeyAllRaw(masterKey, email);
       const newCode = generateRecoveryCode();

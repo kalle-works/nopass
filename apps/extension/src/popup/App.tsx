@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ExternalLink, Plus, Search } from "lucide-react";
-import { deriveMasterKey, stretchMasterKeyRaw, srpStep1, srpStep2, computeEmailHash } from "@nopass/crypto";
+import { deriveMasterKey, loginWithPassword, stretchMasterKeyRaw } from "@nopass/crypto";
 import { Banner, Button, EmptyState, Field, Kbd, Spinner, createApiClient } from "@nopass/ui";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import { bytesToBase64 } from "../lib/base64";
@@ -210,20 +210,12 @@ export function App() {
       const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
       const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
 
-      const emailHash = computeEmailHash(email);
-      const step1 = srpStep1();
-      const initResp = await api.auth.srpInit({ emailHash, clientPublicA: step1.clientPublicA });
-      const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-      const verifyResp = await api.auth.srpVerify({
-        sessionId: initResp.sessionId,
-        clientProofM1: step2.clientProofM1,
-      });
-      step2.verifyServerProof(verifyResp.serverProofM2);
+      const auth = await loginWithPassword(api.auth, { email, password });
 
       const resp = await sendMessage<{ ok?: boolean; error?: string }>({
         type: "UNLOCK",
-        sessionToken: verifyResp.sessionToken,
-        defaultVaultId: verifyResp.defaultVaultId,
+        sessionToken: auth.sessionToken,
+        defaultVaultId: auth.defaultVaultId,
         vaultEncKeyB64: bytesToBase64(encKeyBytes),
         vaultMacKeyB64: bytesToBase64(macKeyBytes),
       });

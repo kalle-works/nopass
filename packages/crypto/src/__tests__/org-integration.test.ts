@@ -4,18 +4,18 @@ import {
   computeEmailHash,
   deriveMasterKey,
   stretchMasterKey,
-  srpStep1,
-  srpStep2,
+  createOpaqueRegistration,
+  loginWithPassword,
   generateUserKeyPair,
   generateOrgKey,
   encryptOrgKeyForMember,
   decryptOrgKey,
   decryptUserPrivateKey,
-  generateSrpRegistration,
   stretchMasterKeyRaw,
   encryptBytes,
 } from "../index.js";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
+import { liveAuthApi } from "./support/live-api";
 
 const BASE = "http://127.0.0.1:3001/v1";
 
@@ -35,20 +35,24 @@ async function apiGet(path: string, token: string) {
   return JSON.parse(text);
 }
 
+const auth = liveAuthApi((_method, path, body, token) => apiPost(path, body, token));
+
 async function registerAndLogin(email: string, password: string) {
   const kdfParams = DEFAULT_KDF_PARAMS;
   const masterKey = await deriveMasterKey(password, email, kdfParams);
   const keys = await stretchMasterKey(masterKey, email);
   const { encKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-  const { srpSalt, srpVerifier } = generateSrpRegistration(email, password);
+  const emailHash = computeEmailHash(email);
+  const registrationRecord = await createOpaqueRegistration(password, kdfParams, (registrationRequest) =>
+    auth.opaqueRegisterStart({ emailHash, registrationRequest }),
+  );
   const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
   encKeyBytes.fill(0);
   const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-  await apiPost("/auth/register", {
-    emailHash: computeEmailHash(email),
-    srpSalt,
-    srpVerifier,
+  await auth.opaqueRegisterFinish({
+    emailHash,
+    registrationRecord,
     kdfParams,
     protectedSymmetricKey: protectedKey.blob,
     protectedSymmetricKeyIv: protectedKey.blobIv,
@@ -57,19 +61,8 @@ async function registerAndLogin(email: string, password: string) {
     protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
   });
 
-  const step1 = srpStep1();
-  const initResp = await apiPost("/auth/srp/init", {
-    emailHash: computeEmailHash(email),
-    clientPublicA: step1.clientPublicA,
-  });
-  const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-  const verifyResp = await apiPost("/auth/srp/verify", {
-    sessionId: initResp.sessionId,
-    clientProofM1: step2.clientProofM1,
-  });
-  step2.verifyServerProof(verifyResp.serverProofM2);
-
-  return { token: verifyResp.sessionToken as string, keys, keyPair };
+  const session = await loginWithPassword(auth, { email, password });
+  return { token: session.sessionToken, keys, keyPair };
 }
 
 const timestamp = Date.now();

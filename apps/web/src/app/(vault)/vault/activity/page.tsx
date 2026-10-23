@@ -11,6 +11,7 @@ import { DataTable, PageShell, RelativeTime, TBODY, TD, TH } from "@/components/
 const EVENT_LABELS: Record<string, { label: string; review?: boolean }> = {
   login_succeeded: { label: "Signed in" },
   login_failed: { label: "Failed sign-in attempt", review: true },
+  login_upgraded: { label: "Upgraded sign-in protection" },
   recovery_kit_created: { label: "Created recovery kit" },
   recovery_kit_disabled: { label: "Disabled recovery", review: true },
   recovery_initiated: { label: "Used recovery code", review: true },

@@ -7,8 +7,8 @@ import {
   deriveRecoveryKeys,
   encryptBytes,
   encryptItem,
+  createOpaqueRegistration,
   generateRecoveryCode,
-  generateSrpRegistration,
   stretchMasterKey,
   stretchMasterKeyAllRaw,
   unwrapVaultSubkeys,
@@ -73,7 +73,13 @@ export const recoverCommand = new Command("recover")
       const newMasterKey = await deriveMasterKey(newPassword, email, DEFAULT_KDF_PARAMS);
       const newKeys = await stretchMasterKey(newMasterKey, email);
       const newRaw = await stretchMasterKeyAllRaw(newMasterKey, email);
-      const { srpSalt, srpVerifier } = generateSrpRegistration(email, newPassword);
+      const registrationRecord = await createOpaqueRegistration(newPassword, DEFAULT_KDF_PARAMS, (registrationRequest) =>
+        api.auth.recoveryOpaqueStart({
+          recoveryToken: init.recoveryToken,
+          emailHash: computeEmailHash(email),
+          registrationRequest,
+        }),
+      );
 
       process.stderr.write("Re-encrypting vault…\n");
       const items: ReencryptedItem[] = [];
@@ -116,8 +122,7 @@ export const recoverCommand = new Command("recover")
 
       await api.auth.recoveryComplete({
         recoveryToken: init.recoveryToken,
-        srpSalt,
-        srpVerifier,
+        registrationRecord,
         protectedSymmetricKey: protectedKey.blob,
         protectedSymmetricKeyIv: protectedKey.blobIv,
         ...(protectedPrivateKey && protectedPrivateKeyIv

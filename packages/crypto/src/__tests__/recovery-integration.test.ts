@@ -6,9 +6,8 @@ import {
   stretchMasterKey,
   stretchMasterKeyRaw,
   stretchMasterKeyAllRaw,
-  srpStep1,
-  srpStep2,
-  generateSrpRegistration,
+  createOpaqueRegistration,
+  loginWithPassword,
   generateUserKeyPair,
   decryptUserPrivateKey,
   encryptBytes,
@@ -20,6 +19,7 @@ import {
   unwrapVaultSubkeys,
 } from "../index.js";
 import { DEFAULT_KDF_PARAMS, type LoginItem } from "@nopass/types";
+import { liveAuthApi } from "./support/live-api";
 
 const BASE = "http://127.0.0.1:3001/v1";
 
@@ -36,18 +36,22 @@ async function apiCall(method: string, path: string, body?: unknown, token?: str
   return text ? JSON.parse(text) : null;
 }
 
+const auth = liveAuthApi(apiCall);
+
 async function register(email: string, password: string) {
   const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
   const keys = await stretchMasterKey(masterKey, email);
   const { encKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-  const { srpSalt, srpVerifier } = generateSrpRegistration(email, password);
+  const emailHash = computeEmailHash(email);
+  const registrationRecord = await createOpaqueRegistration(password, DEFAULT_KDF_PARAMS, (registrationRequest) =>
+    auth.opaqueRegisterStart({ emailHash, registrationRequest }),
+  );
   const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
   const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-  await apiCall("POST", "/auth/register", {
-    emailHash: computeEmailHash(email),
-    srpSalt,
-    srpVerifier,
+  await auth.opaqueRegisterFinish({
+    emailHash,
+    registrationRecord,
     kdfParams: DEFAULT_KDF_PARAMS,
     protectedSymmetricKey: protectedKey.blob,
     protectedSymmetricKeyIv: protectedKey.blobIv,
@@ -62,18 +66,8 @@ async function register(email: string, password: string) {
 async function login(email: string, password: string) {
   const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
   const keys = await stretchMasterKey(masterKey, email);
-  const step1 = srpStep1();
-  const initResp = await apiCall("POST", "/auth/srp/init", {
-    emailHash: computeEmailHash(email),
-    clientPublicA: step1.clientPublicA,
-  });
-  const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-  const verifyResp = await apiCall("POST", "/auth/srp/verify", {
-    sessionId: initResp.sessionId,
-    clientProofM1: step2.clientProofM1,
-  });
-  step2.verifyServerProof(verifyResp.serverProofM2);
-  return { keys, token: verifyResp.sessionToken as string, vaultId: verifyResp.defaultVaultId as string, verifyResp };
+  const verifyResp = await loginWithPassword(auth, { email, password });
+  return { keys, token: verifyResp.sessionToken, vaultId: verifyResp.defaultVaultId, verifyResp };
 }
 
 const EMAIL = `recovery-${Date.now()}@nopass.test`;
@@ -161,7 +155,13 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
     const newMasterKey = await deriveMasterKey(NEW_PASSWORD, EMAIL, DEFAULT_KDF_PARAMS);
     const newKeys = await stretchMasterKey(newMasterKey, EMAIL);
     const newRaw = await stretchMasterKeyAllRaw(newMasterKey, EMAIL);
-    const { srpSalt, srpVerifier } = generateSrpRegistration(EMAIL, NEW_PASSWORD);
+    const registrationRecord = await createOpaqueRegistration(NEW_PASSWORD, DEFAULT_KDF_PARAMS, (registrationRequest) =>
+      apiCall("POST", "/auth/recovery/opaque/start", {
+        recoveryToken: init.recoveryToken,
+        emailHash: computeEmailHash(EMAIL),
+        registrationRequest,
+      }),
+    );
     const reencrypted = await encryptItem(recovered, newKeys.vaultEncKey, newKeys.vaultMacKey);
     const protectedKey = await encryptBytes(newRaw.encKeyBytes, newKeys.stretchedMasterKey);
 
@@ -178,8 +178,7 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
 
     await apiCall("POST", "/auth/recovery/complete", {
       recoveryToken: init.recoveryToken,
-      srpSalt,
-      srpVerifier,
+      registrationRecord,
       protectedSymmetricKey: protectedKey.blob,
       protectedSymmetricKeyIv: protectedKey.blobIv,
       protectedPrivateKey: rewrappedPrivate.blob,
@@ -210,8 +209,8 @@ describe.skipIf(!apiAvailable)("Recovery kit — end-to-end", () => {
 
     // The re-wrapped org keypair opens under the new stretched master key too
     const privateKey = await decryptUserPrivateKey(
-      verifyResp.protectedPrivateKey,
-      verifyResp.protectedPrivateKeyIv,
+      verifyResp.protectedPrivateKey!,
+      verifyResp.protectedPrivateKeyIv!,
       keys.stretchedMasterKey,
     );
     expect(privateKey.type).toBe("private");

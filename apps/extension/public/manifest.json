@@ -35,7 +35,7 @@
     "default_title": "nopwd"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none';"
   },
   "icons": {
     "16": "icons/16.png",

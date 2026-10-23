@@ -20,10 +20,14 @@ const SERVER_STORES: Row[] = [
   { term: "Encrypted items", detail: "AES-256-GCM ciphertext, one blob per item, with an HMAC-SHA256 tag." },
   { term: "Wrapped vault key", detail: "Your vault key, encrypted under a key derived from your master password." },
   {
-    term: "SRP salt and verifier",
-    detail: "Lets the server check a SRP-6a login proof without learning the password.",
+    term: "OPAQUE registration record",
+    detail:
+      "Lets the server check an OPAQUE (RFC 9807) login without learning the password. A copy of it is no help for guessing the password.",
   },
-  { term: "Email hash", detail: "A SHA-256 hash of your email is the account lookup key." },
+  {
+    term: "Email hash",
+    detail: "A SHA-256 hash of your email, keyed again with a server secret, is the account lookup key.",
+  },
   {
     term: "Recovery blob",
     detail: "Vault keys encrypted under the recovery code, and a hash of the code's auth key.",
@@ -74,8 +78,9 @@ export function Security() {
         <div>
           <h3 className="text-h3 font-semibold text-fg">If your master password is weak</h3>
           <p className="mt-1 text-ui text-muted">
-            Someone with a copy of the database can guess offline. Argon2id slows that down but doesn&apos;t stop it.
-            Registration requires a password rated Strong.
+            Someone with a copy of the database who knows your email can test guesses against your wrapped vault
+            key. Each guess costs a full Argon2id run, which slows them down but doesn&apos;t stop them. Registration
+            requires a password rated Strong.
           </p>
         </div>
         <div>
