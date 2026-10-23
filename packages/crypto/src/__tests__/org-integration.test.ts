@@ -203,6 +203,7 @@ describe.skipIf(!apiAvailable)("Organization API — end-to-end", () => {
     const wrapSignature = signOrgKeyWrap(
       {
         orgId,
+        epoch: 1,
         recipientUserId: pkResp.userId as string,
         signerUserId: aliceUserId,
         role: "member",
@@ -217,6 +218,7 @@ describe.skipIf(!apiAvailable)("Organization API — end-to-end", () => {
       role: "member",
       encryptedOrgKey: encKeyForBob,
       wrapSignature,
+      keyEpoch: 1,
     }, aliceToken);
 
     // Bob accepts
