@@ -14,7 +14,10 @@ import {
   type OrgEpochStore,
   MemoryRevisionStore,
   type RevisionSnapshot,
+  type TrustIndex,
   applyV2OnlyMarker,
+  ownLegacyKeys,
+  recordLegacyIds,
   trustStateId,
   v2OnlyMarker,
 } from "@nopass/crypto";
@@ -40,29 +43,40 @@ function writeJson(key: string, value: unknown): void {
   }
 }
 
+const TRUST_INDEX_KEY = "nopass:trust-index";
+
+/** Ids the server gave this account at unlock, as legacy record names to claim. */
+export interface AccountIds {
+  vaultId?: string | null;
+  userId?: string | null;
+}
+
 /**
  * Before trust state was keyed by the account key it lived under ids the
  * server supplied: `nopass:item-revisions:<defaultVaultId>` and
- * `nopass:key-pins:<userId>`. Their key names are the only local record of
- * which account they belonged to. If this browser holds exactly one such
- * record, it belongs to the account that used this device before the
- * upgrade, and is folded into the new store and removed. With several (more
- * than one account on this browser) there is no local way to tell which is
- * ours, so they are left alone rather than guessed from server data.
+ * `nopass:key-pins:<userId>`. Each unlock records, locally, which of those
+ * ids belong to this account (see trust-index). Only legacy records whose id
+ * this account recorded, and no other account on this browser did, are
+ * folded into the new store and removed; everything else stays in place for
+ * its own account.
  */
-function takeLegacyRecord<T>(prefix: string, current: string): T | null {
-  if (typeof localStorage === "undefined") return null;
-  const legacy: string[] = [];
+function takeLegacyRecords<T>(prefix: string, trustId: string, accountIds?: AccountIds): T[] {
+  if (typeof localStorage === "undefined") return [];
+  let index = readJson<TrustIndex>(TRUST_INDEX_KEY, {});
+  if (accountIds) {
+    index = recordLegacyIds(index, trustId, [accountIds.vaultId, accountIds.userId]);
+    writeJson(TRUST_INDEX_KEY, index);
+  }
+  const keys: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && key.startsWith(prefix) && !key.startsWith(current) && !key.slice(prefix.length).includes(":")) {
-      legacy.push(key);
-    }
+    if (key) keys.push(key);
   }
-  if (legacy.length !== 1) return null;
-  const value = readJson<T | null>(legacy[0]!, null);
-  localStorage.removeItem(legacy[0]!);
-  return value;
+  return ownLegacyKeys(index, trustId, keys, prefix).map((key) => {
+    const value = readJson<T>(key, {} as T);
+    localStorage.removeItem(key);
+    return value;
+  });
 }
 
 /**
@@ -74,14 +88,17 @@ export async function openRevisionStore(
   vaultMacKey: CryptoKey,
   api?: Pick<ApiClient, "keys">,
   token?: string,
+  accountIds?: AccountIds,
 ): Promise<MemoryRevisionStore> {
-  const key = `nopass:item-revisions:v2:${await trustStateId(vaultMacKey)}`;
+  const trustId = await trustStateId(vaultMacKey);
+  const key = `nopass:item-revisions:v2:${trustId}`;
   const store = new MemoryRevisionStore(readJson<Partial<RevisionSnapshot>>(key, {}), (snapshot) =>
     writeJson(key, snapshot),
   );
   // record() keeps the higher of the two, so merging is a max per item
-  const legacy = takeLegacyRecord<Record<string, number>>("nopass:item-revisions:", "nopass:item-revisions:v2:");
-  for (const [itemId, revision] of Object.entries(legacy ?? {})) store.record(itemId, revision);
+  for (const legacy of takeLegacyRecords<Record<string, number>>("nopass:item-revisions:", trustId, accountIds)) {
+    for (const [itemId, revision] of Object.entries(legacy)) store.record(itemId, revision);
+  }
   if (api && token) {
     try {
       const { marker } = await api.keys.vaultFormat(token);
@@ -105,15 +122,16 @@ export async function publishV2Only(
 }
 
 /** Identity keys this account has pinned for other users, keyed by user id. */
-export async function openKeyPinStore(vaultMacKey: CryptoKey): Promise<KeyPinStore> {
-  const key = `nopass:key-pins:v2:${await trustStateId(vaultMacKey)}`;
+export async function openKeyPinStore(vaultMacKey: CryptoKey, accountIds?: AccountIds): Promise<KeyPinStore> {
+  const trustId = await trustStateId(vaultMacKey);
+  const key = `nopass:key-pins:v2:${trustId}`;
   const pins = readJson<Record<string, string>>(key, {});
   // Union; a pin already in the new store wins over an older one
-  const legacy = takeLegacyRecord<Record<string, string>>("nopass:key-pins:", "nopass:key-pins:v2:");
-  if (legacy) {
-    for (const [userId, identityKey] of Object.entries(legacy)) pins[userId] ??= identityKey;
-    writeJson(key, pins);
+  const legacy = takeLegacyRecords<Record<string, string>>("nopass:key-pins:", trustId, accountIds);
+  for (const record of legacy) {
+    for (const [userId, identityKey] of Object.entries(record)) pins[userId] ??= identityKey;
   }
+  if (legacy.length > 0) writeJson(key, pins);
   return {
     get: (userId) => pins[userId],
     set: (userId, identityPublicKeyB64) => {

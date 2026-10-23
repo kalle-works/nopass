@@ -35,6 +35,7 @@ import {
   buildRotation,
   checkOrgKey,
   openOrgKey,
+  recordVerifiedOrgItems,
   type OrgKeyCheck,
   type RotationPlan,
 } from "../lib/org-trust";
@@ -104,6 +105,8 @@ interface TrustStores {
 interface RotationState {
   removeUserId: string | null;
   dropItemIds: string[];
+  /** Ledger entries the owner acknowledged as gone */
+  acknowledgedGone: { items: string[]; members: string[] };
   plan?: RotationPlan;
   issue?:
     | { kind: "missing"; items: string[]; members: string[] }
@@ -172,7 +175,8 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   // Bumped after the user confirms keys, so derived key statuses recompute
   const [pinVersion, setPinVersion] = useState(0);
 
-  const { userId, vaultMacKey, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
+  const { userId, defaultVaultId, vaultMacKey, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } =
+    useNopassStore();
   const memberKeys = useMemo(
     () =>
       new Map(selectedOrg?.members.map((m) => [m.userId, memberKeyStatus(m, userId, trust?.pins ?? null)]) ?? []),
@@ -185,10 +189,10 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     if (!vaultMacKey) return;
     let cancelled = false;
     Promise.all([
-      openKeyPinStore(vaultMacKey),
+      openKeyPinStore(vaultMacKey, { vaultId: defaultVaultId, userId }),
       openOrgEpochStore(vaultMacKey),
       openOrgLedger(vaultMacKey),
-      openRevisionStore(vaultMacKey, apiClient, sessionToken),
+      openRevisionStore(vaultMacKey, apiClient, sessionToken, { vaultId: defaultVaultId, userId }),
     ]).then(([pins, epochs, ledger, revisions]) => {
       if (!cancelled) setTrust({ pins, epochs, ledger, revisions });
     });
@@ -269,8 +273,21 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       setSelectedOrg(details);
       setOrgCheck(check);
       onOrgVaultKeyChange?.(orgId, orgKey);
-      // Members seen in a verified org; a later rotation that lacks one is refused
-      if (check.status === "ok") trust.ledger.remember(orgId, { members: details.members.map((m) => m.userId) });
+      // Members and items seen in a verified org; a later rotation that lacks one is refused
+      if (check.status === "ok" && orgKey) {
+        trust.ledger.remember(orgId, { members: details.members.map((m) => m.userId) });
+        const items = await apiClient.orgs.items(orgId, sessionToken);
+        const { failed } = await recordVerifiedOrgItems(
+          orgId,
+          items,
+          { current: orgKey, retired: [] },
+          trust.revisions,
+          trust.ledger,
+        );
+        if (failed.length > 0) {
+          setError(`${failed.length} item(s) in this organization could not be verified and are not shown.`);
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load org");
     } finally {
@@ -462,7 +479,11 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
    * item re-encrypted, a signed wrap per remaining member) without sending
    * it, or find out what blocks it. Nothing changes until commitRotation.
    */
-  async function prepareRotation(removeUserId: string | null, dropItemIds: string[] = []) {
+  async function prepareRotation(
+    removeUserId: string | null,
+    dropItemIds: string[] = [],
+    acknowledgedGone: { items: string[]; members: string[] } = { items: [], members: [] },
+  ) {
     if (!selectedOrg || orgCheck?.status !== "ok" || !trust || !userId) return;
     if (!stretchedMasterKey || !protectedPrivateKey || !protectedPrivateKeyIv) {
       setError("No private key found. Please re-login.");
@@ -472,7 +493,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     setError(null);
     setMemberToRemove(null);
     setRotateOpen(false);
-    const base = { removeUserId, dropItemIds };
+    const base = { removeUserId, dropItemIds, acknowledgedGone };
     try {
       const oldKey = await decryptOwnOrgKey(orgCheck.wrap.encryptedOrgKey);
       const items = await apiClient.orgs.items(selectedOrg.id, sessionToken);
@@ -486,6 +507,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
         removeUserId,
         known: trust.ledger.get(selectedOrg.id),
         dropItemIds,
+        acknowledgedGone,
         pins: trust.pins,
         revisions: trust.revisions,
         identity: { protectedPrivateKey, protectedPrivateKeyIv, stretchedMasterKey },
@@ -521,7 +543,10 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
         sessionToken,
       );
       for (const [itemId, revision] of plan.revisions) trust.revisions.record(itemId, revision);
-      trust.ledger.forget(selectedOrg.id, { items: dropItemIds, members: plan.losesAccess });
+      trust.ledger.forget(selectedOrg.id, {
+        items: [...dropItemIds, ...plan.acknowledgedGone.items],
+        members: [...plan.losesAccess, ...plan.acknowledgedGone.members],
+      });
       trust.ledger.remember(selectedOrg.id, {
         items: plan.request.items.map((i) => i.id),
         members: plan.keepsAccess,
@@ -958,7 +983,11 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
                 variant="danger"
                 onClick={() =>
                   rotation.issue?.kind === "undecryptable" &&
-                  prepareRotation(rotation.removeUserId, [...rotation.dropItemIds, ...rotation.issue.itemIds])
+                  prepareRotation(
+                    rotation.removeUserId,
+                    [...rotation.dropItemIds, ...rotation.issue.itemIds],
+                    rotation.acknowledgedGone,
+                  )
                 }
                 pending={saving}
               >
@@ -970,12 +999,15 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
                 variant="danger"
                 onClick={() => {
                   if (!selectedOrg || !trust || rotation.issue?.kind !== "missing") return;
-                  trust.ledger.forget(selectedOrg.id, { items: rotation.issue.items, members: rotation.issue.members });
-                  void prepareRotation(rotation.removeUserId, rotation.dropItemIds);
+                  // Nothing is forgotten yet: the acknowledgement only takes effect if the rotation goes through
+                  void prepareRotation(rotation.removeUserId, rotation.dropItemIds, {
+                    items: [...rotation.acknowledgedGone.items, ...rotation.issue.items],
+                    members: [...rotation.acknowledgedGone.members, ...rotation.issue.members],
+                  });
                 }}
                 pending={saving}
               >
-                They were removed elsewhere — continue
+                They're gone — continue
               </Button>
             )}
           </>
@@ -991,6 +1023,16 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
             <p>
               Keeps access ({rotation.plan.keepsAccess.length}): {rotation.plan.keepsAccess.map(memberLabel).join(", ")}
             </p>
+            {(rotation.plan.acknowledgedGone.members.length > 0 || rotation.plan.acknowledgedGone.items.length > 0) && (
+              <p>
+                You confirmed as gone (not in the server's lists any more):
+                {rotation.plan.acknowledgedGone.members.length > 0 &&
+                  ` members ${rotation.plan.acknowledgedGone.members.map(memberLabel).join(", ")}`}
+                {rotation.plan.acknowledgedGone.items.length > 0 &&
+                  ` items ${rotation.plan.acknowledgedGone.items.map((i) => `${i.slice(0, 8)}…`).join(", ")}`}
+                .
+              </p>
+            )}
             <p>
               {rotation.plan.request.items.length} item{rotation.plan.request.items.length === 1 ? "" : "s"} re-encrypted
               {rotation.plan.request.deleteItemIds?.length
@@ -1005,7 +1047,8 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
             The server's lists are missing what this device has seen before:
             {rotation.issue.members.length > 0 && ` members ${rotation.issue.members.map(memberLabel).join(", ")}`}
             {rotation.issue.items.length > 0 && ` items ${rotation.issue.items.map((i) => `${i.slice(0, 8)}…`).join(", ")}`}.
-            Rotating now would leave them out. Continue only if you removed them yourself on another device.
+            Rotating now would leave them out. Continue only if you know they are gone: removed on another device, an
+            account that was deleted, or an invite that was declined or expired.
           </p>
         )}
         {rotation?.issue?.kind === "undecryptable" && (

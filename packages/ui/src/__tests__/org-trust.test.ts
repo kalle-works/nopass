@@ -26,6 +26,7 @@ import {
   checkOrgKey,
   decryptOrgItem,
   openOrgKey,
+  recordVerifiedOrgItems,
 } from "../lib/org-trust";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -178,6 +179,7 @@ describe("buildRotation", () => {
       removeUserId: null,
       known: { items: [], members: [] },
       dropItemIds: [],
+      acknowledgedGone: { items: [], members: [] },
       pins,
       revisions: new MemoryRevisionStore(),
       identity,
@@ -321,6 +323,27 @@ describe("buildRotation", () => {
     ).rejects.toBeInstanceOf(RotationSetIncompleteError);
   });
 
+  it("lets the owner acknowledge members and items that are gone, and reports them for the confirm step", async () => {
+    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+    const GONE_ITEM = "77777777-7777-4777-8777-777777777777";
+    const base = {
+      ...rotationBase(oldKey, identity, pins),
+      items: [item],
+      members: [owner.member("owner"), bob.member("member")],
+      known: { items: [ITEM, GONE_ITEM], members: [OWNER, BOB, CAROL] },
+    };
+
+    await expect(buildRotation(base)).rejects.toBeInstanceOf(RotationSetIncompleteError);
+    // Acknowledging only some of it is not enough
+    await expect(
+      buildRotation({ ...base, acknowledgedGone: { items: [], members: [CAROL] } }),
+    ).rejects.toBeInstanceOf(RotationSetIncompleteError);
+
+    const plan = await buildRotation({ ...base, acknowledgedGone: { items: [GONE_ITEM], members: [CAROL] } });
+    expect(plan.acknowledgedGone).toEqual({ items: [GONE_ITEM], members: [CAROL] });
+    expect(plan.keepsAccess.sort()).toEqual([OWNER, BOB].sort());
+  });
+
   it("stops on an item it cannot decrypt (including a rolled-back one) until the owner chooses to delete it", async () => {
     const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
     const revisions = new MemoryRevisionStore({ revisions: { [ITEM]: 9 } }); // the server replays revision 4
@@ -335,6 +358,28 @@ describe("buildRotation", () => {
     const plan = await buildRotation({ ...base, dropItemIds: [ITEM] });
     expect(plan.request.items).toEqual([]);
     expect(plan.request.deleteItemIds).toEqual([ITEM]);
+  });
+
+  it("remembers verified org items on every load, so a later rotation notices one the server drops", async () => {
+    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+    const tampered = { ...item, id: "88888888-8888-4888-8888-888888888888", blob: item.blob.slice(0, -4) + "AAAA" };
+    const seen: Record<string, string[]> = {};
+    const ledger = {
+      remember: (orgId: string, s: { items?: string[] }) => void (seen[orgId] = [...(seen[orgId] ?? []), ...(s.items ?? [])]),
+    };
+
+    const result = await recordVerifiedOrgItems(ORG, [item, tampered], { current: oldKey, retired: [] }, new MemoryRevisionStore(), ledger);
+    expect(result.failed).toEqual([tampered.id]);
+    expect(seen[ORG]).toEqual([ITEM]);
+
+    await expect(
+      buildRotation({
+        ...rotationBase(oldKey, identity, pins),
+        items: [],
+        members: [owner.member("owner"), bob.member("member")],
+        known: { items: seen[ORG]!, members: [] },
+      }),
+    ).rejects.toBeInstanceOf(RotationSetIncompleteError);
   });
 
   it("reads items written before a rotation with a retired key, but prefers the current one", async () => {

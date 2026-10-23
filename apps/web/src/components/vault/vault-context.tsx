@@ -338,13 +338,13 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!vaultMacKey || !sessionToken) return;
     let cancelled = false;
-    openRevisionStore(vaultMacKey, api, sessionToken).then((store) => {
+    openRevisionStore(vaultMacKey, api, sessionToken, { vaultId: defaultVaultId, userId }).then((store) => {
       if (!cancelled) setRevisions(store);
     });
     return () => {
       cancelled = true;
     };
-  }, [vaultMacKey, sessionToken]);
+  }, [vaultMacKey, sessionToken, defaultVaultId, userId]);
 
   // One background pass per unlock re-encrypts items still in the v1 format,
   // trash included, so they gain id/type/revision binding without waiting for
