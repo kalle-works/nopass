@@ -58,13 +58,17 @@ pub struct OrgSummaryResponse {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct OrgMemberResponse {
     pub user_id: Uuid,
     pub role: String,
     pub status: String,
     pub joined_at: Option<DateTime<Utc>>,
+    /// Key bundle, so members can verify each other's keys client-side
+    pub public_key: Option<String>,
+    pub identity_public_key: Option<String>,
+    pub public_key_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,4 +88,15 @@ pub struct OrgDetailsResponse {
 pub struct PublicKeyResponse {
     pub user_id: Uuid,
     pub public_key: String,
+    /// base64 Ed25519 key; None until the user's client has migrated
+    pub identity_public_key: Option<String>,
+    /// base64 Ed25519 signature over the key bundle
+    pub public_key_signature: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetIdentityBody {
+    pub identity_public_key: String,
+    pub public_key_signature: String,
 }

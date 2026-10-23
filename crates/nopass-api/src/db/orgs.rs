@@ -83,22 +83,18 @@ pub async fn get_org(pool: &PgPool, org_id: Uuid) -> Result<Option<Organization>
 }
 
 pub async fn list_members(pool: &PgPool, org_id: Uuid) -> Result<Vec<OrgMemberResponse>> {
-    let rows = sqlx::query_as::<_, OrgMember>(
-        "SELECT * FROM organization_members WHERE org_id = $1 ORDER BY created_at",
+    let rows = sqlx::query_as::<_, OrgMemberResponse>(
+        r#"SELECT m.user_id, m.role, m.status, m.joined_at,
+                  u.public_key, u.identity_public_key, u.public_key_signature
+           FROM organization_members m
+           JOIN users u ON u.id = m.user_id
+           WHERE m.org_id = $1
+           ORDER BY m.created_at"#,
     )
     .bind(org_id)
     .fetch_all(pool)
     .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|m| OrgMemberResponse {
-            user_id: m.user_id,
-            role: m.role,
-            status: m.status,
-            joined_at: m.joined_at,
-        })
-        .collect())
+    Ok(rows)
 }
 
 pub async fn invite_member(

@@ -7,7 +7,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, orgs as db_orgs, subscriptions as db_subs},
+    db::{auth as db_auth, keys as db_keys, orgs as db_orgs, subscriptions as db_subs},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     models::org::{
@@ -212,10 +212,14 @@ async fn get_public_key(
     Extension(_auth): Extension<AuthUser>,
     Path(email_hash): Path<String>,
 ) -> ApiResult<Json<PublicKeyResponse>> {
-    let (user_id, public_key) =
-        db_auth::get_public_key_by_email_hash(&state.db, &email_hash)
-            .await?
-            .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
+    let bundle = db_keys::get_bundle_by_email_hash(&state.db, &email_hash)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
 
-    Ok(Json(PublicKeyResponse { user_id, public_key }))
+    Ok(Json(PublicKeyResponse {
+        user_id: bundle.user_id,
+        public_key: bundle.public_key,
+        identity_public_key: bundle.identity_public_key,
+        public_key_signature: bundle.public_key_signature,
+    }))
 }
