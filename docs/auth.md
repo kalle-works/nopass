@@ -54,15 +54,37 @@ marketing copy says exactly this.
 | `POST /v1/auth/opaque/register/start`, `/finish` | New account |
 | `POST /v1/auth/opaque/login/start`, `/finish` | Login |
 | `POST /v1/auth/opaque/reregister/start`, `/finish` (session) | SRP → OPAQUE migration |
+| `POST /v1/auth/password/start`, `/finish` (session) | Change the master password |
 | `POST /v1/auth/recovery/opaque/start` | New credential during recovery; the record is sent with `recovery/complete` |
 | `POST /v1/auth/srp/init`, `/verify` | Legacy, only for accounts not yet migrated |
 | `POST /v1/auth/register` | Returns 410; SRP registration is gone |
 
 Re-registration only works for an account that still has an SRP verifier, and
 only from a session created in the last 10 minutes. Otherwise a stolen session
-token could be used to replace the login credential. There is no password
-change endpoint: a new password means re-encrypting the vault, and today only
-recovery does that.
+token could be used to replace the login credential.
+
+## Changing the master password
+
+A session token alone can't change the password. `password/start` runs a
+full OPAQUE login for the current password next to a registration for the new
+one, and `password/finish` only goes ahead if that login proof checks out.
+Starts count against the per-account throttle like any login.
+
+Vault items are encrypted directly under keys derived from the master
+password, so the keys can't simply be re-wrapped: the client decrypts and
+re-encrypts every item (tombstones included) and re-wraps the vault key and
+the org private key. In one transaction, `finish` then:
+
+- stores the new OPAQUE record,
+- swaps in the re-encrypted items, after checking that no item was left
+  under the old keys,
+- clears the recovery kit, which wrapped the old keys,
+- revokes every session except the one making the change.
+
+Web: Settings → Master password. CLI: `nopwd passwd`, which also writes the
+new vault keys into the local session file. The desktop app has no settings
+screen, so it has no password change; its users can change the password on
+the web.
 
 ## Migrating SRP accounts
 
@@ -84,22 +106,33 @@ migrates on its next login.
 
 ### Removing SRP
 
-Removal is safe once no account has an SRP verifier, or once the remaining
-accounts are judged abandoned. To check the remaining count:
+Track two numbers, weekly from release:
 
 ```sql
-SELECT COUNT(*) FROM users WHERE srp_verifier IS NOT NULL;
+-- Unmigrated accounts: still on SRP
+SELECT COUNT(*) AS unmigrated,
+       COUNT(*) FILTER (WHERE recovery_auth_hash IS NULL) AS unmigrated_without_kit
+FROM users WHERE srp_verifier IS NOT NULL;
 ```
 
-Plan:
+plus the count of `event="srp_migrated"` log lines per week.
 
-1. Ship this release and its clients. Watch the count and the `srp_migrated`
-   log events.
-2. Six months after release, or once the count stops falling: anyone still on
-   SRP has not logged in since then. Accounts with a recovery kit can still get
-   back in with it (recovery then sets an OPAQUE record). For accounts without
-   one, removing SRP locks them out for good. That is a product decision to
-   make with the count in hand.
+SRP goes when **both** of these hold:
+
+1. At least 90 days have passed since the release, and the last 4 weeks saw
+   no `srp_migrated` events. Every account that is still in use has migrated
+   by then, because any login upgrades it.
+2. `unmigrated_without_kit` has been reviewed and the product owner accepts
+   locking those accounts out. Accounts with a kit can still get in through
+   recovery, which sets an OPAQUE record.
+
+Whichever comes later sets the date, and in any case no later than 12 months
+after the release: by then every remaining account has gone a year without a
+login. Steps:
+
+1. Ship this release and its clients.
+2. Once the criteria hold, announce the date in the app and by changelog
+   30 days ahead.
 3. Remove `/v1/auth/srp/*`, the SRP fallback in `packages/crypto/src/password-login.ts`,
    `srp-client.ts`, `crates/nopass-crypto/src/srp.rs`, the legacy recovery
    fields, and the `srp` crate. Then add a migration that drops
