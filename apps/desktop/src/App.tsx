@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel, openRevisionStore } from "@nopass/ui";
+import {
+  UnlockScreen,
+  useNopassStore,
+  DecryptedVaultItemCard,
+  ItemEditor,
+  OrgPanel,
+  OwnKeyMismatchError,
+  ensureIdentityPublished,
+  openRevisionStore,
+} from "@nopass/ui";
 import { bindingForItem, decryptVaultItem, encryptVaultItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { createApiClient } from "@nopass/ui";
@@ -214,6 +223,7 @@ function VaultScreen({
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
   const revisions = useMemo(() => openRevisionStore(defaultVaultId), [defaultVaultId]);
+  const { userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<
@@ -259,6 +269,21 @@ function VaultScreen({
       sshAgent.loadVaultKeys(sshKeys).catch(() => {/* agent not running */});
     });
   }, [items, vaultEncKey, vaultMacKey, revisions]);
+
+  // Accounts created before identity keys existed publish one on first unlock;
+  // every unlock also checks the server still serves our own keys unchanged.
+  useEffect(() => {
+    if (!userId || !stretchedMasterKey || !protectedPrivateKey || !protectedPrivateKeyIv) return;
+    ensureIdentityPublished(api, sessionToken, {
+      userId,
+      protectedPrivateKey,
+      protectedPrivateKeyIv,
+      stretchedMasterKey,
+    }).catch((err) => {
+      // Anything else (offline, server hiccup) is retried on the next unlock
+      if (err instanceof OwnKeyMismatchError) setError(err.message);
+    });
+  }, [api, sessionToken, userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv]);
 
   const handleSave = useCallback(async (plaintext: VaultItemPlaintext) => {
     setSaving(true);

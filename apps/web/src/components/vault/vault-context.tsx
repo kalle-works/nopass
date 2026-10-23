@@ -16,7 +16,13 @@ import {
   type ReactNode,
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useNopassStore, ConflictError, openRevisionStore } from "@nopass/ui";
+import {
+  useNopassStore,
+  ConflictError,
+  OwnKeyMismatchError,
+  ensureIdentityPublished,
+  openRevisionStore,
+} from "@nopass/ui";
 import {
   ItemRollbackError,
   bindingForItem,
@@ -144,6 +150,10 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     lock,
     toggleFavorite,
     favorites,
+    userId,
+    stretchedMasterKey,
+    protectedPrivateKey,
+    protectedPrivateKeyIv,
   } = useNopassStore();
 
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
@@ -221,6 +231,21 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+
+  // Accounts created before identity keys existed publish one on first unlock;
+  // every unlock also checks the server still serves our own keys unchanged.
+  useEffect(() => {
+    if (!sessionToken || !userId || !stretchedMasterKey || !protectedPrivateKey || !protectedPrivateKeyIv) return;
+    ensureIdentityPublished(api, sessionToken, {
+      userId,
+      protectedPrivateKey,
+      protectedPrivateKeyIv,
+      stretchedMasterKey,
+    }).catch((err) => {
+      // Anything else (offline, server hiccup) is retried on the next unlock
+      if (err instanceof OwnKeyMismatchError) setError(err.message);
+    });
+  }, [sessionToken, userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv]);
 
   // --- Loading --------------------------------------------------------------
 

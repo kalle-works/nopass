@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, X } from "lucide-react";
 import type { ApiClient } from "../lib/api-client";
 import type { OrgDetails, OrgMember, OrgSummary } from "@nopass/types";
@@ -6,17 +6,61 @@ import {
   computeEmailHash,
   decryptOrgKey,
   decryptUserPrivateKey,
+  deriveIdentityKey,
   encryptOrgKeyForMember,
-  exportOrgKey,
   generateOrgKey,
   generateUserKeyPair,
-  importOrgKey,
+  PinnedKeyChangedError,
+  safetyNumber,
+  verifyMemberKey,
+  type KeyPinStore,
 } from "@nopass/crypto";
 import { useNopassStore } from "../store/vault-store";
+import { ensureIdentityPublished } from "../lib/identity-migration";
+import { openKeyPinStore } from "../lib/local-trust-state";
 import { Button, IconButton } from "../primitives/Button";
 import { Field, inputClass } from "../primitives/Field";
 import { Badge, Banner, Dialog } from "../primitives/Feedback";
 import { cx } from "../primitives/cx";
+
+/** What the panel knows about a member's key, shown next to them in the list. */
+type MemberKeyStatus =
+  | { kind: "verified"; safetyNumber: string }
+  | { kind: "changed" }
+  | { kind: "unverifiable"; reason: string };
+
+function memberKeyStatus(m: OrgMember, ownUserId: string | null, pins: KeyPinStore | null): MemberKeyStatus {
+  if (!m.publicKey) return { kind: "unverifiable", reason: "no key published yet" };
+  // Your own key is checked against what this device derives on unlock, not pinned
+  if (m.userId === ownUserId || !pins) {
+    return m.identityPublicKey
+      ? { kind: "verified", safetyNumber: safetyNumber(m.userId, m.identityPublicKey) }
+      : { kind: "unverifiable", reason: "no identity key yet" };
+  }
+  try {
+    const verified = verifyMemberKey(
+      {
+        userId: m.userId,
+        publicKey: m.publicKey,
+        identityPublicKey: m.identityPublicKey,
+        publicKeySignature: m.publicKeySignature,
+      },
+      pins,
+    );
+    return { kind: "verified", safetyNumber: verified.safetyNumber };
+  } catch (e) {
+    if (e instanceof PinnedKeyChangedError) return { kind: "changed" };
+    return { kind: "unverifiable", reason: e instanceof Error ? e.message : "key cannot be verified" };
+  }
+}
+
+interface PendingInvite {
+  email: string;
+  emailHash: string;
+  recipientPublicKey: string;
+  safetyNumber: string;
+  firstSeen: boolean;
+}
 
 interface OrgPanelProps {
   apiClient: ApiClient;
@@ -36,8 +80,15 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const [saving, setSaving] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<OrgMember | null>(null);
+  const [pendingInvite, setPendingInvite] = useState<PendingInvite | null>(null);
 
-  const { stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
+  const { userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
+  const pins = useMemo(() => (userId ? openKeyPinStore(userId) : null), [userId]);
+  const memberKeys = useMemo(
+    () => new Map(selectedOrg?.members.map((m) => [m.userId, memberKeyStatus(m, userId, pins)]) ?? []),
+    [selectedOrg, userId, pins],
+  );
+  const changedKeys = [...memberKeys.values()].filter((k) => k.kind === "changed").length;
 
   useEffect(() => {
     loadOrgs();
@@ -85,7 +136,17 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     setSaving(true);
     setError(null);
     try {
-      const keyPair = await generateUserKeyPair(stretchedMasterKey);
+      // Reuse the account's key pair: the server keeps the first one it was
+      // given, so wrapping the org key to a fresh pair would lock us out of
+      // the org after the next sign-in.
+      let keyPair;
+      if (protectedPrivateKey && protectedPrivateKeyIv) {
+        const identity = await deriveIdentityKey(protectedPrivateKey, protectedPrivateKeyIv, stretchedMasterKey);
+        identity.secretKey.fill(0);
+        keyPair = { publicKeyB64: identity.rsaPublicKeyB64, protectedPrivateKey, protectedPrivateKeyIv };
+      } else {
+        keyPair = await generateUserKeyPair(stretchedMasterKey);
+      }
       const orgKey = await generateOrgKey();
       const encryptedOrgKey = await encryptOrgKeyForMember(orgKey, keyPair.publicKeyB64);
 
@@ -105,6 +166,14 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
         keyPair.protectedPrivateKey,
         keyPair.protectedPrivateKeyIv,
       );
+      if (userId) {
+        await ensureIdentityPublished(apiClient, sessionToken, {
+          userId,
+          protectedPrivateKey: keyPair.protectedPrivateKey,
+          protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
+          stretchedMasterKey,
+        });
+      }
 
       setOrgs((prev) => [...prev, created]);
       setNewOrgName("");
@@ -116,8 +185,33 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     }
   }
 
+  /** Step 1: fetch and verify the invitee's key, then show its safety number. */
+  async function lookUpInvitee() {
+    if (!inviteEmail.trim() || !pins) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const email = inviteEmail.trim().toLowerCase();
+      const emailHash = computeEmailHash(email);
+      const bundle = await apiClient.orgs.getPublicKey(emailHash, sessionToken);
+      const verified = verifyMemberKey(bundle, pins);
+      setPendingInvite({
+        email,
+        emailHash,
+        recipientPublicKey: verified.rsaPublicKeyB64,
+        safetyNumber: verified.safetyNumber,
+        firstSeen: verified.firstSeen,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to look up member");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Step 2: wrap the org key to the verified key. */
   async function inviteMember() {
-    if (!inviteEmail.trim() || !selectedOrg || !stretchedMasterKey) return;
+    if (!pendingInvite || !selectedOrg || !stretchedMasterKey) return;
     if (!protectedPrivateKey || !protectedPrivateKeyIv) {
       setError("No private key found. Please re-login.");
       return;
@@ -125,13 +219,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     setSaving(true);
     setError(null);
     try {
-      const emailHash = computeEmailHash(inviteEmail.trim().toLowerCase());
-
-      // Look up the invitee's public key
-      const { publicKey: recipientPublicKey } = await apiClient.orgs.getPublicKey(
-        emailHash,
-        sessionToken,
-      );
+      const { emailHash, recipientPublicKey } = pendingInvite;
 
       // Decrypt our org key, then re-encrypt for the invitee
       const privateKey = await decryptUserPrivateKey(
@@ -149,6 +237,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       );
 
       setInviteEmail("");
+      setPendingInvite(null);
       setShowInviteForm(false);
       // Refresh member list
       await selectOrg(selectedOrg.id);
@@ -306,9 +395,25 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
                 type="email"
                 placeholder="name@example.com"
                 value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
+                onChange={(e) => {
+                  setInviteEmail(e.target.value);
+                  setPendingInvite(null);
+                }}
                 autoFocus
               />
+              {pendingInvite && (
+                <div className="space-y-1 rounded-md border border-divider bg-surface p-3">
+                  <p className="text-meta font-medium text-fg">Safety number for {pendingInvite.email}</p>
+                  <p className="font-mono text-mono-sm text-fg" data-testid="invite-safety-number">
+                    {pendingInvite.safetyNumber}
+                  </p>
+                  <p className="text-meta text-muted">
+                    {pendingInvite.firstSeen
+                      ? "First time you see this person's key. Ask them to read their safety number to you over a channel you trust; only send the invite if it matches."
+                      : "Matches the key you saw for this person before."}
+                  </p>
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="invite-role" className="text-meta font-medium text-fg">
                   Role
@@ -329,38 +434,66 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
                   onClick={() => {
                     setShowInviteForm(false);
                     setInviteEmail("");
+                    setPendingInvite(null);
                   }}
                 >
                   Cancel
                 </Button>
-                <Button
-                  variant="primary"
-                  onClick={inviteMember}
-                  disabled={!inviteEmail.trim()}
-                  pending={saving}
-                  pendingLabel="Inviting…"
-                >
-                  Send invite
-                </Button>
+                {pendingInvite ? (
+                  <Button variant="primary" onClick={inviteMember} pending={saving} pendingLabel="Inviting…">
+                    Send invite
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    onClick={lookUpInvitee}
+                    disabled={!inviteEmail.trim()}
+                    pending={saving}
+                    pendingLabel="Checking key…"
+                  >
+                    Continue
+                  </Button>
+                )}
               </div>
             </div>
           )}
 
+          {changedKeys > 0 && (
+            <Banner tone="danger">
+              {changedKeys === 1 ? "A member's identity key has" : `${changedKeys} members' identity keys have`} changed
+              since you last saw {changedKeys === 1 ? "it" : "them"}. Someone may be impersonating them. Do not invite
+              anyone or share items until you have compared safety numbers with them directly.
+            </Banner>
+          )}
+
           <ul className="divide-y divide-divider overflow-hidden rounded-lg border border-divider">
-            {selectedOrg.members.map((m: OrgMember) => (
-              <li key={m.userId} className="flex min-h-11 items-center justify-between gap-3 px-4 py-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="font-mono text-mono-sm text-muted">{m.userId.slice(0, 8)}…</span>
-                  <Badge>{m.role}</Badge>
-                  {m.status === "pending" && <Badge tone="warning">pending</Badge>}
-                </div>
-                {selectedOrg.role !== "member" && m.role !== "owner" && (
-                  <Button variant="ghost" size="sm" onClick={() => setMemberToRemove(m)}>
-                    Remove
-                  </Button>
-                )}
-              </li>
-            ))}
+            {selectedOrg.members.map((m: OrgMember) => {
+              const key = memberKeys.get(m.userId);
+              return (
+                <li key={m.userId} className="flex min-h-11 items-center justify-between gap-3 px-4 py-2">
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="font-mono text-mono-sm text-muted">{m.userId.slice(0, 8)}…</span>
+                      {m.userId === userId && <Badge>you</Badge>}
+                      <Badge>{m.role}</Badge>
+                      {m.status === "pending" && <Badge tone="warning">pending</Badge>}
+                      {key?.kind === "changed" && <Badge tone="danger">key changed</Badge>}
+                    </div>
+                    {key?.kind === "verified" && (
+                      <p className="font-mono text-mono-sm text-muted" title="Safety number — compare it with this member">
+                        {key.safetyNumber}
+                      </p>
+                    )}
+                    {key?.kind === "unverifiable" && <p className="text-meta text-muted">Key not verifiable: {key.reason}</p>}
+                  </div>
+                  {selectedOrg.role !== "member" && m.role !== "owner" && (
+                    <Button variant="ghost" size="sm" onClick={() => setMemberToRemove(m)}>
+                      Remove
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
