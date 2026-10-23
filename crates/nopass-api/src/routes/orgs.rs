@@ -4,6 +4,7 @@ use axum::{
     routing::{delete, get, post},
     Extension, Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use uuid::Uuid;
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
     middleware::auth::AuthUser,
     models::org::{
         CreateOrgBody, InviteMemberBody, OrgDetailsResponse,
-        OrgSummaryResponse, PublicKeyResponse,
+        OrgSummaryResponse, PendingInviteResponse, PublicKeyResponse,
     },
     state::AppState,
 };
@@ -20,6 +21,7 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_orgs).post(create_org))
+        .route("/invites", get(list_invites))
         .route("/{org_id}", get(get_org))
         .route("/{org_id}/members", post(invite_member))
         .route("/{org_id}/members/{user_id}", delete(remove_member))
@@ -62,9 +64,11 @@ async fn create_org(
 
     let org = db_orgs::create_org(
         &state.db,
+        body.id,
         body.name.trim(),
         auth.user_id,
         &body.encrypted_org_key,
+        body.wrap_signature.as_deref(),
     )
     .await?;
 
@@ -112,6 +116,8 @@ async fn get_org(
         created_at: org.created_at,
         members,
         encrypted_org_key,
+        wrap_signature: member.wrap_signature,
+        wrap_signer_id: member.invited_by.unwrap_or(auth.user_id),
     }))
 }
 
@@ -152,17 +158,29 @@ async fn invite_member(
         .await?
         .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
 
+    if B64.decode(&body.wrap_signature).map(|s| s.len()) != Ok(64) {
+        return Err(ApiError::BadRequest("wrapSignature must be 64 bytes of base64".into()));
+    }
+
     db_orgs::invite_member(
         &state.db,
         org_id,
         invitee_id,
         &body.role,
         &body.encrypted_org_key,
+        &body.wrap_signature,
         auth.user_id,
     )
     .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_invites(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+) -> ApiResult<Json<Vec<PendingInviteResponse>>> {
+    Ok(Json(db_orgs::list_pending_invites(&state.db, auth.user_id).await?))
 }
 
 async fn accept_invite(

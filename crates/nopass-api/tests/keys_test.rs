@@ -82,3 +82,49 @@ async fn key_lookups_return_the_signed_bundle(pool: PgPool) {
         assert_eq!(bundle["publicKeySignature"].as_str(), Some(B64.encode([1u8; 64]).as_str()));
     }
 }
+
+/// The invitee checks an invite came from the inviter before accepting, so
+/// the server must store the inviter's wrap signature and hand it back with
+/// the inviter's key bundle; an unsigned invite is refused outright.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn invites_carry_the_inviters_signature_and_bundle(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, "alice@example.com", "password").await;
+    register_user(&server, "bob@example.com", "password").await;
+    let alice = login(&server, "alice@example.com", "password").await;
+    let bob = login(&server, "bob@example.com", "password").await;
+    let org_id = create_org(&server, &alice.session_token).await;
+    create_org(&server, &bob.session_token).await; // publishes bob's public key
+    server
+        .put("/v1/keys/identity")
+        .authorization_bearer(&alice.session_token)
+        .json(&identity(1))
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    let invite = |signature: Option<String>| {
+        let mut body = serde_json::json!({
+            "emailHash": compute_email_hash("bob@example.com"),
+            "role": "member",
+            "encryptedOrgKey": B64.encode([9u8; 64]),
+        });
+        if let Some(sig) = signature {
+            body["wrapSignature"] = sig.into();
+        }
+        server
+            .post(&format!("/v1/organizations/{org_id}/members"))
+            .authorization_bearer(&alice.session_token)
+            .json(&body)
+    };
+    assert!(invite(None).await.status_code().is_client_error());
+    invite(Some(B64.encode([3u8; 64]))).await.assert_status(StatusCode::NO_CONTENT);
+
+    let invites: serde_json::Value =
+        server.get("/v1/organizations/invites").authorization_bearer(&bob.session_token).await.json();
+    let pending = &invites[0];
+    assert_eq!(pending["orgId"].as_str(), Some(org_id.as_str()));
+    assert_eq!(pending["encryptedOrgKey"].as_str(), Some(B64.encode([9u8; 64]).as_str()));
+    assert_eq!(pending["wrapSignature"].as_str(), Some(B64.encode([3u8; 64]).as_str()));
+    assert_eq!(pending["inviter"]["userId"].as_str(), Some(alice.user_id.to_string().as_str()));
+    assert_eq!(pending["inviter"]["identityPublicKey"].as_str(), Some(B64.encode([1u8; 32]).as_str()));
+}
