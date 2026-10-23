@@ -35,7 +35,9 @@ import {
 import { createApiClient } from "@nopass/ui";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 
-const API = "http://127.0.0.1:3001/v1";
+// Point at another API instance with NOPASS_TEST_API_URL (e.g. http://127.0.0.1:3011/v1);
+// the extension build must then use the same origin (VITE_API_BASE).
+const API = process.env["NOPASS_TEST_API_URL"] ?? "http://127.0.0.1:3001/v1";
 const DIST = resolve(__dirname, "../dist");
 const EMAIL = `ext-e2e-${Date.now()}@nopass.test`;
 const PASSWORD = "ext-e2e-master-password-1";
