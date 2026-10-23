@@ -97,25 +97,22 @@ export function initWebauthnRelay(): void {
 
     const host = window.location.hostname;
     try {
-      // Cheap pre-check: skip the overlay entirely when the vault is locked
-      const status = await chrome.runtime.sendMessage({ type: "IS_UNLOCKED" });
-      if (!status?.unlocked) {
+      // Skip the overlay entirely unless the vault is unlocked and can serve
+      // this rpId. (IS_UNLOCKED is no use here: it reports locked to web pages.)
+      const usable =
+        d.kind === "get"
+          ? (
+              await chrome.runtime.sendMessage({
+                type: "WEBAUTHN_HAS_CREDENTIAL",
+                rpId: d.payload["rpId"],
+                allowCredentialIdsB64u: d.payload["allowCredentialIdsB64u"],
+              })
+            )?.matches === true
+          : (await chrome.runtime.sendMessage({ type: "WEBAUTHN_AVAILABLE", rpId: d.payload["rpId"] }))
+              ?.available === true;
+      if (!usable) {
         respond(d.reqId, { ok: false, fallback: true });
         return;
-      }
-
-      if (d.kind === "get") {
-        // Ask the background whether we even hold a matching credential
-        // before bothering the user
-        const probe = await chrome.runtime.sendMessage({
-          type: "WEBAUTHN_HAS_CREDENTIAL",
-          rpId: d.payload["rpId"],
-          allowCredentialIdsB64u: d.payload["allowCredentialIdsB64u"],
-        });
-        if (!probe?.matches) {
-          respond(d.reqId, { ok: false, fallback: true });
-          return;
-        }
       }
 
       const approved = await askConsent(

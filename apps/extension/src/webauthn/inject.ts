@@ -7,8 +7,12 @@
  * overlay and relays to the background service worker, which holds the vault.
  *
  * Anything we can't or shouldn't handle (no publicKey options, conditional
- * mediation, locked vault, user decline, unsupported algorithms) falls back
- * to the browser's native implementation.
+ * mediation, locked vault, user decline, unsupported algorithms, required
+ * user verification) falls back to the browser's native implementation.
+ *
+ * nopwd asserts user presence but never user verification: the consent click
+ * proves someone is there, not who. An RP that requires UV gets the native
+ * authenticator, which can actually verify the user.
  */
 
 interface RelayResponse {
@@ -178,6 +182,7 @@ interface RelayResponse {
     const algOk =
       !pk.pubKeyCredParams?.length || pk.pubKeyCredParams.some((p) => p.alg === -7);
     if (!algOk) return nativeCreate(options);
+    if (pk.authenticatorSelection?.userVerification === "required") return nativeCreate(options);
 
     try {
       const resp = await relay(
@@ -209,6 +214,7 @@ interface RelayResponse {
     const pk = options?.publicKey;
     // Conditional mediation drives the browser's own autofill UI — pass through
     if (!pk || options?.mediation === "conditional") return nativeGet(options);
+    if (pk.userVerification === "required") return nativeGet(options);
 
     const cdj = clientDataJson("webauthn.get", pk.challenge);
     try {
