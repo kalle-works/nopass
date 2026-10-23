@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, X } from "lucide-react";
 import type { ApiClient } from "../lib/api-client";
-import type { OrgDetails, OrgMember, OrgSummary } from "@nopass/types";
+import type { OrgDetails, OrgMember, OrgSummary, PendingInvite as OrgInvite } from "@nopass/types";
 import {
   computeEmailHash,
   decryptOrgKey,
@@ -12,7 +12,9 @@ import {
   generateUserKeyPair,
   PinnedKeyChangedError,
   safetyNumber,
+  signOrgKeyWrap,
   verifyMemberKey,
+  verifyOrgKeyWrap,
   type KeyPinStore,
 } from "@nopass/crypto";
 import { useNopassStore } from "../store/vault-store";
@@ -54,7 +56,12 @@ function memberKeyStatus(m: OrgMember, ownUserId: string | null, pins: KeyPinSto
   }
 }
 
+/** An invite addressed to us, after checking it against the inviter's key. */
+type ReceivedInvite = OrgInvite &
+  ({ verified: true; safetyNumber: string; firstSeen: boolean } | { verified: false; reason: string });
+
 interface PendingInvite {
+  recipientUserId: string;
   email: string;
   emailHash: string;
   recipientPublicKey: string;
@@ -81,6 +88,8 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   const [saving, setSaving] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<OrgMember | null>(null);
   const [pendingInvite, setPendingInvite] = useState<PendingInvite | null>(null);
+  const [received, setReceived] = useState<ReceivedInvite[]>([]);
+  const [orgKeyWarning, setOrgKeyWarning] = useState<string | null>(null);
 
   const { userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
   const pins = useMemo(() => (userId ? openKeyPinStore(userId) : null), [userId]);
@@ -98,8 +107,12 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     setLoading(true);
     setError(null);
     try {
-      const list = await apiClient.orgs.list(sessionToken);
+      const [list, invites] = await Promise.all([
+        apiClient.orgs.list(sessionToken),
+        apiClient.orgs.invites(sessionToken),
+      ]);
       setOrgs(list);
+      setReceived(invites.map(checkInvite));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load organizations");
     } finally {
@@ -107,11 +120,73 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     }
   }
 
+  /** Is this invite's org key really wrapped for us by the inviter? */
+  function checkInvite(invite: OrgInvite): ReceivedInvite {
+    if (!userId || !pins) return { ...invite, verified: false, reason: "Sign in again to check this invite." };
+    try {
+      const verified = verifyOrgKeyWrap(
+        {
+          orgId: invite.orgId,
+          recipientUserId: userId,
+          signerUserId: invite.inviter.userId,
+          role: invite.role,
+          encryptedOrgKey: invite.encryptedOrgKey,
+        },
+        invite.wrapSignature,
+        invite.inviter,
+        pins,
+      );
+      return { ...invite, verified: true, safetyNumber: verified.safetyNumber, firstSeen: verified.firstSeen };
+    } catch (e) {
+      return { ...invite, verified: false, reason: e instanceof Error ? e.message : "This invite cannot be verified." };
+    }
+  }
+
+  async function acceptInvite(orgId: string) {
+    setError(null);
+    try {
+      await apiClient.orgs.accept(orgId, sessionToken);
+      await loadOrgs();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to accept invite");
+    }
+  }
+
   async function selectOrg(orgId: string) {
     setLoading(true);
     setError(null);
+    setOrgKeyWarning(null);
     try {
       const details = await apiClient.orgs.get(orgId, sessionToken);
+
+      // The org key is only used if whoever wrapped it for us signed it. Wraps
+      // made before signing existed are accepted with a warning.
+      const signer = details.members.find((m) => m.userId === details.wrapSignerId);
+      if (details.wrapSignature === null) {
+        setOrgKeyWarning(
+          "Your copy of this organization's key was shared before key signing existed, so it cannot be verified. Ask an admin to re-invite you if in doubt.",
+        );
+      } else if (!userId || !pins || !signer?.publicKey) {
+        throw new Error("Cannot verify who shared this organization's key with you.");
+      } else {
+        verifyOrgKeyWrap(
+          {
+            orgId: details.id,
+            recipientUserId: userId,
+            signerUserId: details.wrapSignerId,
+            role: details.role,
+            encryptedOrgKey: details.encryptedOrgKey,
+          },
+          details.wrapSignature,
+          {
+            userId: signer.userId,
+            publicKey: signer.publicKey,
+            identityPublicKey: signer.identityPublicKey,
+            publicKeySignature: signer.publicKeySignature,
+          },
+          pins,
+        );
+      }
       setSelectedOrg(details);
 
       // Decrypt the org key and bubble it up so the vault can use it
@@ -150,8 +225,25 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       const orgKey = await generateOrgKey();
       const encryptedOrgKey = await encryptOrgKeyForMember(orgKey, keyPair.publicKeyB64);
 
+      let wrapSignature: string | undefined;
+      const orgId = crypto.randomUUID();
+      if (userId) {
+        const identity = await deriveIdentityKey(
+          keyPair.protectedPrivateKey,
+          keyPair.protectedPrivateKeyIv,
+          stretchedMasterKey,
+        );
+        wrapSignature = signOrgKeyWrap(
+          { orgId, recipientUserId: userId, signerUserId: userId, role: "owner", encryptedOrgKey },
+          identity.secretKey,
+        );
+        identity.secretKey.fill(0);
+      }
+
       const created = await apiClient.orgs.create(
         {
+          id: orgId,
+          ...(wrapSignature ? { wrapSignature } : {}),
           name: newOrgName.trim(),
           publicKey: keyPair.publicKeyB64,
           protectedPrivateKey: keyPair.protectedPrivateKey,
@@ -196,6 +288,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       const bundle = await apiClient.orgs.getPublicKey(emailHash, sessionToken);
       const verified = verifyMemberKey(bundle, pins);
       setPendingInvite({
+        recipientUserId: bundle.userId,
         email,
         emailHash,
         recipientPublicKey: verified.rsaPublicKeyB64,
@@ -230,9 +323,23 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       const orgKey = await decryptOrgKey(selectedOrg.encryptedOrgKey, privateKey);
       const encryptedOrgKey = await encryptOrgKeyForMember(orgKey, recipientPublicKey);
 
+      if (!userId) throw new Error("Sign in again to invite members.");
+      const identity = await deriveIdentityKey(protectedPrivateKey, protectedPrivateKeyIv, stretchedMasterKey);
+      const wrapSignature = signOrgKeyWrap(
+        {
+          orgId: selectedOrg.id,
+          recipientUserId: pendingInvite.recipientUserId,
+          signerUserId: userId,
+          role: inviteRole,
+          encryptedOrgKey,
+        },
+        identity.secretKey,
+      );
+      identity.secretKey.fill(0);
+
       await apiClient.orgs.invite(
         selectedOrg.id,
-        { emailHash, role: inviteRole, encryptedOrgKey },
+        { emailHash, role: inviteRole, encryptedOrgKey, wrapSignature },
         sessionToken,
       );
 
@@ -331,6 +438,41 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
         </div>
       )}
 
+      {!selectedOrg && received.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-meta font-medium text-fg">Invitations</p>
+          <ul className="divide-y divide-divider overflow-hidden rounded-lg border border-divider">
+            {received.map((inv) => (
+              <li key={inv.orgId} className="flex items-start justify-between gap-3 px-4 py-3">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-ui font-medium text-fg">{inv.orgName}</span>
+                    <Badge>{inv.role}</Badge>
+                  </div>
+                  {inv.verified ? (
+                    <>
+                      <p className="text-meta text-muted">Inviter's safety number</p>
+                      <p className="font-mono text-mono-sm text-fg">{inv.safetyNumber}</p>
+                      {inv.firstSeen && (
+                        <p className="text-meta text-muted">
+                          Ask the person who invited you to read their safety number to you over a channel you trust.
+                          Accept only if it matches.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-meta text-danger">{inv.reason}</p>
+                  )}
+                </div>
+                <Button size="sm" variant="primary" disabled={!inv.verified} onClick={() => acceptInvite(inv.orgId)}>
+                  Accept
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {!selectedOrg && !loading && (
         <>
           {orgs.length > 0 ? (
@@ -373,6 +515,8 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
           >
             All organizations
           </Button>
+
+          {orgKeyWarning && <Banner tone="warning">{orgKeyWarning}</Banner>}
 
           <div className="flex items-center gap-2">
             <h3 className="truncate text-h3 font-semibold text-fg">{selectedOrg.name}</h3>

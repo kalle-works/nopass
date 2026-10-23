@@ -22,6 +22,7 @@ import type {
   MoveItemRequest,
   OrgDetails,
   OrgSummary,
+  PendingInvite,
   PortalSessionResponse,
   PublicKeyResponse,
   RecoveryCompleteRequest,
@@ -159,6 +160,7 @@ export function createApiClient(baseUrl: string) {
     orgs: {
       list: (token: string) => get<OrgSummary[]>("/organizations", token),
       get: (orgId: string, token: string) => get<OrgDetails>(`/organizations/${orgId}`, token),
+      invites: (token: string) => get<PendingInvite[]>("/organizations/invites", token),
       create: (req: CreateOrgRequest, token: string) => post<OrgSummary>("/organizations", req, token),
       invite: (orgId: string, req: InviteMemberRequest, token: string) =>
         post<void>(`/organizations/${orgId}/members`, req, token),

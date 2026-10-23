@@ -231,6 +231,8 @@ export type OrgRole = "owner" | "admin" | "member";
 export type OrgMemberStatus = "pending" | "active";
 
 export interface CreateOrgRequest {
+  /** Client-chosen UUID, so the creator can sign their own org-key wrap */
+  id?: string;
   name: string;
   /** base64 RSA-OAEP SPKI public key */
   publicKey: string;
@@ -239,6 +241,8 @@ export interface CreateOrgRequest {
   protectedPrivateKeyIv: string;
   /** Org AES-256-GCM key encrypted with the owner's RSA public key */
   encryptedOrgKey: string;
+  /** Creator's identity-key signature over their own wrap (signOrgKeyWrap) */
+  wrapSignature?: string;
 }
 
 export interface OrgSummary {
@@ -274,6 +278,20 @@ export interface OrgDetails extends OrgSummary {
   members: OrgMember[];
   /** Org AES key encrypted with the caller's RSA public key */
   encryptedOrgKey: string;
+  /** Signature over the caller's wrap; null for wraps made before signing existed */
+  wrapSignature: string | null;
+  /** Who made the caller's wrap: the inviter, or the caller for an org they created */
+  wrapSignerId: string;
+}
+
+/** A pending invite as the invitee sees it — verify with verifyOrgKeyWrap before accepting. */
+export interface PendingInvite {
+  orgId: string;
+  orgName: string;
+  role: OrgRole;
+  encryptedOrgKey: string;
+  wrapSignature: string | null;
+  inviter: KeyBundle;
 }
 
 export interface InviteMemberRequest {
@@ -282,6 +300,8 @@ export interface InviteMemberRequest {
   role: Exclude<OrgRole, "owner">;
   /** Org AES key pre-encrypted with the invitee's RSA public key */
   encryptedOrgKey: string;
+  /** Inviter's identity-key signature over the wrap (signOrgKeyWrap) */
+  wrapSignature: string;
 }
 
 export interface AcceptInviteRequest {
