@@ -3,12 +3,16 @@
 # throwaway Postgres running inside this pod, and checks the result. Exits
 # non-zero on any failed check, so a failed Job is the alert.
 #
-# Required env: BACKUP_PASSPHRASE
+# Reads both dump formats: nopwd-*.dump.age (age, identity in AGE_IDENTITY_FILE)
+# and the older nopwd-*.dump.enc (openssl AES-256-CBC, BACKUP_PASSPHRASE).
+#
+# Env: AGE_IDENTITY_FILE (default /age/identity), BACKUP_PASSPHRASE (legacy dumps only)
 set -eu
 
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 WORK_DIR="${WORK_DIR:-/tmp}"
 MAX_AGE_HOURS="${MAX_AGE_HOURS:-36}"
+AGE_IDENTITY_FILE="${AGE_IDENTITY_FILE:-/age/identity}"
 PGDATA="$WORK_DIR/pgdata"
 SOCKET_DIR="$WORK_DIR/pgsock"
 
@@ -18,27 +22,36 @@ fail() {
 }
 
 # shellcheck disable=SC2012
-LATEST=$(ls -1t "$BACKUP_DIR"/nopwd-*.dump.enc 2>/dev/null | head -n 1 || true)
+LATEST=$(ls -1t "$BACKUP_DIR"/nopwd-*.dump.age "$BACKUP_DIR"/nopwd-*.dump.enc 2>/dev/null | head -n 1 || true)
 [ -n "$LATEST" ] || fail "no backups in $BACKUP_DIR"
 echo "drilling $LATEST"
 
 # The filename carries the UTC timestamp; a drill of a stale backup proves
 # nothing about last night's job
-STAMP=$(basename "$LATEST" | sed -E 's/^nopwd-([0-9]{8})-([0-9]{6})\.dump\.enc$/\1\2/')
+STAMP=$(basename "$LATEST" | sed -E 's/^nopwd-([0-9]{8})-([0-9]{6})\.dump\.(age|enc)$/\1\2/')
 BACKUP_EPOCH=$(date -u -d "$(echo "$STAMP" | sed -E 's/^(....)(..)(..)(..)(..)(..)$/\1-\2-\3 \4:\5:\6/')" +%s) \
   || fail "cannot parse timestamp from $LATEST"
 AGE_HOURS=$(( ($(date -u +%s) - BACKUP_EPOCH) / 3600 ))
 [ "$AGE_HOURS" -le "$MAX_AGE_HOURS" ] || fail "newest backup is ${AGE_HOURS}h old (limit ${MAX_AGE_HOURS}h)"
 
-openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-  -in "$LATEST" -out "$WORK_DIR/restore.dump" -pass env:BACKUP_PASSPHRASE \
-  || fail "decryption failed"
+case "$LATEST" in
+  *.dump.age)
+    [ -r "$AGE_IDENTITY_FILE" ] || fail "no age identity at $AGE_IDENTITY_FILE"
+    age -d -i "$AGE_IDENTITY_FILE" -o "$WORK_DIR/restore.dump" "$LATEST" || fail "decryption failed"
+    ;;
+  *.dump.enc)
+    [ -n "${BACKUP_PASSPHRASE:-}" ] || fail "legacy dump needs BACKUP_PASSPHRASE"
+    openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+      -in "$LATEST" -out "$WORK_DIR/restore.dump" -pass env:BACKUP_PASSPHRASE \
+      || fail "decryption failed"
+    ;;
+esac
+trap 'rm -f "$WORK_DIR/restore.dump"; pg_ctl -D "$PGDATA" -m immediate stop >/dev/null 2>&1 || true' EXIT
 
 rm -rf "$PGDATA" "$SOCKET_DIR"
 mkdir -p "$SOCKET_DIR"
 initdb -D "$PGDATA" -U drill --auth=trust >/dev/null
 pg_ctl -D "$PGDATA" -w -o "-c listen_addresses='' -c unix_socket_directories=$SOCKET_DIR" start >/dev/null
-trap 'pg_ctl -D "$PGDATA" -m immediate stop >/dev/null 2>&1 || true' EXIT
 
 export PGHOST="$SOCKET_DIR" PGUSER=drill
 createdb drill

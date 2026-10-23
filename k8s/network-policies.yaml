@@ -129,8 +129,9 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # Stripe API; the private ranges are excluded so this cannot reach
-    # other workloads or nodes
+    # Stripe API; the private, carrier-grade NAT (100.64.0.0/10) and link-local
+    # (169.254.0.0/16, cloud metadata) ranges are excluded so this cannot reach
+    # other workloads, nodes or the metadata service
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -138,6 +139,8 @@ spec:
               - 10.0.0.0/8
               - 172.16.0.0/12
               - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
       ports:
         - protocol: TCP
           port: 443
@@ -169,6 +172,8 @@ spec:
               - 10.0.0.0/8
               - 172.16.0.0/12
               - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
       ports:
         - protocol: TCP
           port: 22

@@ -23,6 +23,10 @@ export function checkCsp({ conf, origins, envUrl }) {
       problems.push(`app.security.${key} is not set`);
       continue;
     }
+    // The shipped app has no inline script or style; only the Vite dev server needs them
+    if (key === "csp" && /(?:script|style)-src[^;]*'unsafe-inline'/.test(value)) {
+      problems.push("csp allows 'unsafe-inline' for scripts or styles");
+    }
     const allowed = connectOrigins(value).filter((o) => o !== "http://ipc.localhost");
     const unexpected = allowed.filter((o) => o !== expected[key]);
     if (!allowed.includes(expected[key])) problems.push(`${key} connect-src does not allow the API origin ${expected[key]}`);

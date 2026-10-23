@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { importShareKey, decryptSharePayload } from "@nopass/crypto";
 import type { VaultItemPlaintext } from "@nopass/types";
 import { AuthShell, Banner, Button, Spinner, SecretRow } from "@nopass/ui";
 import { api } from "@/lib/api";
+import { takeShareKey } from "@/lib/share-key";
 import { AuthFooter } from "@/components/auth/auth-footer";
 import { copySecret } from "@/components/auth/clipboard";
 
@@ -82,18 +83,26 @@ export default function ShareViewPage() {
   // unfurlers that render the page must not burn one of the share's views.
   const [state, setState] = useState<State>({ status: "gate" });
 
+  // The key leaves the address bar as soon as the page has it; it is kept
+  // here for the reveal click and for a retry after a network error
+  const keyRef = useRef<string | null>(null);
+
   // A different fragment (e.g. a second share link opened in the same tab)
   // means a different key, so go back to the gate instead of reusing state
   useEffect(() => {
-    const reset = () => setState({ status: "gate" });
-    window.addEventListener("hashchange", reset);
-    return () => window.removeEventListener("hashchange", reset);
+    keyRef.current ??= takeShareKey(window);
+    const onHashChange = () => {
+      keyRef.current = takeShareKey(window);
+      setState({ status: "gate" });
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
   async function reveal() {
     setState({ status: "loading" });
     try {
-      const keyB64url = new URLSearchParams(window.location.hash.slice(1)).get("k");
+      const keyB64url = keyRef.current;
       if (!keyB64url) {
         throw new Error("This link is missing its decryption key. Make sure you copied the whole URL.");
       }

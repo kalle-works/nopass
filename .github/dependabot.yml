@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  # pnpm workspace: one lockfile at the root, manifests in every package
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /apps/*
+      - /packages/*
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  # Base images pinned by digest
+  - package-ecosystem: docker
+    directories:
+      - /ops
+      - /crates/nopass-api
+      - /apps/web
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]

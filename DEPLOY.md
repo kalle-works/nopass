@@ -50,7 +50,7 @@ controller key. Never commit a plain Secret.
 | Secret | Keys | Used by |
 | --- | --- | --- |
 | `nopwd-secrets` | `database-url`, `opaque-server-setup`, `email-lookup-key` | api (database-url also backup) |
-| `nopwd-backup-secrets` | `passphrase`, `deploy-key` | backup, restore drill |
+| `nopwd-backup-secrets` | `deploy-key` (backup), `age-identity` (restore drill only), `passphrase` (legacy dumps, restore drill only) | backup, restore drill |
 | `ghcr-pull-secret` | `.dockerconfigjson` | image pulls (rotate with `scripts/rotate-ghcr-pull-secret.sh` in the infra repo) |
 
 `opaque-server-setup` (`nopass-api generate-opaque-setup`) and
@@ -58,9 +58,27 @@ controller key. Never commit a plain Secret.
 replacing either locks every account out. Back both up next to the backup
 passphrase. See [docs/auth.md](docs/auth.md).
 
-The backup `passphrase` encrypts every dump. Keep a copy outside the cluster
-(the password manager); without it the backups are unreadable. The
+Dumps are encrypted with [age](https://age-encryption.org) to a public key.
+The public key (the recipient) is in the `nopwd-backup-config` ConfigMap, and
+the backup job holds nothing else, so it can write dumps but not read them. The
+private key (the `age-identity` entry) is mounted only into the restore drill,
+and a copy must live in the password manager; without it the backups are
+unreadable. The backup pod does not mount `age-identity` or `passphrase`. The
 `deploy-key` is a write deploy key on `kalle-works/nopwd-backups`.
+
+One-time setup, required before the first backup after this change (until then
+the job refuses to run and `NopwdBackupFailed` fires):
+
+```bash
+age-keygen -o nopwd-backup.key     # prints the public key "age1..."
+# 1. store nopwd-backup.key in the password manager
+# 2. put the public key in k8s/backup-config.yaml (age-recipient)
+# 3. add the file's contents to nopwd-backup-secrets as `age-identity`
+#    (kubeseal --merge-into k8s/backup-sealed-secret.yaml)
+```
+
+The `passphrase` key stays in the secret only so the drill can read dumps made
+before the switch; remove it once the last `.dump.enc` has aged out.
 
 Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_*_PRICE_ID`) is
 optional and not configured today. To enable billing, add the keys to
@@ -115,13 +133,17 @@ https://api.nopwd.dev/v1/health` answers.
 
 | Layer | What | Schedule | RPO | Kept |
 | --- | --- | --- | --- | --- |
-| Nightly dump (`nopwd-backup` CronJob) | `pg_dump`, AES-256 encrypted, on the Hetzner volume | 03:20 UTC | 24 h | 14 newest |
+| Nightly dump (`nopwd-backup` CronJob) | `pg_dump` streamed into age encryption (no plaintext on disk), on the Hetzner volume | 03:20 UTC | 24 h | 14 newest |
 | Offsite copy | the same dumps pushed to `kalle-works/nopwd-backups` over SSH | with the dump | 24 h | 7 newest, one rolling commit |
 | Continuous WAL archive (shared Postgres, wal-g) | WAL plus daily base backup in the `bsp-meta-backup` bucket | continuous, `archive_timeout` 5 min | about 5 min | 30 days |
 
-The backup job fails, and `NopwdBackupFailed` fires, if the dump does not
-decrypt and list, if the offsite push fails, or if the remote does not point at
-the pushed commit afterwards. The offsite push pins GitHub's SSH host keys in
+The backup job fails, and `NopwdBackupFailed` fires, if `pg_dump` fails, if the
+dump is implausibly small, if the offsite push fails, or if the remote does not
+point at the pushed commit afterwards. The job cannot decrypt its own output, so
+that a dump decrypts and restores is proven by the monthly restore drill, not
+nightly. Dumps from before the age switch (`.dump.enc`, openssl AES-256-CBC with
+the old passphrase) stay in retention and offsite until they age out, and the
+drill and the restore steps below still handle them. The offsite push pins GitHub's SSH host keys in
 the `nopwd-backup-known-hosts` ConfigMap and refuses an unknown host. When
 GitHub rotates its keys, replace the lines from `gh api meta --jq .ssh_keys`
 and check them against GitHub's published fingerprints.
@@ -152,7 +174,8 @@ the same wal-g setup; do not build a second mechanism inside this repo.
 ### Restore drill
 
 The `nopwd-restore-drill` CronJob runs on the 1st of each month at 05:40 UTC.
-It decrypts the newest dump on the volume, restores it into a throwaway
+It decrypts the newest dump on the volume (age with the identity, or the legacy
+format with the passphrase), restores it into a throwaway
 Postgres inside the pod, and fails if any check fails: the dump is older than
 36 hours, decryption or `pg_restore` errors, no migrations are recorded or one
 failed, there are no users, or a user is missing key material. Alerts:
@@ -167,12 +190,15 @@ kubectl -n nopwd logs -f job/drill-manual
 
 ### Restoring for real
 
-Choose the dump: the newest file on the volume (`/backups/nopwd-*.dump.enc`, on
+Choose the dump: the newest file on the volume (`/backups/nopwd-*.dump.age`, on
 `k3s-production-ci-1`) or, if the volume is lost, the files in the
 `kalle-works/nopwd-backups` repository.
 
 ```bash
-# decrypt (passphrase from the password manager)
+# decrypt (age identity from the password manager)
+age -d -i nopwd-backup.key -o nopwd.dump nopwd-YYYYMMDD-HHMMSS.dump.age
+
+# older dumps, nopwd-*.dump.enc: the old passphrase
 openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
   -in nopwd-YYYYMMDD-HHMMSS.dump.enc -out nopwd.dump -pass env:BACKUP_PASSPHRASE
 
