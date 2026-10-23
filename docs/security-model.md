@@ -124,6 +124,32 @@ client signs the owner's own wrap and re-wraps the key, signed, for every
 member whose safety number the owner has confirmed. Other members of an
 unsigned organization see an error asking them to have the owner re-sign.
 
+### Org key rotation and member removal
+
+Members are removed only as part of a key rotation, which the owner can also
+start on its own. The owner's client:
+
+1. generates a new org key at the current epoch + 1;
+2. re-encrypts every org item, tombstones included, under the new key (v2
+   envelope, org scope, next revision);
+3. wraps the new key for every remaining member and signs each wrap; every
+   remaining member's safety number must be confirmed first, so no member is
+   silently left out;
+4. uploads all of it in one request.
+
+The server applies a rotation in one transaction. It locks the organization,
+its members and its items, and checks three things: the new epoch is exactly
+current + 1, the wraps cover exactly the remaining members, and the items
+cover exactly the org's items (both compared by distinct id). If any check
+fails, nothing changes. Wraps or re-signs for any epoch other than the
+current one are refused, and a member cannot be removed any other way.
+
+After a rotation, clients verify the new chain and record the new epoch,
+after which wraps from the old epoch are refused. A client may keep the
+retired key only to finish reads that were in flight; it never writes with
+it. The removed member gets no new wrap, so items written after the rotation
+are unreadable to them.
+
 ## Known limits and future work
 
 - **RSA key rotation rotates the identity key.** The identity seed comes from
@@ -133,8 +159,8 @@ unsigned organization see an error asking them to have the owner re-sign.
   change that carries a valid signature from the pinned key.
 - Pins, revision records and accepted org epochs are per device and are not
   synced.
-- Key epochs are signed and checked, but there is no org key rotation yet;
-  every organization is at epoch 1.
+- A removed member cannot read anything written after the rotation, but may
+  still hold copies of items (and the old key) from before it.
 - Item shares, the recovery blob and vault names do not use AAD binding. Each
   share has its own random key and each account has exactly one recovery
   blob, so swapping them gains nothing. Vault names were left out as low

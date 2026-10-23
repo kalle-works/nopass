@@ -24,6 +24,7 @@ import type {
   OrgSummary,
   PendingInvite,
   RewrapRequest,
+  RotateKeyRequest,
   PortalSessionResponse,
   PublicKeyResponse,
   RecoveryCompleteRequest,
@@ -199,13 +200,14 @@ export function createApiClient(baseUrl: string) {
       invites: (token: string) => get<PendingInvite[]>("/organizations/invites", token),
       rewrap: (orgId: string, req: RewrapRequest, token: string) =>
         put<void>(`/organizations/${orgId}/wraps`, req, token),
+      items: (orgId: string, token: string) => get<EncryptedVaultItem[]>(`/organizations/${orgId}/items`, token),
+      rotate: (orgId: string, req: RotateKeyRequest, token: string) =>
+        post<void>(`/organizations/${orgId}/rotate`, req, token),
       create: (req: CreateOrgRequest, token: string) => post<OrgSummary>("/organizations", req, token),
       invite: (orgId: string, req: InviteMemberRequest, token: string) =>
         post<void>(`/organizations/${orgId}/members`, req, token),
       accept: (orgId: string, token: string) =>
         post<void>(`/organizations/${orgId}/accept`, {}, token),
-      removeMember: (orgId: string, userId: string, token: string) =>
-        del<void>(`/organizations/${orgId}/members/${userId}`, token),
       getPublicKey: (emailHash: string, token: string) =>
         get<PublicKeyResponse>(`/organizations/public-key/${emailHash}`, token),
     },

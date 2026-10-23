@@ -21,7 +21,7 @@ import {
 import { useNopassStore } from "../store/vault-store";
 import { ensureIdentityPublished } from "../lib/identity-migration";
 import { openKeyPinStore, openOrgEpochStore } from "../lib/local-trust-state";
-import { buildResignedWraps, checkOrgKey, openOrgKey, type OrgKeyCheck } from "../lib/org-trust";
+import { buildResignedWraps, buildRotation, checkOrgKey, openOrgKey, type OrgKeyCheck } from "../lib/org-trust";
 import { Button, IconButton } from "../primitives/Button";
 import { Field, inputClass } from "../primitives/Field";
 import { Badge, Banner, Dialog } from "../primitives/Feedback";
@@ -137,6 +137,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
   const [pendingInvite, setPendingInvite] = useState<PendingInvite | null>(null);
   const [received, setReceived] = useState<ReceivedInvite[]>([]);
   const [resignOpen, setResignOpen] = useState(false);
+  const [rotateOpen, setRotateOpen] = useState(false);
   const [trust, setTrust] = useState<TrustStores | null>(null);
   // Bumped after the user confirms keys, so derived key statuses recompute
   const [pinVersion, setPinVersion] = useState(0);
@@ -253,6 +254,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
       const orgKey = await decryptOwnOrgKey(selectedOrg.encryptedOrgKey);
       const { wraps, skipped } = await buildResignedWraps({
         orgId: selectedOrg.id,
+        epoch: 1,
         ownerUserId: userId,
         orgKey,
         members: selectedOrg.members,
@@ -417,15 +419,46 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
     }
   }
 
-  async function removeMember(userId: string) {
-    if (!selectedOrg) return;
+  /**
+   * Owner only: replace the org key with a new one at the next epoch,
+   * optionally removing a member in the same step. Every org item and every
+   * remaining member's wrap is replaced in one server transaction, so there
+   * is no state where a removed member is gone but still holds the live key.
+   */
+  async function rotateKey(removeUserId: string | null) {
+    if (!selectedOrg || orgCheck?.status !== "ok" || !trust || !userId) return;
+    if (!stretchedMasterKey || !protectedPrivateKey || !protectedPrivateKeyIv) {
+      setError("No private key found. Please re-login.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
     try {
-      await apiClient.orgs.removeMember(selectedOrg.id, userId, sessionToken);
+      const oldKey = await decryptOwnOrgKey(orgCheck.wrap.encryptedOrgKey);
+      const items = await apiClient.orgs.items(selectedOrg.id, sessionToken);
+      const { request } = await buildRotation({
+        orgId: selectedOrg.id,
+        ownerUserId: userId,
+        currentEpoch: orgCheck.wrap.epoch,
+        oldKey,
+        items,
+        remainingMembers: selectedOrg.members.filter((m) => m.userId !== removeUserId),
+        pins: trust.pins,
+        identity: { protectedPrivateKey, protectedPrivateKeyIv, stretchedMasterKey },
+      });
+      await apiClient.orgs.rotate(
+        selectedOrg.id,
+        { ...request, ...(removeUserId ? { removeUserId } : {}) },
+        sessionToken,
+      );
+      setMemberToRemove(null);
+      setRotateOpen(false);
+      // Re-verifies the new chain, records the new epoch and hands out the new key
       await selectOrg(selectedOrg.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to remove member");
+      setError(e instanceof Error ? e.message : "Failed to rotate the organization key");
     } finally {
-      setMemberToRemove(null);
+      setSaving(false);
     }
   }
 
@@ -629,11 +662,18 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
 
           <div className="flex items-center justify-between gap-3">
             <p className="text-meta font-medium text-fg">Members ({selectedOrg.members.length})</p>
-            {canManage && (
-              <Button size="sm" onClick={() => setShowInviteForm(true)}>
-                Invite
-              </Button>
-            )}
+            <div className="flex gap-2">
+              {canManage && selectedOrg.role === "owner" && (
+                <Button size="sm" variant="ghost" onClick={() => setRotateOpen(true)}>
+                  Rotate key
+                </Button>
+              )}
+              {canManage && (
+                <Button size="sm" onClick={() => setShowInviteForm(true)}>
+                  Invite
+                </Button>
+              )}
+            </div>
           </div>
 
           {showInviteForm && (
@@ -742,7 +782,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
                     )}
                     {key?.kind === "unverifiable" && <p className="text-meta text-muted">Key not verifiable: {key.reason}</p>}
                   </div>
-                  {selectedOrg.role !== "member" && m.role !== "owner" && (
+                  {canManage && selectedOrg.role === "owner" && m.role !== "owner" && (
                     <Button variant="ghost" size="sm" onClick={() => setMemberToRemove(m)}>
                       Remove
                     </Button>
@@ -777,7 +817,7 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
         title={`Remove member ${memberToRemove?.userId.slice(0, 8) ?? ""}…?`}
         description={
           selectedOrg
-            ? `They lose access to items shared in ${selectedOrg.name}. You can invite them again later.`
+            ? `Removing a member rotates ${selectedOrg.name}'s key: every shared item is re-encrypted and every other member gets the new key. They cannot read anything written afterwards, but may still have copies of items they already opened. Every remaining member's safety number must be confirmed first.`
             : undefined
         }
         footer={
@@ -785,8 +825,30 @@ export function OrgPanel({ apiClient, sessionToken, onOrgVaultKeyChange }: OrgPa
             <Button variant="ghost" onClick={() => setMemberToRemove(null)}>
               Cancel
             </Button>
-            <Button variant="danger" onClick={() => memberToRemove && removeMember(memberToRemove.userId)}>
-              Remove member
+            <Button
+              variant="danger"
+              onClick={() => memberToRemove && rotateKey(memberToRemove.userId)}
+              pending={saving}
+              pendingLabel="Re-encrypting…"
+            >
+              Remove and rotate key
+            </Button>
+          </>
+        }
+      />
+
+      <Dialog
+        open={rotateOpen}
+        onClose={() => setRotateOpen(false)}
+        title="Rotate the organization key?"
+        description="A new key replaces the current one: every shared item is re-encrypted and every member gets the new key, signed by you. Every member's safety number must be confirmed first."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRotateOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => rotateKey(null)} pending={saving} pendingLabel="Re-encrypting…">
+              Rotate key
             </Button>
           </>
         }

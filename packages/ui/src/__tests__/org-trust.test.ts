@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   type KeyPinStore,
   type OrgEpochStore,
+  UntrustedOrgKeyError,
   chainFromServer,
   confirmKey,
+  decryptOrgKey,
+  decryptUserPrivateKey,
+  encryptItemV2,
   deriveIdentityKey,
   generateOrgKey,
   generateUserKeyPair,
@@ -11,8 +15,15 @@ import {
   stretchMasterKey,
   verifyOrgKeyChain,
 } from "@nopass/crypto";
-import type { KeyBundle, OrgMember, WrapLink } from "@nopass/types";
-import { buildResignedWraps, checkOrgKey, openOrgKey } from "../lib/org-trust";
+import type { EncryptedVaultItem, KeyBundle, LoginItem, OrgMember, WrapLink } from "@nopass/types";
+import {
+  UnconfirmedMembersError,
+  buildResignedWraps,
+  buildRotation,
+  checkOrgKey,
+  decryptOrgItem,
+  openOrgKey,
+} from "../lib/org-trust";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
 const OWNER = "11111111-1111-4111-8111-111111111111";
@@ -108,6 +119,7 @@ describe("buildResignedWraps", () => {
 
     const { wraps, skipped } = await buildResignedWraps({
       orgId: ORG,
+      epoch: 1,
       ownerUserId: OWNER,
       orgKey: await generateOrgKey(),
       members: [owner.member("owner"), bob.member("member"), carol.member("member")],
@@ -143,5 +155,150 @@ describe("buildResignedWraps", () => {
         memoryEpochs(),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("buildRotation", () => {
+  const ITEM = "55555555-5555-4555-8555-555555555555";
+  const SECRET: LoginItem = { type: "login", name: "db", username: "root", password: "s3cret", urls: [], customFields: [] };
+
+  async function orgWithItem() {
+    const owner = await makeUser(1, OWNER);
+    const bob = await makeUser(2, BOB);
+    const carol = await makeUser(3, CAROL);
+    const oldKey = await generateOrgKey();
+    const binding = { scope: { kind: "org" as const, orgId: ORG }, itemId: ITEM, itemType: "login" as const };
+    const item: EncryptedVaultItem = {
+      id: ITEM,
+      vaultId: ORG,
+      userId: OWNER,
+      orgId: ORG,
+      itemType: "login",
+      ...(await encryptItemV2(SECRET, binding, 4, oldKey)),
+      version: 1,
+      deletedAt: null,
+      createdAt: "",
+      updatedAt: "",
+    };
+    const pins = memoryPins();
+    confirmKey(bob.bundle, pins);
+    confirmKey(carol.bundle, pins);
+    const identity = {
+      protectedPrivateKey: owner.pair.protectedPrivateKey,
+      protectedPrivateKeyIv: owner.pair.protectedPrivateKeyIv,
+      stretchedMasterKey: owner.stretchedMasterKey,
+    };
+    return { owner, bob, carol, oldKey, item, pins, identity };
+  }
+
+  it("cuts the removed member off, keeps remaining members in, and re-keys every item", async () => {
+    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+
+    // Carol is removed: she keeps only the old key she already had
+    const { request } = await buildRotation({
+      orgId: ORG,
+      ownerUserId: OWNER,
+      currentEpoch: 1,
+      oldKey,
+      items: [item],
+      remainingMembers: [owner.member("owner"), bob.member("member")],
+      pins,
+      identity,
+    });
+    expect(request.newEpoch).toBe(2);
+    expect(request.wraps.map((w) => w.userId).sort()).toEqual([OWNER, BOB].sort());
+    expect(request.items.map((i) => i.id)).toEqual([ITEM]);
+    const rotated = { ...item, ...request.items[0]! };
+
+    // Carol's old key no longer opens what the org holds after the rotation
+    await expect(decryptOrgItem(rotated, ORG, { current: oldKey, retired: [] })).rejects.toThrow();
+
+    // Bob unwraps his new copy with his own private key and reads the item
+    const bobWrap = request.wraps.find((w) => w.userId === BOB)!;
+    const bobPrivate = await decryptUserPrivateKey(
+      bob.pair.protectedPrivateKey,
+      bob.pair.protectedPrivateKeyIv,
+      bob.stretchedMasterKey,
+    );
+    const bobKey = await decryptOrgKey(bobWrap.encryptedOrgKey, bobPrivate);
+    await expect(decryptOrgItem(rotated, ORG, { current: bobKey, retired: [] })).resolves.toMatchObject({
+      plaintext: SECRET,
+      revision: 5,
+    });
+
+    // Bob's new chain verifies at epoch 2, after which epoch-1 wraps are refused
+    const link = (userId: string, role: WrapLink["role"], epoch: number, encryptedOrgKey: string, signature: string): WrapLink => ({
+      recipientUserId: userId,
+      role,
+      encryptedOrgKey,
+      wrapSignature: signature,
+      keyEpoch: epoch,
+      signerUserId: OWNER,
+      signer: owner.bundle,
+    });
+    const ownerWrap = request.wraps.find((w) => w.userId === OWNER)!;
+    const bobPins = memoryPins();
+    confirmKey(owner.bundle, bobPins);
+    const epochs = memoryEpochs();
+    const { orgKey } = await openOrgKey(
+      ORG,
+      [
+        link(BOB, "member", 2, bobWrap.encryptedOrgKey, bobWrap.wrapSignature),
+        link(OWNER, "owner", 2, ownerWrap.encryptedOrgKey, ownerWrap.wrapSignature),
+      ],
+      { userId: BOB, role: "member" },
+      { pins: bobPins, epochs },
+      async (wrapped) => decryptOrgKey(wrapped, bobPrivate),
+    );
+    expect(orgKey).not.toBeNull();
+    expect(epochs.get(ORG)).toBe(2);
+
+    const stale = await buildResignedWraps({
+      orgId: ORG,
+      epoch: 1,
+      ownerUserId: OWNER,
+      orgKey: oldKey,
+      members: [owner.member("owner"), bob.member("member")],
+      pins,
+      identity,
+    });
+    const staleBob = stale.wraps.find((w) => w.userId === BOB)!;
+    const staleOwner = stale.wraps.find((w) => w.userId === OWNER)!;
+    expect(() =>
+      verifyOrgKeyChain(
+        chainFromServer(ORG, [
+          link(BOB, "member", 1, staleBob.encryptedOrgKey, staleBob.wrapSignature),
+          link(OWNER, "owner", 1, staleOwner.encryptedOrgKey, staleOwner.wrapSignature),
+        ]),
+        { orgId: ORG, recipientUserId: BOB },
+        bobPins,
+        epochs,
+      ),
+    ).toThrow(UntrustedOrgKeyError);
+  });
+
+  it("refuses to build a rotation that would leave a remaining member without a key", async () => {
+    const { owner, bob, oldKey, item, identity } = await orgWithItem();
+    const nobodyConfirmed = memoryPins();
+    await expect(
+      buildRotation({
+        orgId: ORG,
+        ownerUserId: OWNER,
+        currentEpoch: 1,
+        oldKey,
+        items: [item],
+        remainingMembers: [owner.member("owner"), bob.member("member")],
+        pins: nobodyConfirmed,
+        identity,
+      }),
+    ).rejects.toBeInstanceOf(UnconfirmedMembersError);
+  });
+
+  it("reads items written before a rotation with a retired key, but prefers the current one", async () => {
+    const { oldKey, item } = await orgWithItem();
+    const newKey = await generateOrgKey();
+    await expect(decryptOrgItem(item, ORG, { current: newKey, retired: [oldKey] })).resolves.toMatchObject({
+      plaintext: SECRET,
+    });
   });
 });

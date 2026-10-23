@@ -5,6 +5,10 @@
  */
 import {
   type KeyPinStore,
+  bindingForItem,
+  decryptVaultItem,
+  encryptItemV2,
+  generateOrgKey,
   type OrgEpochStore,
   type OrgKeyWrap,
   PinnedKeyChangedError,
@@ -16,7 +20,7 @@ import {
   verifyMemberKey,
   verifyOrgKeyChain,
 } from "@nopass/crypto";
-import type { KeyBundle, OrgMember, WrapLink } from "@nopass/types";
+import type { EncryptedVaultItem, KeyBundle, OrgMember, RotateKeyRequest, WrapLink } from "@nopass/types";
 
 export type OrgKeyCheck =
   /** Verified: the key in `wrap` may be decrypted and used. */
@@ -75,6 +79,8 @@ export async function openOrgKey(
 
 export interface ResignInput {
   orgId: string;
+  /** Key epoch the wraps are signed for: the org's current one */
+  epoch: number;
   ownerUserId: string;
   orgKey: CryptoKey;
   members: OrgMember[];
@@ -92,7 +98,7 @@ export async function buildResignedWraps(input: ResignInput): Promise<{
   wraps: Array<{ userId: string; encryptedOrgKey: string; wrapSignature: string; keyEpoch: number }>;
   skipped: string[];
 }> {
-  const epoch = 1;
+  const { epoch } = input;
   const identity = await deriveIdentityKey(
     input.identity.protectedPrivateKey,
     input.identity.protectedPrivateKeyIv,
@@ -149,4 +155,86 @@ export async function buildResignedWraps(input: ResignInput): Promise<{
   } finally {
     identity.secretKey.fill(0);
   }
+}
+
+/** Some remaining members' keys are not confirmed (or not published), so a rotation would leave them out. */
+export class UnconfirmedMembersError extends Error {
+  constructor(readonly userIds: string[]) {
+    super(
+      `Confirm the safety numbers of every remaining member before rotating the key (${userIds.length} not confirmed). Members who have not published a key yet must sign in once or be removed.`,
+    );
+    this.name = "UnconfirmedMembersError";
+  }
+}
+
+export interface RotationInput {
+  orgId: string;
+  ownerUserId: string;
+  currentEpoch: number;
+  /** The key being retired: used here only to read items, never to write */
+  oldKey: CryptoKey;
+  /** Every org item, tombstones included */
+  items: EncryptedVaultItem[];
+  /** Members who keep access (the removed member, if any, is not in this list) */
+  remainingMembers: OrgMember[];
+  pins: KeyPinStore;
+  identity: ResignInput["identity"];
+}
+
+/**
+ * Build a complete org key rotation: a fresh key at currentEpoch + 1, every
+ * org item re-encrypted under it (v2 envelope, org scope, next revision),
+ * and an owner-signed wrap for every remaining member. Refuses to build a
+ * partial rotation: every remaining member must be confirmed.
+ */
+export async function buildRotation(input: RotationInput): Promise<{
+  newKey: CryptoKey;
+  request: RotateKeyRequest;
+}> {
+  const newEpoch = input.currentEpoch + 1;
+  const newKey = await generateOrgKey();
+  const { wraps, skipped } = await buildResignedWraps({
+    orgId: input.orgId,
+    epoch: newEpoch,
+    ownerUserId: input.ownerUserId,
+    orgKey: newKey,
+    members: input.remainingMembers,
+    pins: input.pins,
+    identity: input.identity,
+  });
+  if (skipped.length > 0) throw new UnconfirmedMembersError(skipped);
+
+  const items = [];
+  for (const item of input.items) {
+    const binding = bindingForItem({ ...item, orgId: input.orgId });
+    // Org items have no v1 form, so the AES key doubles as the unused MAC key
+    const current = await decryptVaultItem(item, binding, { vaultEncKey: input.oldKey, vaultMacKey: input.oldKey });
+    const encrypted = await encryptItemV2(current.plaintext, binding, current.revision + 1, newKey);
+    items.push({ id: item.id, ...encrypted });
+  }
+  return { newKey, request: { newEpoch, wraps, items } };
+}
+
+/** The org keys a client holds: the current one, and retired ones kept only to read. */
+export interface OrgKeyring {
+  current: CryptoKey;
+  retired: CryptoKey[];
+}
+
+/**
+ * Decrypt an org item with the current key, falling back to retired keys for
+ * reads that were in flight during a rotation. Writes must always use
+ * `ring.current`; nothing here encrypts.
+ */
+export async function decryptOrgItem(item: EncryptedVaultItem, orgId: string, ring: OrgKeyring) {
+  const binding = bindingForItem({ ...item, orgId });
+  let lastError: unknown;
+  for (const key of [ring.current, ...ring.retired]) {
+    try {
+      return await decryptVaultItem(item, binding, { vaultEncKey: key, vaultMacKey: key });
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
 }

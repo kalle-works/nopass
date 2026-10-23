@@ -396,6 +396,14 @@ export interface PendingInvite {
   wrapChain: WrapLink[];
 }
 
+/** Owner-only org key rotation; see POST /organizations/{id}/rotate. */
+export interface RotateKeyRequest {
+  newEpoch: number;
+  removeUserId?: string;
+  wraps: RewrapRequest["wraps"];
+  items: Array<{ id: string; blob: string; blobIv: string; blobMac: string }>;
+}
+
 export interface RewrapRequest {
   wraps: Array<{ userId: string; encryptedOrgKey: string; wrapSignature: string; keyEpoch: number }>;
 }
