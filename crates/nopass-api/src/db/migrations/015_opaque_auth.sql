@@ -18,8 +18,12 @@ ALTER TABLE users
     ADD CONSTRAINT users_srp_pair CHECK ((srp_salt IS NULL) = (srp_verifier IS NULL)) NOT VALID,
     ADD CONSTRAINT users_has_credential CHECK (opaque_record IS NOT NULL OR srp_verifier IS NOT NULL) NOT VALID;
 
--- users_email_hash_unkeyed and pending_srp_user are built CONCURRENTLY (020, 021)
--- so they don't block writes to existing tables.
+-- Plain (transactional) builds: pending_srp_sessions holds only handshakes younger
+-- than five minutes, and users_email_hash_unkeyed indexes bare ids of a small table.
+-- Both finish in moments; a concurrent build would need a drop-and-create file pair
+-- each for no practical gain.
+CREATE INDEX users_email_hash_unkeyed ON users(id) WHERE NOT email_hash_keyed;
+CREATE INDEX pending_srp_user ON pending_srp_sessions(user_id, created_at);
 
 -- Server AKE state between login start and finish. user_id is NULL for unknown or
 -- not-yet-migrated accounts, which get a fake (but indistinguishable) response.

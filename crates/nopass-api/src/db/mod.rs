@@ -6,6 +6,7 @@ pub mod keys;
 pub mod orgs;
 pub mod pending;
 pub mod recovery;
+pub mod schema;
 pub mod sessions;
 pub mod shares;
 pub mod subscriptions;
