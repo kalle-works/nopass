@@ -22,7 +22,9 @@ import {
 import { DEFAULT_KDF_PARAMS, type LoginItem } from "@nopass/types";
 
 // Point at another API instance with NOPASS_TEST_API_URL (e.g. http://127.0.0.1:3021/v1)
-const BASE = process.env["NOPASS_TEST_API_URL"] ?? "http://127.0.0.1:3001/v1";
+// (this package has no Node types, so read process.env through globalThis)
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env;
+const BASE = env?.["NOPASS_TEST_API_URL"] ?? "http://127.0.0.1:3001/v1";
 
 async function apiCall(method: string, path: string, body?: unknown, token?: string) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
