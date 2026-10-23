@@ -22,43 +22,17 @@ const PLANS: Plan[] = [
     features: [
       "Unlimited vault items",
       "Sync across all devices",
-      "Browser extensions",
-      "macOS desktop app with Touch ID",
+      "Chrome extension",
       "Team vault for up to 3 members",
       "Open source",
     ],
-  },
-  {
-    name: "Pro",
-    price: "€4",
-    unit: "per month",
-    note: "or €36 per year, 25% less",
-    cta: "Upgrade to Pro",
-    href: "/vault/billing",
-    features: [
-      "Everything in Free",
-      "Encrypted file attachments",
-      "Hardware key 2FA",
-      "Emergency access",
-      "REST API access",
-      "Priority support",
-    ],
-  },
-  {
-    name: "Teams",
-    price: "€5",
-    unit: "per seat, per month",
-    note: "Minimum 3 seats, billed annually",
-    cta: "Start a Teams trial",
-    href: "/vault/billing",
-    features: ["Everything in Pro", "Unlimited org members", "SSO / SAML", "Audit logs", "Dedicated support"],
   },
 ];
 
 export function Pricing() {
   return (
-    <Section id="pricing" title="Pricing" intro="Start free. Upgrade when you need more.">
-      <div className="grid overflow-hidden rounded-lg border border-divider md:grid-cols-3">
+    <Section id="pricing" title="Pricing" intro="Free while paid plans are in the works.">
+      <div className="max-w-md overflow-hidden rounded-lg border border-divider">
         {PLANS.map((plan) => (
           <div
             key={plan.name}

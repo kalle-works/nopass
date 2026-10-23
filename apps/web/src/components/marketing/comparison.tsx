@@ -10,7 +10,7 @@ const ROWS: Array<[string, string, string, string]> = [
   ["Run a command with secrets in its environment", "Yes, nopwd run", "Yes, op run", "Separate product (Secrets Manager)"],
   ["Browser extension and passkeys", "Yes", "Yes", "Yes"],
   ["Mobile apps", "No", "Yes", "Yes"],
-  ["SSO, SCIM and enterprise admin", "SSO on Teams plan", "Yes", "Yes"],
+  ["SSO, SCIM and enterprise admin", "No", "Yes", "Yes"],
 ];
 
 export function Comparison() {

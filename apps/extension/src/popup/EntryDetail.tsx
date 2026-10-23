@@ -10,7 +10,7 @@ interface EntryDetailProps {
   onFill: (entry: VaultEntry) => void;
 }
 
-/** Clipboard writes clear after 30s via the shared copyWithAutoClear logic. */
+/** The clear timer dies with the popup, so the clipboard is only cleared if the popup stays open for 30s. */
 const copy = (text: string) => useNopassStore.getState().copyWithAutoClear(text);
 
 export function EntryDetail({ entry, loadCredentials, onBack, onFill }: EntryDetailProps) {

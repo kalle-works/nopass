@@ -18,7 +18,16 @@ import {
   wrapVaultSubkeys,
 } from "@nopass/crypto";
 import { DEFAULT_KDF_PARAMS, type RecoveryInitResponse, type ReencryptedItem } from "@nopass/types";
-import { AuthShell, Banner, Button, Field, SecretText, StrengthMeter } from "@nopass/ui";
+import {
+  AuthShell,
+  Banner,
+  Button,
+  estimateStrength,
+  Field,
+  MASTER_PASSWORD_MIN_LEVEL,
+  SecretText,
+  StrengthMeter,
+} from "@nopass/ui";
 import { api } from "@/lib/api";
 import { AuthFooter } from "@/components/auth/auth-footer";
 import { downloadRecoveryKit } from "@/lib/recovery-kit";
@@ -98,6 +107,11 @@ export default function RecoverPage() {
   async function handleSetPassword(e: React.FormEvent) {
     e.preventDefault();
     if (!init || !oldSubkeys) return;
+    // Same policy as registration, so recovery can't set a weaker master password
+    if (estimateStrength(newPassword, email ? [email] : []).level < MASTER_PASSWORD_MIN_LEVEL) {
+      setError("Choose a stronger master password. It has to reach Strong.");
+      return;
+    }
     if (newPassword !== newPassword2) {
       setError("The passwords don't match.");
       return;

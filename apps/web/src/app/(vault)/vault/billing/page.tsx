@@ -15,7 +15,7 @@ const PLAN_LABELS: Record<SubscriptionPlan, string> = {
 };
 
 const PLAN_DESCRIPTIONS: Record<SubscriptionPlan, string> = {
-  free: "Unlimited vault items, sync, browser extensions, and team sharing for up to 3 members.",
+  free: "Unlimited vault items, sync, the Chrome extension, and team sharing for up to 3 members.",
   pro: "Everything in Free plus encrypted file attachments, hardware key 2FA, emergency access, and REST API access.",
   teams: "Everything in Pro plus unlimited org members, SSO / SAML, audit logs, and dedicated support.",
   enterprise: "Everything in Teams with custom contracts, SLAs, and on-premise options.",

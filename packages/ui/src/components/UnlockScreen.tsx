@@ -235,7 +235,14 @@ export function UnlockScreen({
       protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
     });
 
-    const sessionToken = await performLogin(keys);
+    let sessionToken: string;
+    try {
+      sessionToken = await performLogin(keys);
+    } catch {
+      masterKey.fill(0);
+      // The account exists now; a retry of register would only hit "already exists"
+      throw new Error("Your account was created, but signing in failed. Sign in to finish setting up your recovery kit.");
+    }
     if (onDownloadRecoveryKit) {
       pendingKit.current = { masterKey, sessionToken };
     } else {

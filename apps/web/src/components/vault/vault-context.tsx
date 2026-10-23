@@ -342,7 +342,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
   const copyWithStatus = useCallback(async (text: string, noun: string) => {
     const ok = await useNopassStore.getState().copyWithAutoClear(text);
-    setCopyStatus(ok ? `${noun} copied. Clipboard clears in 30s.` : "Couldn't access the clipboard.");
+    setCopyStatus(ok ? `${noun} copied.` : "Couldn't access the clipboard.");
     clearTimeout(copyTimer.current);
     copyTimer.current = setTimeout(() => setCopyStatus(null), NOTICE_MS);
   }, []);
