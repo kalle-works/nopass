@@ -21,7 +21,7 @@
     "@nopass/config": "workspace:*",
     "@nopass/types": "workspace:*",
     "@simplewebauthn/server": "^13.3.1",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^21.0.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
   }
