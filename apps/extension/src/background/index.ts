@@ -21,7 +21,11 @@
 
 import {
   MemoryRevisionStore,
+  type DecryptedItem,
+  type RevisionSnapshot,
+  applyV2OnlyMarker,
   bindingForItem,
+  trustStateId,
   decryptVaultItem,
   encryptVaultItem,
   generateCredential,
@@ -81,22 +85,30 @@ async function importVaultKeys(encKeyB64: string, macKeyB64: string) {
 
 /**
  * Highest revision seen per item, kept in storage.local so it survives
- * restarts: a server serving an older blob than this is refused.
+ * restarts: a server serving an older blob than this is refused. Named by
+ * the account key, not a server-supplied id, and primed with the account's
+ * v2-only marker when the server has one.
  */
-async function loadRevisions(defaultVaultId: string): Promise<MemoryRevisionStore> {
-  const key = `itemRevisions:${defaultVaultId}`;
-  const stored = (await chrome.storage.local.get(key))[key] as Record<string, number> | undefined;
-  return new MemoryRevisionStore(stored ?? {}, (snapshot) => {
+async function loadRevisions(vaultMacKey: CryptoKey, sessionToken: string): Promise<MemoryRevisionStore> {
+  const key = `itemRevisions:v2:${await trustStateId(vaultMacKey)}`;
+  const stored = (await chrome.storage.local.get(key))[key] as Partial<RevisionSnapshot> | undefined;
+  const store = new MemoryRevisionStore(stored ?? {}, (snapshot) => {
     void chrome.storage.local.set({ [key]: snapshot });
   });
+  try {
+    const { marker } = await api.keys.vaultFormat(sessionToken);
+    await applyV2OnlyMarker(marker, vaultMacKey, store);
+  } catch {
+    // offline — keep what this device already knows
+  }
+  return store;
 }
 
 async function decryptStored(
   item: EncryptedVaultItem,
   state: { vaultEncKey: CryptoKey; vaultMacKey: CryptoKey; revisions: MemoryRevisionStore },
 ) {
-  const { plaintext } = await decryptVaultItem(item, bindingForItem(item), state, state.revisions);
-  return plaintext;
+  return decryptVaultItem(item, bindingForItem(item), state, state.revisions);
 }
 
 // ─── Auto-lock ────────────────────────────────────────────────────────────────
@@ -158,7 +170,7 @@ function restoreVaultState(): Promise<void> {
     try {
       const { vaultEncKey, vaultMacKey } = await importVaultKeys(stored.encKeyB64, stored.macKeyB64);
       const items = await api.vault.items(stored.defaultVaultId, stored.sessionToken);
-      const revisions = await loadRevisions(stored.defaultVaultId);
+      const revisions = await loadRevisions(vaultMacKey, stored.sessionToken);
       // A LOCK (or a fresh UNLOCK) that happened while we awaited wins
       if (lockGeneration !== generation || vaultState) return;
       vaultState = {
@@ -270,7 +282,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
 
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
       lockGeneration++; // invalidate any restore still in flight
-      const revisions = await loadRevisions(message.defaultVaultId);
+      const revisions = await loadRevisions(vaultMacKey, message.sessionToken);
       vaultState = {
         sessionToken: message.sessionToken,
         defaultVaultId: message.defaultVaultId,
@@ -323,7 +335,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
           .filter((i) => i.deletedAt === null && i.itemType === "login")
           .map(async (item) => {
             try {
-              const plain = await decryptStored(item, state);
+              const { plaintext: plain } = await decryptStored(item, state);
               if (plain.type !== "login") return null;
               if (nameMatches(plain.name, query) || (url ? urlMatches(plain.urls, url) : !query)) {
                 return {
@@ -353,7 +365,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
 
-      const plain = await decryptStored(item, vaultState);
+      const { plaintext: plain } = await decryptStored(item, vaultState);
       if (plain.type !== "login") return { error: "not a login item" };
 
       return { username: plain.username, password: plain.password };
@@ -379,7 +391,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
 
-      const plain = await decryptStored(item, vaultState);
+      const { plaintext: plain } = await decryptStored(item, vaultState);
       if (plain.type !== "login") return { error: "not a login item" };
 
       const target = await resolveFillTarget(message.tabId);
@@ -500,6 +512,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         { scope: { kind: "personal" }, itemId, itemType: "login" },
         vaultState.vaultEncKey,
         vaultState.revisions,
+        null,
       );
       const created = await api.vault.create(
         vaultState.defaultVaultId,
@@ -535,7 +548,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       candidates.sort((a, b) =>
         (b.plain.passkey!.createdAt ?? "").localeCompare(a.plain.passkey!.createdAt ?? ""),
       );
-      const { item, plain } = candidates[0]!;
+      const { item, plain, current } = candidates[0]!;
       const passkey = plain.passkey!;
 
       // Sign FIRST — persisting an incremented signCount before a failed
@@ -563,6 +576,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         bindingForItem(item),
         vaultState.vaultEncKey,
         vaultState.revisions,
+        current,
       );
       const updated = await api.vault.update(
         item.vaultId,
@@ -656,7 +670,7 @@ function isRegistrableRpId(rpId: string): boolean {
 async function findPasskeyLogins(
   rpId: string,
   allowCredentialIdsB64u: string[],
-): Promise<Array<{ item: EncryptedVaultItem; plain: LoginItem }>> {
+): Promise<Array<{ item: EncryptedVaultItem; plain: LoginItem; current: DecryptedItem }>> {
   if (!vaultState) return [];
   const state = vaultState;
 
@@ -665,7 +679,8 @@ async function findPasskeyLogins(
       .filter((i) => i.deletedAt === null && i.itemType === "login")
       .map(async (item) => {
         try {
-          const plain = await decryptStored(item, state);
+          const current = await decryptStored(item, state);
+          const plain = current.plaintext;
           if (plain.type !== "login" || !plain.passkey) return null;
           if (plain.passkey.rpId !== rpId) return null;
           if (
@@ -674,11 +689,11 @@ async function findPasskeyLogins(
           ) {
             return null;
           }
-          return { item, plain };
+          return { item, plain, current };
         } catch {
           return null;
         }
       }),
   );
-  return results.filter((r): r is { item: EncryptedVaultItem; plain: LoginItem } => r !== null);
+  return results.filter((r): r is { item: EncryptedVaultItem; plain: LoginItem; current: DecryptedItem } => r !== null);
 }

@@ -31,8 +31,8 @@ the literal with an environment variable yourself.`,
     await withSession(async (session) => {
       const api = createApiClient(session.apiUrl);
       const existing = await fetchAndDecryptItems(session);
-      const { vaultEncKey } = await importKeys(session, { write: true });
-      const revisions = openRevisionStore(session.defaultVaultId);
+      const { vaultEncKey, vaultMacKey } = await importKeys(session, { write: true });
+      const revisions = await openRevisionStore(vaultMacKey, () => api.keys.vaultFormat(session.sessionToken));
 
       let result;
       try {
@@ -49,6 +49,7 @@ the literal with an environment variable yourself.`,
               { scope: { kind: "personal" }, itemId: id, itemType: "login" },
               vaultEncKey,
               revisions,
+              null,
             );
             await api.vault.createItem(session.defaultVaultId, { id, itemType: "login", ...encrypted }, session.sessionToken);
             revisions.record(id, revision);

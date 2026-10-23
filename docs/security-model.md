@@ -30,6 +30,13 @@ being re-encrypted.
 
 Each client stores the highest revision it has seen for each item and rejects
 anything older. It also rejects a v1 blob for an item it has already seen as v2.
+An edit first decrypts the blob it replaces and writes one past the higher of
+that revision and the local record, so a device with no history never writes
+a revision other devices would refuse. Revisions above 2^53 - 1 are refused.
+
+The store is named by `trustStateId`, an HMAC under the account's vault MAC
+key. The server cannot change that name (unlike user or vault ids it serves),
+so it cannot point a device at an empty store.
 
 Limits:
 
@@ -42,9 +49,14 @@ Limits:
 
 ### Migration
 
-v1 items still decrypt. Any write produces v2, and the web app re-encrypts
-the remaining v1 items once per unlock. Account recovery re-encrypts every
-item into v2.
+v1 items still decrypt until the account is v2-only. Any write produces v2,
+and the web app re-encrypts the remaining v1 items once per unlock. When no v1
+item is left, it stores a v2-only marker on the server: an HMAC under the
+vault MAC key, which the server cannot forge. Every client fetches it at
+unlock, verifies it, and from then on refuses v1 blobs, including on fresh
+devices. The server can withhold the marker (a fresh device then accepts v1
+again) but cannot fake it, and a device that has seen it keeps the setting
+locally. Account recovery re-encrypts every item into v2.
 
 ## Identity keys and key verification
 
@@ -69,9 +81,12 @@ before identity keys existed publish one on their next unlock.
 A safety number is six groups of five digits computed from the user id and
 identity key (5,200 rounds of SHA-512). Members compare it out of band.
 
-Clients pin each user's identity key the first time they see it (trust on
-first use). If a pinned key later changes, the client refuses to use it and
-shows a "key changed" error. Pins are stored per device.
+Clients never pin a key silently. A key is pinned only when the user says the
+safety numbers match: when sending an invite, when accepting one, when first
+opening an organization, or from the member list. Until then the key is not
+used to share or accept organization keys. If a pinned key later changes, the
+client refuses it and shows a "key changed" error. Pins are stored per device
+under the same account-derived name as the revision store.
 
 Invites to users who have not published an identity key yet are blocked
 until that user signs in once.
@@ -82,20 +97,32 @@ When someone shares an organization key, they sign the wrap with their
 identity key:
 
 ```
-"nopwd-org-key-wrap-v1" || 0x00 || org id || recipient id || signer id
-  || len(role) || role || RSA-OAEP ciphertext of the org key
+"nopwd-org-key-wrap-v2" || 0x00 || org id || key epoch (u32) || recipient id
+  || signer id || len(role) || role || RSA-OAEP ciphertext of the org key
 ```
 
-Before accepting an invite, the invitee checks the inviter's signed bundle
-against their pin, sees the inviter's safety number, and checks the wrap
-signature. The same check runs every time an organization is opened. A server
-that wraps a key of its own choosing to a member cannot forge the signature.
-Organization creators sign their own wrap; the client picks the organization
-id so it can be included in that signature.
+The server returns a chain of wraps for each member: the member's own wrap,
+then the wrap of whoever signed it, and so on, ending with the owner's
+self-signed wrap. Before an invite is accepted, and every time an
+organization is opened, the client checks that:
 
-Wraps made before signing existed have no signature. They are still accepted,
-with a warning, so existing organizations keep working. An admin can replace
-one by removing the member and inviting them again.
+- every wrap in the chain is signed by the recipient of the next one;
+- every signer holds the owner or admin role in their own signed wrap;
+- the chain ends with a self-signed wrap whose role is owner;
+- every signer's identity key is pinned (the user confirmed the safety
+  number; if not, the client lists the numbers to compare and uses nothing
+  until the user confirms them);
+- the key epoch is not below the highest epoch this device has accepted for
+  the organization, so old wraps can't be replayed after a key change.
+
+A server that wraps a key of its own choosing to a member cannot produce such
+a chain without the identity key of someone the member confirmed.
+
+Unsigned wraps (from before signing existed) are never used. The owner of
+such an organization sees a re-sign action: after an explicit decision, the
+client signs the owner's own wrap and re-wraps the key, signed, for every
+member whose safety number the owner has confirmed. Other members of an
+unsigned organization see an error asking them to have the owner re-sign.
 
 ## Known limits and future work
 
@@ -104,7 +131,10 @@ one by removing the member and inviting them again.
   every pin then reports as a changed key. Before RSA rotation ships, it needs
   a re-pin flow: the old identity key signs the new one, and clients accept a
   change that carries a valid signature from the pinned key.
-- Pins and revision records are per device and are not synced.
+- Pins, revision records and accepted org epochs are per device and are not
+  synced.
+- Key epochs are signed and checked, but there is no org key rotation yet;
+  every organization is at epoch 1.
 - Item shares, the recovery blob and vault names do not use AAD binding. Each
   share has its own random key and each account has exactly one recovery
   blob, so swapping them gains nothing. Vault names were left out as low

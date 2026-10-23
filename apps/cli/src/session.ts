@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSy
 import { join } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
-import { MemoryRevisionStore } from "@nopass/crypto";
+import { MemoryRevisionStore, type RevisionSnapshot, applyV2OnlyMarker, trustStateId } from "@nopass/crypto";
 
 export interface Session {
   sessionToken: string;
@@ -41,20 +41,33 @@ export function saveSession(session: Session): void {
 
 /**
  * Highest revision seen per vault item, persisted next to the session so a
- * server serving an older item blob is refused on later runs too.
+ * server serving an older item blob is refused on later runs too. The file
+ * is named by the account key rather than a server-supplied id, and the
+ * account's v2-only marker is applied when the server has one.
  */
-export function openRevisionStore(defaultVaultId: string): MemoryRevisionStore {
-  const path = join(SESSION_DIR, `item-revisions-${defaultVaultId}.json`);
-  let initial: Record<string, number> = {};
+export async function openRevisionStore(
+  vaultMacKey: CryptoKey,
+  fetchMarker?: () => Promise<{ marker: string | null }>,
+): Promise<MemoryRevisionStore> {
+  const path = join(SESSION_DIR, `item-revisions-v2-${await trustStateId(vaultMacKey)}.json`);
+  let initial: Partial<RevisionSnapshot> = {};
   try {
-    initial = JSON.parse(readFileSync(path, "utf-8")) as Record<string, number>;
+    initial = JSON.parse(readFileSync(path, "utf-8")) as Partial<RevisionSnapshot>;
   } catch {
     // first run on this machine
   }
-  return new MemoryRevisionStore(initial, (snapshot) => {
+  const store = new MemoryRevisionStore(initial, (snapshot) => {
     mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(path, JSON.stringify(snapshot), { encoding: "utf-8", mode: 0o600 });
   });
+  if (fetchMarker) {
+    try {
+      await applyV2OnlyMarker((await fetchMarker()).marker, vaultMacKey, store);
+    } catch {
+      // offline — keep what this machine already knows
+    }
+  }
+  return store;
 }
 
 export function clearSession(): void {
