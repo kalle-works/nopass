@@ -20,6 +20,14 @@ pub const OPAQUE_LOGIN_TTL_SECS: u64 = 300;
 /// so the window is longer than the SRP handshake's 5 minutes.
 pub const RECOVERY_SESSION_TTL_SECS: u64 = 600;
 
+/// Drop limiter entries whose quota has fully replenished; they are
+/// indistinguishable from a key never seen. Without this every IP or share id
+/// that ever hit a limiter stays in memory until restart.
+fn prune_limiter<K: std::hash::Hash + Eq + Clone>(limiter: &DefaultKeyedRateLimiter<K>) {
+    limiter.retain_recent();
+    limiter.shrink_to_fit();
+}
+
 /// Per-IP auth limiter: `per_minute` requests per minute, burst of half that
 /// (20/min with burst 10 by default).
 fn auth_limiter(per_minute: u32) -> DefaultKeyedRateLimiter<IpAddr> {
@@ -38,6 +46,9 @@ pub struct AppState {
     /// per account by the login throttle, so this only has to stop floods.
     pub auth_rate_limiter: Arc<DefaultKeyedRateLimiter<IpAddr>>,
     /// Per-share limiter for the public view endpoint (6 req/min, burst 3).
+    /// Like the auth limiter it lives in process memory, so each replica
+    /// enforces its own budget: with N replicas the effective limit is up to N
+    /// times the configured one.
     pub share_rate_limiter: Arc<DefaultKeyedRateLimiter<Uuid>>,
     /// Stripe client — `None` when STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are not set.
     pub stripe: Option<StripeClient>,
@@ -94,12 +105,17 @@ impl AppState {
     pub fn spawn_housekeeping(self: &Arc<Self>) {
         let db = self.db.clone();
         let lookup_key = self.config.email_lookup_key.0.clone();
+        let auth_limiter = self.auth_rate_limiter.clone();
+        let share_limiter = self.share_rate_limiter.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
             let mut ticks: u64 = 0;
             loop {
                 interval.tick().await;
                 ticks += 1;
+                // Keyed limiters add an entry per IP / share id ever seen
+                prune_limiter(&auth_limiter);
+                prune_limiter(&share_limiter);
                 match crate::db::auth::key_email_hashes(&db, |h| account_key(&lookup_key, h)).await {
                     Ok(n) if n > 0 => tracing::info!("keyed {n} legacy email hashes"),
                     Ok(_) => {}
@@ -157,6 +173,24 @@ mod tests {
     fn allowed_in_a_row(limiter: &DefaultKeyedRateLimiter<IpAddr>) -> usize {
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         (0..2000).take_while(|_| limiter.check_key(&ip).is_ok()).count()
+    }
+
+    #[test]
+    fn prune_limiter_drops_replenished_keys_only() {
+        // 1000/s replenishes in a millisecond; the slow key stays throttled
+        let fast: DefaultKeyedRateLimiter<u8> =
+            DefaultKeyedRateLimiter::keyed(Quota::per_second(NonZeroU32::new(1000).unwrap()));
+        let slow: DefaultKeyedRateLimiter<u8> =
+            DefaultKeyedRateLimiter::keyed(Quota::per_hour(NonZeroU32::new(1).unwrap()));
+        for k in 0..50u8 {
+            fast.check_key(&k).unwrap();
+            slow.check_key(&k).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        prune_limiter(&fast);
+        prune_limiter(&slow);
+        assert_eq!(fast.len(), 0);
+        assert_eq!(slow.len(), 50);
     }
 
     #[test]
