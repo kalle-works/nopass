@@ -178,6 +178,7 @@ describe("buildRotation", () => {
       removeUserId: null,
       known: { items: [], members: [] },
       dropItemIds: [],
+      acknowledgedGone: { items: [], members: [] },
       pins,
       revisions: new MemoryRevisionStore(),
       identity,
@@ -319,6 +320,27 @@ describe("buildRotation", () => {
     await expect(
       buildRotation({ ...base, known: { items: [], members: [OWNER, BOB, CAROL] } }),
     ).rejects.toBeInstanceOf(RotationSetIncompleteError);
+  });
+
+  it("lets the owner acknowledge members and items that are gone, and reports them for the confirm step", async () => {
+    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+    const GONE_ITEM = "77777777-7777-4777-8777-777777777777";
+    const base = {
+      ...rotationBase(oldKey, identity, pins),
+      items: [item],
+      members: [owner.member("owner"), bob.member("member")],
+      known: { items: [ITEM, GONE_ITEM], members: [OWNER, BOB, CAROL] },
+    };
+
+    await expect(buildRotation(base)).rejects.toBeInstanceOf(RotationSetIncompleteError);
+    // Acknowledging only some of it is not enough
+    await expect(
+      buildRotation({ ...base, acknowledgedGone: { items: [], members: [CAROL] } }),
+    ).rejects.toBeInstanceOf(RotationSetIncompleteError);
+
+    const plan = await buildRotation({ ...base, acknowledgedGone: { items: [GONE_ITEM], members: [CAROL] } });
+    expect(plan.acknowledgedGone).toEqual({ items: [GONE_ITEM], members: [CAROL] });
+    expect(plan.keepsAccess.sort()).toEqual([OWNER, BOB].sort());
   });
 
   it("stops on an item it cannot decrypt (including a rolled-back one) until the owner chooses to delete it", async () => {

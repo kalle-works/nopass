@@ -216,6 +216,12 @@ export interface RotationInput {
   known: OrgLedgerEntry;
   /** Items the owner chose to delete because they cannot be decrypted */
   dropItemIds: string[];
+  /**
+   * Ledger entries missing from the server that the owner acknowledged as
+   * gone (account deleted, invite declined or expired, removed elsewhere).
+   * Anything missing and not acknowledged still refuses the rotation.
+   */
+  acknowledgedGone: OrgLedgerEntry;
   pins: KeyPinStore;
   revisions: RevisionStore;
   identity: ResignInput["identity"];
@@ -227,6 +233,8 @@ export interface RotationPlan {
   revisions: Array<[string, number]>;
   keepsAccess: string[];
   losesAccess: string[];
+  /** Acknowledged-gone ledger entries that really were missing; drop them from the ledger on success */
+  acknowledgedGone: OrgLedgerEntry;
 }
 
 /**
@@ -241,8 +249,10 @@ export interface RotationPlan {
 export async function buildRotation(input: RotationInput): Promise<RotationPlan> {
   const serverItems = new Set(input.items.map((i) => i.id));
   const serverMembers = new Set(input.members.map((m) => m.userId));
-  const missingItems = input.known.items.filter((id) => !serverItems.has(id) && !input.dropItemIds.includes(id));
-  const missingMembers = input.known.members.filter((id) => !serverMembers.has(id));
+  const goneItems = input.known.items.filter((id) => !serverItems.has(id) && !input.dropItemIds.includes(id));
+  const goneMembers = input.known.members.filter((id) => !serverMembers.has(id));
+  const missingItems = goneItems.filter((id) => !input.acknowledgedGone.items.includes(id));
+  const missingMembers = goneMembers.filter((id) => !input.acknowledgedGone.members.includes(id));
   if (missingItems.length > 0 || missingMembers.length > 0) {
     throw new RotationSetIncompleteError(missingItems, missingMembers);
   }
@@ -292,6 +302,7 @@ export async function buildRotation(input: RotationInput): Promise<RotationPlan>
     revisions,
     keepsAccess: remaining.map((m) => m.userId),
     losesAccess: input.removeUserId ? [input.removeUserId] : [],
+    acknowledgedGone: { items: goneItems, members: goneMembers },
   };
 }
 
