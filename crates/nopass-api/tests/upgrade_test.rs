@@ -1,3 +1,5 @@
+// Each test binary compiles the shared helpers on its own and uses a subset
+#[allow(dead_code)]
 mod helpers;
 
 use std::path::Path;

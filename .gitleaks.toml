@@ -1,0 +1,10 @@
+# Extends the default ruleset. SealedSecrets are encrypted to the cluster's
+# public key and are meant to live in git; their ciphertext trips the
+# generic-api-key rule. Other known false positives (test vectors) are pinned
+# by fingerprint in .gitleaksignore.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Bitnami SealedSecret ciphertext"
+paths = ['''k8s/.*sealed-secret\.yaml$''']

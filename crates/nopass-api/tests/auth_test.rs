@@ -21,8 +21,8 @@ async fn register_returns_201_with_user_id(pool: PgPool) {
         srp_salt: B64.encode(&salt),
         srp_verifier: B64.encode(&verifier),
         kdf_params: KdfParams::default(),
-        protected_symmetric_key: B64.encode(&[0u8; 32]),
-        protected_symmetric_key_iv: B64.encode(&[0u8; 12]),
+        protected_symmetric_key: B64.encode([0u8; 32]),
+        protected_symmetric_key_iv: B64.encode([0u8; 12]),
         public_key: None,
         protected_private_key: None,
         protected_private_key_iv: None,
@@ -51,8 +51,8 @@ async fn register_duplicate_email_returns_409(pool: PgPool) {
         srp_salt: B64.encode(&salt),
         srp_verifier: B64.encode(&verifier),
         kdf_params: KdfParams::default(),
-        protected_symmetric_key: B64.encode(&[0u8; 32]),
-        protected_symmetric_key_iv: B64.encode(&[0u8; 12]),
+        protected_symmetric_key: B64.encode([0u8; 32]),
+        protected_symmetric_key_iv: B64.encode([0u8; 12]),
         public_key: None,
         protected_private_key: None,
         protected_private_key_iv: None,
@@ -69,10 +69,10 @@ async fn register_rejects_invalid_base64(pool: PgPool) {
     let req = serde_json::json!({
         "emailHash": compute_email_hash("alice@example.com"),
         "srpSalt": "!!!not-valid-base64!!!",
-        "srpVerifier": B64.encode(&[0u8; 32]),
+        "srpVerifier": B64.encode([0u8; 32]),
         "kdfParams": { "type": "argon2id", "memoryKib": 65536, "iterations": 3, "parallelism": 4 },
-        "protectedSymmetricKey": B64.encode(&[0u8; 32]),
-        "protectedSymmetricKeyIv": B64.encode(&[0u8; 12]),
+        "protectedSymmetricKey": B64.encode([0u8; 32]),
+        "protectedSymmetricKeyIv": B64.encode([0u8; 12]),
     });
 
     let resp = server.post("/v1/auth/register").json(&req).await;
@@ -90,7 +90,7 @@ async fn srp_init_returns_server_public_b_and_salt(pool: PgPool) {
         .post("/v1/auth/srp/init")
         .json(&SrpInitRequest {
             email_hash: compute_email_hash("alice@example.com"),
-            client_public_a: B64.encode(&[0xab; 256]), // fake A for step 1
+            client_public_a: B64.encode([0xab; 256]), // fake A for step 1
         })
         .await;
 
@@ -109,7 +109,7 @@ async fn srp_init_unknown_email_returns_401(pool: PgPool) {
         .post("/v1/auth/srp/init")
         .json(&SrpInitRequest {
             email_hash: compute_email_hash("nonexistent@example.com"),
-            client_public_a: B64.encode(&[0xab; 256]),
+            client_public_a: B64.encode([0xab; 256]),
         })
         .await;
 
@@ -139,7 +139,7 @@ async fn srp_verify_wrong_password_returns_401(pool: PgPool) {
         .post("/v1/auth/srp/init")
         .json(&SrpInitRequest {
             email_hash: email_hash.clone(),
-            client_public_a: B64.encode(&[0xab; 256]),
+            client_public_a: B64.encode([0xab; 256]),
         })
         .await
         .json();
@@ -149,7 +149,7 @@ async fn srp_verify_wrong_password_returns_401(pool: PgPool) {
         .post("/v1/auth/srp/verify")
         .json(&SrpVerifyRequest {
             session_id: init_resp.session_id,
-            client_proof_m1: B64.encode(&[0xde, 0xad, 0xbe, 0xef]),
+            client_proof_m1: B64.encode([0xde, 0xad, 0xbe, 0xef]),
             device_id: None,
         })
         .await;
@@ -165,7 +165,7 @@ async fn srp_verify_invalid_session_returns_401(pool: PgPool) {
         .post("/v1/auth/srp/verify")
         .json(&SrpVerifyRequest {
             session_id: Uuid::new_v4(), // no such session
-            client_proof_m1: B64.encode(&[0u8; 32]),
+            client_proof_m1: B64.encode([0u8; 32]),
             device_id: None,
         })
         .await;

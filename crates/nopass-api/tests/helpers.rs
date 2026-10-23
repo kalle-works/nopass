@@ -39,8 +39,8 @@ pub async fn register_user(server: &TestServer, email: &str, password: &str) {
         srp_salt: B64.encode(&srp_salt),
         srp_verifier: B64.encode(&srp_verifier),
         kdf_params: KdfParams::default(),
-        protected_symmetric_key: B64.encode(&[0u8; 32]), // placeholder for tests
-        protected_symmetric_key_iv: B64.encode(&[0u8; 12]),
+        protected_symmetric_key: B64.encode([0u8; 32]), // placeholder for tests
+        protected_symmetric_key_iv: B64.encode([0u8; 12]),
         public_key: None,
         protected_private_key: None,
         protected_private_key_iv: None,

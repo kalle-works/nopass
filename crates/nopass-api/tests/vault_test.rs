@@ -9,7 +9,7 @@ use uuid::Uuid;
 use helpers::{build_test_server, login, register_user};
 
 fn fake_blob() -> (String, String, String) {
-    (B64.encode(&[0xde; 48]), B64.encode(&[0xad; 12]), B64.encode(&[0xbe; 32]))
+    (B64.encode([0xde; 48]), B64.encode([0xad; 12]), B64.encode([0xbe; 32]))
 }
 
 // ─── Create item ──────────────────────────────────────────────────────────────
