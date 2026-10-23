@@ -1,8 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronRight, Copy, RefreshCw, X } from "lucide-react";
 import type { LoginItem, CustomField } from "@nopass/types";
+import { Button, IconButton } from "../../primitives/Button";
+import { Field, TextAreaField, inputClass } from "../../primitives/Field";
+import { SecretText } from "../../primitives/Secret";
+import { StrengthMeter } from "../../primitives/StrengthMeter";
+import { cx } from "../../primitives/cx";
 import { TagsEditor } from "./TagsEditor";
+import { EditorActions, editorKeyHandler, submitHandler } from "./shared";
 
 interface LoginEditorProps {
   initial?: Partial<LoginItem> | undefined;
@@ -37,18 +44,6 @@ function generatePassword(opts: GeneratorOptions): string {
     .join("");
 }
 
-function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string; color: string } {
-  if (!pw) return { score: 0, label: "", color: "" };
-  let score = 0;
-  if (pw.length >= 8) score++;
-  if (pw.length >= 16) score++;
-  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
-  if (/[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw)) score++;
-  const labels = ["", "Weak", "Fair", "Strong", "Very strong"];
-  const colors = ["", "bg-[#E8321A]", "bg-[#D6FF3F]/60", "bg-[#D6FF3F]", "bg-[#7CFF6B]"];
-  return { score: score as 0 | 1 | 2 | 3 | 4, label: labels[score]!, color: colors[score]! };
-}
-
 const DEFAULT_OPTS: GeneratorOptions = {
   length: 20,
   uppercase: true,
@@ -76,11 +71,7 @@ function GeneratorPopover({ onUse, onClose }: { onUse: (pw: string) => void; onC
     setPreview(generatePassword(merged));
   }
 
-  function regenerate() {
-    setPreview(generatePassword(opts));
-  }
-
-  const toggle = (key: keyof Pick<GeneratorOptions, "uppercase" | "lowercase" | "numbers" | "symbols">) => {
+  const toggle = (key: "uppercase" | "lowercase" | "numbers" | "symbols") => {
     const next = { ...opts, [key]: !opts[key] };
     const anyOn = next.uppercase || next.lowercase || next.numbers || next.symbols;
     if (!anyOn) return;
@@ -88,98 +79,83 @@ function GeneratorPopover({ onUse, onClose }: { onUse: (pw: string) => void; onC
   };
 
   return (
-    <div ref={ref} className="absolute right-0 top-full mt-1 z-50 w-72 bg-[#11110F] border border-[#2B2923] p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="flex-1 font-mono text-xs text-[#D6FF3F] bg-[#070706] border border-[#2B2923] px-3 py-1.5 break-all">{preview}</span>
-        <button type="button" onClick={regenerate} title="Regenerate" className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] transition-colors shrink-0">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-            <path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
-          </svg>
-        </button>
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label="Password generator"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+      className="absolute right-0 top-full z-30 mt-1 w-72 space-y-4 rounded-lg border border-divider bg-surface p-4 shadow-overlay"
+    >
+      <div className="flex items-start gap-2">
+        <div className="min-h-9 flex-1 rounded border border-divider bg-bg-subtle px-3 py-1.5 text-mono-sm">
+          <SecretText value={preview} />
+        </div>
+        <IconButton label="Regenerate" onClick={() => setPreview(generatePassword(opts))}>
+          <RefreshCw aria-hidden className="size-4" />
+        </IconButton>
       </div>
 
       <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest">Length: {opts.length}</span>
-        </div>
+        <label htmlFor="generator-length" className="mb-1 block text-meta font-medium text-fg">
+          Length: <span className="tabular-nums">{opts.length}</span>
+        </label>
         <input
+          id="generator-length"
           type="range"
           min={8}
           max={64}
           value={opts.length}
           onChange={(e) => update({ length: Number(e.target.value) })}
-          className="w-full accent-[#D6FF3F]"
+          className="w-full accent-accent"
         />
-        <div className="flex justify-between font-mono text-[10px] text-[#9C988D] -mt-0.5">
-          <span>8</span><span>64</span>
+        <div className="flex justify-between text-mono-sm text-muted">
+          <span>8</span>
+          <span>64</span>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
         {(["uppercase", "lowercase", "numbers", "symbols"] as const).map((key) => (
-          <label key={key} className="flex items-center gap-2 cursor-pointer">
+          <label key={key} className="flex cursor-pointer items-center gap-2 text-ui text-fg">
             <input
               type="checkbox"
               checked={opts[key]}
               onChange={() => toggle(key)}
-              className="accent-[#D6FF3F] w-3.5 h-3.5"
+              className="size-4 accent-accent"
             />
-            <span className="font-mono text-xs text-[#F4F1E8] capitalize">{key}</span>
+            <span className="capitalize">{key}</span>
           </label>
         ))}
       </div>
 
-      <button
+      <Button
         type="button"
-        onClick={() => { onUse(preview); onClose(); }}
-        className="w-full py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] text-[#070706] transition-colors"
+        variant="secondary"
+        className="w-full"
+        onClick={() => {
+          onUse(preview);
+          onClose();
+        }}
       >
         Use this password
-      </button>
+      </Button>
     </div>
   );
 }
 
-function TotpField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  function parseOtpUri(input: string): string {
-    const trimmed = input.trim();
-    if (trimmed.startsWith("otpauth://")) return trimmed;
-    const secret = trimmed.replace(/\s/g, "").toUpperCase();
-    if (/^[A-Z2-7]+=*$/.test(secret)) {
-      return `otpauth://totp/nopwd?secret=${secret}&issuer=nopwd`;
-    }
-    return trimmed;
+function parseOtpUri(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("otpauth://")) return trimmed;
+  const secret = trimmed.replace(/\s/g, "").toUpperCase();
+  if (/^[A-Z2-7]+=*$/.test(secret)) {
+    return `otpauth://totp/nopwd?secret=${secret}&issuer=nopwd`;
   }
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(parseOtpUri(e.target.value))}
-          placeholder="otpauth://totp/… or bare secret key"
-          autoComplete="off"
-          className={inputClass}
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            title="Remove TOTP"
-            className="p-2 text-[#9C988D] hover:text-[#E8321A] transition-colors shrink-0"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        )}
-      </div>
-      <p className="font-mono text-[10px] text-[#9C988D]">
-        Paste a <code>otpauth://</code> URI from your authenticator app, or the raw base32 secret key.
-      </p>
-    </div>
-  );
+  return trimmed;
 }
 
 function CustomFieldsEditor({
@@ -189,12 +165,6 @@ function CustomFieldsEditor({
   fields: CustomField[];
   onChange: (fields: CustomField[]) => void;
 }) {
-  function add() {
-    onChange([...fields, { name: "", value: "", fieldType: "text" }]);
-  }
-  function remove(i: number) {
-    onChange(fields.filter((_, idx) => idx !== i));
-  }
   function update(i: number, patch: Partial<CustomField>) {
     onChange(fields.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
   }
@@ -208,49 +178,40 @@ function CustomFieldsEditor({
             value={field.name}
             onChange={(e) => update(i, { name: e.target.value })}
             placeholder="Field name"
-            className={`${inputClass} w-28 shrink-0`}
+            aria-label={`Custom field ${i + 1} name`}
+            className={cx(inputClass, "h-9 w-28 shrink-0")}
           />
-          <div className="relative flex-1">
-            <input
-              type={field.fieldType === "hidden" ? "password" : "text"}
-              value={field.value}
-              onChange={(e) => update(i, { value: e.target.value })}
-              placeholder="Value"
-              autoComplete="off"
-              className={inputClass}
-            />
-          </div>
+          <input
+            type={field.fieldType === "hidden" ? "password" : "text"}
+            value={field.value}
+            onChange={(e) => update(i, { value: e.target.value })}
+            placeholder="Value"
+            autoComplete="off"
+            aria-label={`Custom field ${i + 1} value`}
+            className={cx(inputClass, "h-9 min-w-0 flex-1")}
+          />
           <select
             value={field.fieldType}
             onChange={(e) => update(i, { fieldType: e.target.value as CustomField["fieldType"] })}
-            className="py-2 px-2 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] font-mono text-xs focus:outline-none focus:border-[#D6FF3F]"
-            title="Field type"
+            aria-label={`Custom field ${i + 1} type`}
+            className={cx(inputClass, "h-9 w-24 shrink-0 px-2")}
           >
             <option value="text">Text</option>
             <option value="hidden">Secret</option>
           </select>
-          <button
-            type="button"
-            onClick={() => remove(i)}
-            className="p-2 text-[#9C988D] hover:text-[#E8321A] transition-colors shrink-0"
-            title="Remove field"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+          <IconButton label="Remove field" onClick={() => onChange(fields.filter((_, idx) => idx !== i))}>
+            <X aria-hidden className="size-4" />
+          </IconButton>
         </div>
       ))}
-      <button
+      <Button
         type="button"
-        onClick={add}
-        className="flex items-center gap-1.5 font-mono text-xs text-[#D6FF3F] hover:underline"
+        variant="ghost"
+        size="sm"
+        onClick={() => onChange([...fields, { name: "", value: "", fieldType: "text" }])}
       >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
         Add field
-      </button>
+      </Button>
     </div>
   );
 }
@@ -264,15 +225,13 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
   const [totp, setTotp] = useState(initial?.totp ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [customFields, setCustomFields] = useState<CustomField[]>(initial?.customFields ?? []);
-  const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showGenerator, setShowGenerator] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(!!(initial?.totp || initial?.customFields?.length));
+  // Name and username are penalised by the estimator so "github" style passwords score low
+  const strengthInputs = useMemo(() => [name, username].filter(Boolean), [name, username]);
 
-  const strength = passwordStrength(password);
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function save() {
     onSave({
       type: "login",
       name,
@@ -283,6 +242,8 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
       ...(notes && { notes }),
       tags,
       customFields,
+      // Passkeys are created by the extension; an edit here must not drop them
+      ...(initial?.passkey && { passkey: initial.passkey }),
     });
   }
 
@@ -294,163 +255,111 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <Field label="Name" required>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-          placeholder="Name"
-          className={inputClass}
-        />
-      </Field>
+    <form onSubmit={submitHandler(save)} onKeyDown={editorKeyHandler(onCancel)} className="space-y-4">
+      <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Name" />
 
-      <Field label="Username / Email">
-        <input
-          type="text"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
+      <Field
+        label="Username or email"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        autoComplete="off"
+        placeholder="Username or email"
+      />
+
+      <div className="space-y-2">
+        <Field
+          label="Password"
+          type="password"
+          revealable
+          mono
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
           autoComplete="off"
-          placeholder="Username or email"
-          className={inputClass}
-        />
-      </Field>
-
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest">Password</label>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowGenerator((s) => !s)}
-              className="font-mono text-xs text-[#D6FF3F] hover:underline"
-            >
-              Generate
-            </button>
-            {showGenerator && (
-              <GeneratorPopover
-                onUse={(pw) => { setPassword(pw); setShowPassword(true); }}
-                onClose={() => setShowGenerator(false)}
-              />
-            )}
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <input
-              type={showPassword ? "text" : "password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="off"
-              className={`${inputClass} pr-20`}
-            />
-            <div className="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-1">
+          action={
+            <div className="relative flex items-center gap-3">
               <button
                 type="button"
                 onClick={handleCopyPassword}
                 disabled={!password}
-                title="Copy password"
-                className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] disabled:opacity-30 transition-colors"
+                className="inline-flex items-center gap-1 text-meta text-muted hover:text-fg disabled:opacity-50"
               >
-                {copied ? (
-                  <svg className="w-3.5 h-3.5 text-[#7CFF6B]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-                    <rect x="9" y="9" width="13" height="13" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
-                )}
+                {copied ? <Check aria-hidden className="size-3.5 text-success" /> : <Copy aria-hidden className="size-3.5" />}
+                {copied ? "Copied" : "Copy"}
               </button>
               <button
                 type="button"
-                onClick={() => setShowPassword((s) => !s)}
-                className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
+                onClick={() => setShowGenerator((s) => !s)}
+                aria-expanded={showGenerator}
+                className="text-meta font-medium text-accent-text hover:underline"
               >
-                {showPassword ? (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                    <line x1="1" y1="1" x2="23" y2="23" />
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                )}
+                Generate
               </button>
+              {showGenerator && (
+                <GeneratorPopover onUse={(pw) => setPassword(pw)} onClose={() => setShowGenerator(false)} />
+              )}
             </div>
-          </div>
-        </div>
-
-        {password && (
-          <div className="mt-2 flex items-center gap-2">
-            <div className="flex gap-0.5 flex-1">
-              {[1, 2, 3, 4].map((i) => (
-                <div
-                  key={i}
-                  className={`h-0.5 flex-1 transition-colors ${
-                    i <= strength.score ? strength.color : "bg-[#2B2923]"
-                  }`}
-                />
-              ))}
-            </div>
-            <span className="font-mono text-[10px] text-[#9C988D] shrink-0">{strength.label}</span>
-          </div>
-        )}
+          }
+        />
+        {password && <StrengthMeter password={password} userInputs={strengthInputs} />}
       </div>
 
-      <Field label="Website URL">
-        <input
-          type="url"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://"
-          className={inputClass}
-        />
-      </Field>
+      <Field
+        label="Website URL"
+        type="url"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://"
+      />
 
-      <Field label="Notes">
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={3}
-          placeholder="Optional notes…"
-          className={`${inputClass} resize-none`}
-        />
-      </Field>
+      <TextAreaField
+        label="Notes"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        rows={3}
+        placeholder="Optional notes"
+      />
 
-      {/* Advanced: TOTP + custom fields */}
       <div>
         <button
           type="button"
           onClick={() => setShowAdvanced((s) => !s)}
-          className="flex items-center gap-1.5 font-mono text-xs text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
+          aria-expanded={showAdvanced}
+          className="flex items-center gap-1.5 rounded text-ui text-muted hover:text-fg"
         >
-          <svg
-            className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path d="M9 18l6-6-6-6" />
-          </svg>
-          {showAdvanced ? "Hide" : "Show"} two-factor auth &amp; custom fields
+          <ChevronRight
+            aria-hidden
+            className={cx("size-4 transition-transform duration-[120ms]", showAdvanced && "rotate-90")}
+          />
+          One-time password and custom fields
         </button>
 
         {showAdvanced && (
-          <div className="mt-3 space-y-4 pl-4 border-l-2 border-[#2B2923]">
-            <Field label="Two-factor auth (TOTP)">
-              <TotpField value={totp} onChange={setTotp} />
-            </Field>
+          <div className="mt-3 space-y-4 border-l-2 border-divider pl-4">
+            <Field
+              label="One-time password (TOTP)"
+              value={totp}
+              onChange={(e) => setTotp(parseOtpUri(e.target.value))}
+              placeholder="otpauth://totp/… or bare secret key"
+              autoComplete="off"
+              mono
+              hint="Paste an otpauth:// URI from your authenticator app, or the raw base32 secret."
+              action={
+                totp ? (
+                  <button
+                    type="button"
+                    onClick={() => setTotp("")}
+                    className="text-meta text-muted hover:text-fg"
+                  >
+                    Remove TOTP
+                  </button>
+                ) : undefined
+              }
+            />
 
-            <div>
-              <label className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-2">
+            <div role="group" aria-labelledby="custom-fields-label" className="flex flex-col gap-1.5">
+              <span id="custom-fields-label" className="text-meta font-medium text-fg">
                 Custom fields
-              </label>
+              </span>
               <CustomFieldsEditor fields={customFields} onChange={setCustomFields} />
             </div>
           </div>
@@ -458,57 +367,7 @@ export function LoginEditor({ initial, onSave, onCancel, saving }: LoginEditorPr
       </div>
 
       <TagsEditor tags={tags} onChange={setTags} />
-      <FormActions onCancel={onCancel} {...(saving !== undefined && { saving })} />
+      <EditorActions onCancel={onCancel} saving={saving} />
     </form>
-  );
-}
-
-const inputClass =
-  "w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D]/60 focus:outline-none focus:border-[#D6FF3F] transition-colors";
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-1.5">
-        {label}
-        {required && <span className="text-[#E8321A] ml-0.5"> *</span>}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function FormActions({ onCancel, saving }: { onCancel: () => void; saving?: boolean }) {
-  return (
-    <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
-      <button
-        type="button"
-        onClick={onCancel}
-        className="px-4 py-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors"
-      >
-        Cancel
-      </button>
-      <button
-        type="submit"
-        disabled={saving}
-        className="px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] disabled:opacity-50 text-[#070706] transition-colors flex items-center gap-2"
-      >
-        {saving && (
-          <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-        )}
-        {saving ? "Saving…" : "Save"}
-      </button>
-    </div>
   );
 }

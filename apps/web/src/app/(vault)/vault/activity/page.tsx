@@ -1,135 +1,130 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useNopassStore } from "@nopass/ui";
-import type { ActivityEventInfo } from "@nopass/types";
+import { useEffect, useState } from "react";
+import { X } from "lucide-react";
+import { Badge, Banner, EmptyState, IconButton, useNopassStore } from "@nopass/ui";
+import type { ActivityEventInfo, DeviceInfo } from "@nopass/types";
 import { api } from "@/lib/api";
+import { DataTable, PageShell, RelativeTime, TBODY, TD, TH } from "@/components/vault/PageShell";
 
-const EVENT_LABELS: Record<string, { label: string; tone: "ok" | "warn" | "neutral" }> = {
-  login_succeeded: { label: "Signed in", tone: "ok" },
-  login_failed: { label: "Failed sign-in attempt", tone: "warn" },
-  recovery_kit_created: { label: "Recovery kit generated", tone: "neutral" },
-  recovery_kit_disabled: { label: "Recovery disabled", tone: "warn" },
-  recovery_initiated: { label: "Recovery code used", tone: "warn" },
-  recovery_completed: { label: "Account recovered — password rotated", tone: "warn" },
-  share_created: { label: "Share link created", tone: "neutral" },
-  share_viewed: { label: "Share link opened", tone: "neutral" },
-  share_revoked: { label: "Share revoked", tone: "neutral" },
-  device_registered: { label: "New device registered", tone: "warn" },
-  device_revoked: { label: "Device revoked", tone: "neutral" },
-  vault_created: { label: "Vault created", tone: "neutral" },
-  vault_deleted: { label: "Vault deleted", tone: "neutral" },
+/** Plain verbs for each event; `review` events get a visible word, not only a color. */
+const EVENT_LABELS: Record<string, { label: string; review?: boolean }> = {
+  login_succeeded: { label: "Signed in" },
+  login_failed: { label: "Failed sign-in attempt", review: true },
+  recovery_kit_created: { label: "Created recovery kit" },
+  recovery_kit_disabled: { label: "Disabled recovery", review: true },
+  recovery_initiated: { label: "Used recovery code", review: true },
+  recovery_completed: { label: "Recovered account and rotated master password", review: true },
+  share_created: { label: "Created share link" },
+  share_viewed: { label: "Opened share link" },
+  share_revoked: { label: "Revoked share link" },
+  device_registered: { label: "Registered new device", review: true },
+  device_revoked: { label: "Revoked device" },
+  vault_created: { label: "Created vault" },
+  vault_deleted: { label: "Deleted vault" },
 };
-
-const TONE_CLASS: Record<"ok" | "warn" | "neutral", string> = {
-  ok: "text-[#7CFF6B]",
-  warn: "text-amber-400",
-  neutral: "text-[#F4F1E8]",
-};
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-}
 
 export default function ActivityPage() {
-  const router = useRouter();
-  const { isUnlocked, sessionToken } = useNopassStore();
+  const { sessionToken } = useNopassStore();
   const [events, setEvents] = useState<ActivityEventInfo[]>([]);
+  const [devices, setDevices] = useState<Map<string, DeviceInfo>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = "Activity — nopwd";
-    if (!isUnlocked()) router.replace("/login");
-  }, [isUnlocked, router]);
-
-  const load = useCallback(async () => {
-    if (!sessionToken) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setEvents(await api.activity.list(sessionToken));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load activity");
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionToken]);
+  }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
-
-  if (!isUnlocked()) return null;
+    if (!sessionToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [list, deviceList] = await Promise.all([
+          api.activity.list(sessionToken),
+          api.devices.list(sessionToken).catch(() => [] as DeviceInfo[]),
+        ]);
+        if (cancelled) return;
+        setEvents(list);
+        setDevices(new Map(deviceList.map((d) => [d.id, d])));
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load activity");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionToken]);
 
   return (
-    <div className="min-h-screen bg-[#070706]">
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => router.push("/vault")}
-            className="p-1.5 text-[#9C988D] hover:text-[#F4F1E8] hover:bg-[#181713] transition-colors"
-            title="Back to vault"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 5l-7 7 7 7" />
-            </svg>
-          </button>
-          <div>
-            <h1 className="font-mono text-sm font-semibold text-[#F4F1E8] uppercase tracking-widest">Activity</h1>
-            <p className="text-xs text-[#9C988D] mt-0.5">
-              Security events on your account from the last 90 days. Item contents are never logged.
-            </p>
-          </div>
-        </div>
+    <PageShell
+      title="Activity"
+      description="Security events on your account from the last 90 days."
+    >
+      <Banner className="mb-4" title="What the server can't see">
+        It records that an event happened, not what it touched: item contents, and which secret you copied, are never
+        logged.
+      </Banner>
 
-        {error && (
-          <div className="mb-4 p-3 bg-[#E8321A]/10 border border-[#E8321A]/30 text-sm text-[#E8321A]">
-            {error}
-          </div>
-        )}
+      {error && (
+        <Banner
+          tone="danger"
+          className="mb-4"
+          action={
+            <IconButton label="Dismiss error" onClick={() => setError(null)} className="-my-1 -mr-2">
+              <X aria-hidden className="size-4" />
+            </IconButton>
+          }
+        >
+          {error}
+        </Banner>
+      )}
 
-        <div className="bg-[#11110F] border border-[#2B2923] overflow-hidden">
-          {loading ? (
-            <div className="divide-y divide-[#2B2923]">
-              {[...Array(4)].map((_, i) => (
-                <div key={i} className="px-5 py-3.5 animate-pulse">
-                  <div className="h-3.5 bg-[#2B2923] w-48 mb-2" />
-                  <div className="h-2.5 bg-[#181713] w-32" />
-                </div>
-              ))}
-            </div>
-          ) : events.length === 0 ? (
-            <div className="py-14 text-center">
-              <p className="text-sm text-[#9C988D]">No activity recorded yet.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-[#2B2923]">
-              {events.map((event) => {
-                const meta = EVENT_LABELS[event.eventType] ?? {
-                  label: event.eventType.replace(/_/g, " "),
-                  tone: "neutral" as const,
-                };
-                return (
-                  <div key={event.id} className="px-5 py-3.5 flex items-baseline justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className={`text-sm font-medium ${TONE_CLASS[meta.tone]}`}>{meta.label}</p>
-                      <p className="font-mono text-xs text-[#9C988D] mt-0.5">
-                        {event.ip ?? "unknown source"}
-                      </p>
-                    </div>
-                    <p className="font-mono text-xs text-[#9C988D]/60 shrink-0 tabular-nums">
-                      {formatTime(event.createdAt)}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      {loading ? (
+        <div aria-busy="true" aria-label="Loading activity" className="space-y-px overflow-hidden rounded-lg border border-divider">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-11 animate-pulse bg-surface-hover" />
+          ))}
         </div>
-      </div>
-    </div>
+      ) : events.length === 0 ? (
+        <div className="rounded-lg border border-divider">
+          <EmptyState title="No activity recorded yet." />
+        </div>
+      ) : (
+        <DataTable label="Account activity">
+          <thead>
+            <tr>
+              <th scope="col" className={TH}>Event</th>
+              <th scope="col" className={TH}>Device</th>
+              <th scope="col" className={TH}>Source</th>
+              <th scope="col" className={TH}>Time</th>
+            </tr>
+          </thead>
+          <tbody className={TBODY}>
+            {events.map((event) => {
+              const meta = EVENT_LABELS[event.eventType] ?? { label: event.eventType.replace(/_/g, " ") };
+              const device = event.deviceId ? devices.get(event.deviceId) : undefined;
+              return (
+                <tr key={event.id}>
+                  <td className={TD}>
+                    <span className="flex items-center gap-2">
+                      <span className="font-medium text-fg">{meta.label}</span>
+                      {meta.review && <Badge tone="warning">Review</Badge>}
+                    </span>
+                  </td>
+                  <td className={`${TD} text-muted`}>{device?.deviceName ?? "—"}</td>
+                  <td className={`${TD} font-mono text-mono-sm text-muted`}>{event.ip ?? "unknown"}</td>
+                  <td className={TD}>
+                    <RelativeTime iso={event.createdAt} />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      )}
+    </PageShell>
   );
 }

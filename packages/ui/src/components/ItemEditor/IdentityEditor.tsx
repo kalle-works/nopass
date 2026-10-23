@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import type { IdentityItem } from "@nopass/types";
+import { Field } from "../../primitives/Field";
 import { TagsEditor } from "./TagsEditor";
+import { EditorActions, editorKeyHandler, submitHandler } from "./shared";
 
 interface IdentityEditorProps {
   initial?: Partial<IdentityItem> | undefined;
@@ -22,62 +24,28 @@ export function IdentityEditor({ initial, onSave, onCancel, saving }: IdentityEd
   const [city, setCity] = useState(initial?.city ?? "");
   const [country, setCountry] = useState(initial?.country ?? "");
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    onSave({ type: "identity", name, firstName, lastName, email, phone, address, city, country, tags });
-  }
-
-  const inp =
-    "w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D]/60 focus:outline-none focus:border-[#D6FF3F] transition-colors";
-  const lbl = "font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-1.5";
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className={lbl}>Name <span className="text-[#E8321A]">*</span></label>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} required className={inp} />
+    <form
+      onSubmit={submitHandler(() =>
+        onSave({ type: "identity", name, firstName, lastName, email, phone, address, city, country, tags }),
+      )}
+      onKeyDown={editorKeyHandler(onCancel)}
+      className="space-y-4"
+    >
+      <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Name" />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="First name" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+        <Field label="Last name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
       </div>
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <label className={lbl}>First name</label>
-          <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={inp} />
-        </div>
-        <div className="flex-1">
-          <label className={lbl}>Last name</label>
-          <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={inp} />
-        </div>
-      </div>
-      <div>
-        <label className={lbl}>Email</label>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inp} />
-      </div>
-      <div>
-        <label className={lbl}>Phone</label>
-        <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={inp} />
-      </div>
-      <div>
-        <label className={lbl}>Address</label>
-        <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} className={inp} />
-      </div>
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <label className={lbl}>City</label>
-          <input type="text" value={city} onChange={(e) => setCity(e.target.value)} className={inp} />
-        </div>
-        <div className="flex-1">
-          <label className={lbl}>Country</label>
-          <input type="text" value={country} onChange={(e) => setCountry(e.target.value)} className={inp} />
-        </div>
+      <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <Field label="Phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+      <Field label="Address" value={address} onChange={(e) => setAddress(e.target.value)} />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="City" value={city} onChange={(e) => setCity(e.target.value)} />
+        <Field label="Country" value={country} onChange={(e) => setCountry(e.target.value)} />
       </div>
       <TagsEditor tags={tags} onChange={setTags} />
-      <div className="flex justify-end gap-3 pt-2 border-t border-[#2B2923]">
-        <button type="button" onClick={onCancel} className="px-4 py-2 font-mono text-xs text-[#9C988D] border border-[#2B2923] hover:border-[#9C988D] hover:text-[#F4F1E8] transition-colors">
-          Cancel
-        </button>
-        <button type="submit" disabled={saving} className="px-4 py-2 font-mono text-xs font-semibold bg-[#D6FF3F] hover:bg-[#C4EE30] disabled:opacity-50 text-[#070706] transition-colors">
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </div>
+      <EditorActions onCancel={onCancel} saving={saving} />
     </form>
   );
 }

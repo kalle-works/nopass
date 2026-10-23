@@ -1,66 +1,74 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { ExternalLink, Plus, Search } from "lucide-react";
 import { deriveMasterKey, stretchMasterKeyRaw, srpStep1, srpStep2, computeEmailHash } from "@nopass/crypto";
-import { createApiClient } from "@nopass/ui";
+import { Banner, Button, EmptyState, Field, Kbd, Spinner, createApiClient } from "@nopass/ui";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import { bytesToBase64 } from "../lib/base64";
+import { siteHostname, webVaultUrl } from "../lib/web-url";
+import { EntryRow, type VaultEntry } from "./EntryRow";
+import { EntryDetail } from "./EntryDetail";
+import { UnlockForm } from "./UnlockForm";
 
 // Injected at build time (vite define) — falls back to the dev API server
 const API_BASE: string =
   typeof __API_BASE__ !== "undefined" ? __API_BASE__ : "http://localhost:3001";
 const api = createApiClient(API_BASE);
+const WEB_VAULT_URL = webVaultUrl(API_BASE);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface VaultEntry {
-  id: string;
-  name: string;
-  username: string;
-  urls: string[];
-  hasPasskey?: boolean;
-}
 
 type Screen = "loading" | "locked" | "unlocked";
 
 interface State {
   screen: Screen;
+  /** Logins matching the active tab's URL */
+  siteEntries: VaultEntry[];
+  /** All logins, or the search results while a query is typed */
   entries: VaultEntry[];
   query: string;
   tabUrl: string;
-  copied: string | null; // "username:id" | "password:id"
   error: string | null;
+  fillError: string | null;
   unlocking: boolean;
+  selected: VaultEntry | null;
 }
 
 type Action =
   | { type: "SET_SCREEN"; screen: Screen }
-  | { type: "SET_ENTRIES"; entries: VaultEntry[] }
+  | { type: "SET_LISTS"; siteEntries: VaultEntry[]; entries: VaultEntry[] }
   | { type: "SET_QUERY"; query: string }
   | { type: "SET_TAB_URL"; url: string }
-  | { type: "SET_COPIED"; key: string | null }
   | { type: "SET_ERROR"; error: string | null }
-  | { type: "SET_UNLOCKING"; value: boolean };
+  | { type: "SET_FILL_ERROR"; error: string | null }
+  | { type: "SET_UNLOCKING"; value: boolean }
+  | { type: "SELECT"; entry: VaultEntry | null };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "SET_SCREEN": return { ...state, screen: action.screen };
-    case "SET_ENTRIES": return { ...state, entries: action.entries };
+    case "SET_LISTS": return { ...state, siteEntries: action.siteEntries, entries: action.entries };
     case "SET_QUERY": return { ...state, query: action.query };
     case "SET_TAB_URL": return { ...state, tabUrl: action.url };
-    case "SET_COPIED": return { ...state, copied: action.key };
     case "SET_ERROR": return { ...state, error: action.error };
+    case "SET_FILL_ERROR": return { ...state, fillError: action.error };
     case "SET_UNLOCKING": return { ...state, unlocking: action.value };
+    case "SELECT": return { ...state, selected: action.entry, fillError: null };
   }
 }
 
 const initial: State = {
   screen: "loading",
+  siteEntries: [],
   entries: [],
   query: "",
   tabUrl: "",
-  copied: null,
   error: null,
+  fillError: null,
   unlocking: false,
+  selected: null,
 };
+
+const NO_FORM_MESSAGE = "Couldn't find a login form on this page.";
 
 // ─── Messaging helpers ────────────────────────────────────────────────────────
 
@@ -73,11 +81,35 @@ function sendMessage<T>(msg: object): Promise<T> {
   });
 }
 
+function openUrl(url: string) {
+  if (typeof chrome !== "undefined" && chrome.tabs?.create) void chrome.tabs.create({ url });
+  else window.open(url, "_blank", "noopener");
+}
+
+const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+const SEARCH_SHORTCUT = isMac ? "⌘K" : "Ctrl K";
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initial);
   const [lastEmail, setLastEmail] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  // Discards responses from searches that were superseded while in flight
+  const searchSeq = useRef(0);
+  const host = siteHostname(state.tabUrl);
+
+  async function refreshSearch(query: string, url: string) {
+    const seq = ++searchSeq.current;
+    const [site, all] = await Promise.all([
+      query || !url
+        ? Promise.resolve<{ results?: VaultEntry[] }>({ results: [] })
+        : sendMessage<{ results?: VaultEntry[]; error?: string }>({ type: "SEARCH_ITEMS", query: "", url }),
+      sendMessage<{ results?: VaultEntry[]; error?: string }>({ type: "SEARCH_ITEMS", query }),
+    ]);
+    if (seq !== searchSeq.current) return;
+    dispatch({ type: "SET_LISTS", siteEntries: site.results ?? [], entries: all.results ?? [] });
+  }
 
   // Check if SW is already unlocked on popup open
   useEffect(() => {
@@ -106,14 +138,26 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshSearch(query: string, url: string) {
-    const resp = await sendMessage<{ results?: VaultEntry[]; error?: string }>({
-      type: "SEARCH_ITEMS",
-      query,
-      url,
-    });
-    if (resp.results) dispatch({ type: "SET_ENTRIES", entries: resp.results });
-  }
+  const focusSearch = useCallback(() => {
+    dispatch({ type: "SELECT", entry: null });
+    // The search field remounts when leaving the detail view
+    requestAnimationFrame(() => searchRef.current?.focus());
+  }, []);
+
+  // Cmd/Ctrl+K focuses search; Escape leaves the detail view
+  useEffect(() => {
+    if (state.screen !== "unlocked") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        focusSearch();
+      } else if (e.key === "Escape" && state.selected) {
+        dispatch({ type: "SELECT", entry: null });
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [state.screen, state.selected, focusSearch]);
 
   async function handleSearch(query: string) {
     dispatch({ type: "SET_QUERY", query });
@@ -123,36 +167,88 @@ export function App() {
   async function handleLock() {
     await sendMessage({ type: "LOCK" });
     dispatch({ type: "SET_SCREEN", screen: "locked" });
-    dispatch({ type: "SET_ENTRIES", entries: [] });
+    dispatch({ type: "SET_LISTS", siteEntries: [], entries: [] });
+    dispatch({ type: "SELECT", entry: null });
   }
 
-  async function handleCopy(text: string, key: string) {
-    await navigator.clipboard.writeText(text);
-    dispatch({ type: "SET_COPIED", key });
-    setTimeout(() => dispatch({ type: "SET_COPIED", key: null }), 1500);
-  }
-
-  async function handleCopyPassword(itemId: string) {
+  const loadCredentials = useCallback(async (itemId: string) => {
     const resp = await sendMessage<{ username?: string; password?: string; error?: string }>({
       type: "GET_CREDENTIALS",
       itemId,
     });
-    if (resp.password) {
-      await handleCopy(resp.password, `password:${itemId}`);
+    if (resp.username === undefined || resp.password === undefined) return null;
+    return { username: resp.username, password: resp.password };
+  }, []);
+
+  async function handleFill(entry: VaultEntry) {
+    dispatch({ type: "SET_FILL_ERROR", error: null });
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) {
+      dispatch({ type: "SET_FILL_ERROR", error: NO_FORM_MESSAGE });
+      return;
     }
+    try {
+      const resp = await sendMessage<{ ok?: boolean; error?: string }>({
+        type: "AUTOFILL",
+        itemId: entry.id,
+        tabId: tab.id,
+      });
+      if (resp.ok) {
+        window.close();
+        return;
+      }
+    } catch {
+      // Fall through to the failure message
+    }
+    dispatch({ type: "SET_FILL_ERROR", error: NO_FORM_MESSAGE });
   }
 
-  async function handleAutofill(entry: VaultEntry) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    await sendMessage({ type: "AUTOFILL", itemId: entry.id, tabId: tab.id });
-    window.close();
+  async function handleUnlock(email: string, password: string) {
+    dispatch({ type: "SET_ERROR", error: null });
+    dispatch({ type: "SET_UNLOCKING", value: true });
+    try {
+      const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
+      const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
+
+      const emailHash = computeEmailHash(email);
+      const step1 = srpStep1();
+      const initResp = await api.auth.srpInit({ emailHash, clientPublicA: step1.clientPublicA });
+      const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
+      const verifyResp = await api.auth.srpVerify({
+        sessionId: initResp.sessionId,
+        clientProofM1: step2.clientProofM1,
+      });
+      step2.verifyServerProof(verifyResp.serverProofM2);
+
+      const resp = await sendMessage<{ ok?: boolean; error?: string }>({
+        type: "UNLOCK",
+        sessionToken: verifyResp.sessionToken,
+        defaultVaultId: verifyResp.defaultVaultId,
+        vaultEncKeyB64: bytesToBase64(encKeyBytes),
+        vaultMacKeyB64: bytesToBase64(macKeyBytes),
+      });
+
+      // Zero key material
+      encKeyBytes.fill(0);
+      macKeyBytes.fill(0);
+
+      if (resp.error) throw new Error(resp.error);
+
+      await chrome.storage.local.set({ lastEmail: email });
+      setLastEmail(email);
+      dispatch({ type: "SET_SCREEN", screen: "unlocked" });
+      await refreshSearch("", state.tabUrl);
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", error: e instanceof Error ? e.message : "Login failed" });
+    } finally {
+      dispatch({ type: "SET_UNLOCKING", value: false });
+    }
   }
 
   if (state.screen === "loading") {
     return (
-      <div className="flex items-center justify-center h-32 bg-ink">
-        <div className="text-faded text-sm font-brand">Loading…</div>
+      <div role="status" className="flex h-32 items-center justify-center gap-2 text-ui text-muted">
+        <Spinner /> Loading…
       </div>
     );
   }
@@ -163,222 +259,128 @@ export function App() {
         error={state.error}
         unlocking={state.unlocking}
         initialEmail={lastEmail}
-        onUnlock={async (email, password) => {
-          dispatch({ type: "SET_ERROR", error: null });
-          dispatch({ type: "SET_UNLOCKING", value: true });
-          try {
-            const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
-            const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-
-            const emailHash = computeEmailHash(email);
-            const step1 = srpStep1();
-            const initResp = await api.auth.srpInit({ emailHash, clientPublicA: step1.clientPublicA });
-            const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-            const verifyResp = await api.auth.srpVerify({
-              sessionId: initResp.sessionId,
-              clientProofM1: step2.clientProofM1,
-            });
-            step2.verifyServerProof(verifyResp.serverProofM2);
-
-            const resp = await sendMessage<{ ok?: boolean; error?: string }>({
-              type: "UNLOCK",
-              sessionToken: verifyResp.sessionToken,
-              defaultVaultId: verifyResp.defaultVaultId,
-              vaultEncKeyB64: bytesToBase64(encKeyBytes),
-              vaultMacKeyB64: bytesToBase64(macKeyBytes),
-            });
-
-            // Zero key material
-            encKeyBytes.fill(0);
-            macKeyBytes.fill(0);
-
-            if (resp.error) throw new Error(resp.error);
-
-            await chrome.storage.local.set({ lastEmail: email });
-            setLastEmail(email);
-            dispatch({ type: "SET_SCREEN", screen: "unlocked" });
-            await refreshSearch("", state.tabUrl);
-          } catch (e) {
-            dispatch({ type: "SET_ERROR", error: e instanceof Error ? e.message : "Login failed" });
-          } finally {
-            dispatch({ type: "SET_UNLOCKING", value: false });
-          }
-        }}
+        onUnlock={handleUnlock}
       />
     );
   }
 
+  const searching = state.query.trim() !== "";
+  const noSiteMatch = host !== "" && !searching && state.siteEntries.length === 0;
+
   return (
-    <div className="flex flex-col h-full min-h-[480px] bg-ink text-cream font-body">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-edge bg-surface">
-        <span className="font-brand font-semibold text-cream text-sm">nopwd</span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => { window.open("nopass://open"); }}
-            className="font-brand text-xs text-faded border border-edge px-2 py-1 hover:border-cream hover:text-cream"
-          >
-            Open app
-          </button>
-          <button
-            onClick={handleLock}
-            className="font-brand text-xs text-faded border border-edge px-2 py-1 hover:border-cream hover:text-cream"
-          >
-            Lock
-          </button>
-        </div>
+    <div className="flex max-h-[580px] min-h-[320px] flex-col">
+      <header className="flex items-center gap-2 border-b border-divider px-4 py-2">
+        <span className="text-h3 font-semibold text-fg">nopwd</span>
+        <span className="min-w-0 flex-1 truncate text-meta text-muted" title={lastEmail}>
+          {lastEmail}
+        </span>
+        <Button variant="ghost" size="sm" aria-label="Search all items" onClick={focusSearch} icon={<Search aria-hidden className="size-4" />}>
+          <Kbd>{SEARCH_SHORTCUT}</Kbd>
+        </Button>
+        <Button variant="ghost" size="sm" onClick={handleLock}>
+          Lock
+        </Button>
       </header>
 
-      <div className="px-4 py-3 border-b border-edge">
-        <input
-          type="search"
-          placeholder="Search vault…"
-          value={state.query}
-          onChange={(e) => handleSearch(e.target.value)}
-          autoFocus
-          className="w-full text-sm px-3 py-2 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
-        />
-      </div>
+      {state.fillError && (
+        <Banner tone="warning" className="m-3 mb-0 rounded">
+          {state.fillError}
+        </Banner>
+      )}
 
-      <div className="flex-1 overflow-y-auto">
-        {state.entries.length === 0 ? (
-          <div className="text-center text-faded text-sm py-8">
-            {state.query ? "No matches" : "No logins for this site"}
+      {state.selected ? (
+        <EntryDetail
+          key={state.selected.id}
+          entry={state.selected}
+          loadCredentials={loadCredentials}
+          onBack={() => dispatch({ type: "SELECT", entry: null })}
+          onFill={handleFill}
+        />
+      ) : (
+        <>
+          <div className="px-4 py-3">
+            <Field
+              ref={searchRef}
+              label="Search"
+              type="search"
+              placeholder="Title, username or website"
+              value={state.query}
+              onChange={(e) => handleSearch(e.target.value)}
+              autoFocus
+              className="[&>div:first-child]:sr-only"
+            />
           </div>
-        ) : (
-          <ul className="divide-y divide-edge">
-            {state.entries.map((entry) => (
-              <EntryRow
-                key={entry.id}
-                entry={entry}
-                copied={state.copied}
-                onCopy={handleCopy}
-                onCopyPassword={handleCopyPassword}
-                onAutofill={handleAutofill}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
 
-// ─── UnlockForm ───────────────────────────────────────────────────────────────
-
-interface UnlockFormProps {
-  error: string | null;
-  unlocking: boolean;
-  initialEmail: string;
-  onUnlock: (email: string, password: string) => void;
-}
-
-function UnlockForm({ error, unlocking, initialEmail, onUnlock }: UnlockFormProps) {
-  const [email, setEmail] = useState(initialEmail);
-  const [password, setPassword] = useState("");
-
-  return (
-    <div className="min-h-[480px] bg-ink text-cream font-body p-4 pt-8">
-      <p className="font-brand text-[11px] uppercase tracking-[0.1em] text-faded mb-2">nopwd</p>
-      <h1 className="font-brand font-semibold text-cream text-base mb-6">Unlock vault</h1>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onUnlock(email, password);
-        }}
-        className="space-y-3"
-      >
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          autoComplete="email"
-          autoFocus={!initialEmail}
-          className="w-full text-sm h-11 px-3 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
-        />
-        <input
-          type="password"
-          placeholder="Master password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          autoComplete="current-password"
-          autoFocus={!!initialEmail}
-          className="w-full text-sm h-11 px-3 bg-surface border border-edge text-cream placeholder:text-faded focus:outline-none focus:border-cream"
-        />
-        {error && <p className="text-xs text-danger">{error}</p>}
-        <button
-          type="submit"
-          disabled={unlocking}
-          className="w-full h-11 bg-accent hover:bg-accent-hover disabled:opacity-50 text-ink text-sm font-brand font-semibold"
-        >
-          {unlocking ? "Unlocking…" : "Unlock"}
-        </button>
-      </form>
-    </div>
-  );
-}
-
-// ─── EntryRow ─────────────────────────────────────────────────────────────────
-
-interface EntryRowProps {
-  entry: VaultEntry;
-  copied: string | null;
-  onCopy: (text: string, key: string) => void;
-  onCopyPassword: (itemId: string) => void;
-  onAutofill: (entry: VaultEntry) => void;
-}
-
-function EntryRow({ entry, copied, onCopy, onCopyPassword, onAutofill }: EntryRowProps) {
-  const userKey = `username:${entry.id}`;
-  const passKey = `password:${entry.id}`;
-  const initial = entry.name.charAt(0).toUpperCase();
-
-  return (
-    <li className="px-4 py-3">
-      <div className="flex items-start gap-3">
-        <div className="w-7 h-7 bg-elevated border border-edge text-accent flex items-center justify-center text-xs font-brand font-semibold shrink-0 mt-0.5">
-          {initial}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-cream truncate">
-            {entry.name}
-            {entry.hasPasskey && (
-              <span className="ml-2 font-brand text-[10px] font-semibold uppercase tracking-[0.1em] text-accent align-middle">
-                passkey
-              </span>
+          <div className="min-h-0 flex-1 overflow-y-auto border-t border-divider">
+            {!searching && host !== "" && (
+              <section aria-labelledby="site-heading">
+                <h2 id="site-heading" className="flex items-baseline gap-2 bg-bg-subtle px-4 py-2 text-meta font-medium text-muted">
+                  For this site
+                  <span className="min-w-0 truncate font-mono text-mono-sm text-fg">{host}</span>
+                </h2>
+                {noSiteMatch ? (
+                  <EmptyState
+                    className="px-4 py-5"
+                    title={`No logins for ${host}`}
+                    action={
+                      <Button variant="primary" size="sm" onClick={() => openUrl(WEB_VAULT_URL)}>
+                        Save a login
+                      </Button>
+                    }
+                    secondary={
+                      <Button variant="ghost" size="sm" onClick={focusSearch}>
+                        Search all items
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <ul>
+                    {state.siteEntries.map((entry) => (
+                      <EntryRow
+                        key={entry.id}
+                        entry={entry}
+                        onOpen={(e) => dispatch({ type: "SELECT", entry: e })}
+                        onFill={handleFill}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </section>
             )}
-          </p>
-          <p className="text-xs text-faded truncate">{entry.username}</p>
-        </div>
-      </div>
-      <div className="flex gap-1.5 mt-2">
-        <CopyButton label="Username" copied={copied === userKey} onClick={() => onCopy(entry.username, userKey)} />
-        <CopyButton label="Password" copied={copied === passKey} onClick={() => onCopyPassword(entry.id)} />
-        <button
-          onClick={() => onAutofill(entry)}
-          className="text-[11px] px-2 py-1.5 whitespace-nowrap bg-accent hover:bg-accent-hover text-ink font-brand font-semibold"
-        >
-          Autofill
-        </button>
-      </div>
-    </li>
-  );
-}
 
-function CopyButton({ label, copied, onClick }: { label: string; copied: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`text-[11px] px-2 py-1.5 whitespace-nowrap font-brand border transition-colors ${
-        copied
-          ? "border-success text-success"
-          : "border-edge text-faded hover:border-cream hover:text-cream"
-      }`}
-    >
-      {copied ? "Copied!" : `Copy ${label}`}
-    </button>
+            <section aria-labelledby="all-heading">
+              <h2 id="all-heading" className="bg-bg-subtle px-4 py-2 text-meta font-medium text-muted">
+                {searching ? "Results" : "All items"}
+              </h2>
+              {state.entries.length === 0 ? (
+                <p className="px-4 py-6 text-ui text-muted">
+                  {searching ? `No items match "${state.query}".` : "Your vault has no logins yet."}
+                </p>
+              ) : (
+                <ul>
+                  {state.entries.map((entry) => (
+                    <EntryRow
+                      key={entry.id}
+                      entry={entry}
+                      onOpen={(e) => dispatch({ type: "SELECT", entry: e })}
+                      onFill={handleFill}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          </div>
+        </>
+      )}
+
+      <footer className="flex items-center justify-between border-t border-divider px-3 py-2">
+        <Button size="sm" icon={<Plus aria-hidden className="size-4" />} onClick={() => openUrl(WEB_VAULT_URL)}>
+          New
+        </Button>
+        <Button variant="ghost" size="sm" icon={<ExternalLink aria-hidden className="size-4" />} onClick={() => openUrl(WEB_VAULT_URL)}>
+          Open vault
+        </Button>
+      </footer>
+    </div>
   );
 }

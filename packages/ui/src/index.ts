@@ -1,3 +1,6 @@
+// Design system primitives
+export * from "./primitives/index";
+
 // Components
 export * from "./components/ItemEditor/index";
 export * from "./components/OrgPanel";

@@ -1,11 +1,23 @@
-"use client";
-
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
-import { computeEmailHash, deriveMasterKey, stretchMasterKey } from "@nopass/crypto";
+import {
+  computeEmailHash,
+  deriveMasterKey,
+  deriveRecoveryKeys,
+  generateRecoveryCode,
+  stretchMasterKey,
+  stretchMasterKeyAllRaw,
+  wrapVaultSubkeys,
+} from "@nopass/crypto";
 import type { ApiClient } from "../lib/api-client";
 import { srpStep1, srpStep2 } from "@nopass/crypto";
 import { useNopassStore } from "../store/vault-store";
+import { Banner } from "../primitives/Feedback";
+import { Button } from "../primitives/Button";
+import { Field } from "../primitives/Field";
+import { SecretText } from "../primitives/Secret";
+import { StrengthMeter } from "../primitives/StrengthMeter";
+import { estimateStrength, MASTER_PASSWORD_MIN_LEVEL } from "../primitives/strength";
 
 interface UnlockScreenProps {
   apiClient: ApiClient;
@@ -14,19 +26,47 @@ interface UnlockScreenProps {
   onSwitchMode: () => void;
   /** Shown in login mode — navigates to the recovery-kit flow */
   onForgotPassword?: () => void;
+  /**
+   * Register mode only. When provided, registration is followed by a recovery
+   * kit step that cannot be skipped; `onSuccess` fires after the user confirms
+   * they saved the kit. When omitted, registration completes without the step.
+   */
+  onDownloadRecoveryKit?: (email: string, code: string) => void;
+  /** Where the logotype links to. Rendered as plain text when omitted. */
+  homeHref?: string;
+  /** Page footer content, e.g. links. */
+  footer?: ReactNode;
 }
 
-function passwordStrength(pw: string): { score: 0 | 1 | 2 | 3 | 4; label: string; color: string; bg: string } {
-  if (!pw) return { score: 0, label: "", color: "", bg: "" };
-  let score = 0;
-  if (pw.length >= 8) score++;
-  if (pw.length >= 16) score++;
-  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
-  if (/[0-9]/.test(pw) && /[^A-Za-z0-9]/.test(pw)) score++;
-  const labels = ["", "Weak", "Fair", "Strong", "Very strong"];
-  const colors = ["", "text-[#FF5C39]", "text-amber-400", "text-[#D6FF3F]", "text-[#7CFF6B]"];
-  const bgs = ["", "bg-[#FF5C39]", "bg-amber-400", "bg-[#D6FF3F]", "bg-[#7CFF6B]"];
-  return { score: score as 0 | 1 | 2 | 3 | 4, label: labels[score]!, color: colors[score]!, bg: bgs[score]! };
+/**
+ * Page frame shared by the auth screens: logotype top-left, one centered
+ * 400px column, optional footer. Follows the system or stored theme.
+ */
+export function AuthShell({
+  children,
+  homeHref,
+  footer,
+}: {
+  children: ReactNode;
+  homeHref?: string | undefined;
+  footer?: ReactNode | undefined;
+}) {
+  const logotype = "font-mono text-h3 font-semibold tracking-tight text-fg";
+  return (
+    <div className="flex min-h-screen flex-col bg-bg text-fg">
+      <header className="px-6 py-5">
+        {homeHref ? (
+          <a href={homeHref} className={logotype}>
+            nopwd
+          </a>
+        ) : (
+          <span className={logotype}>nopwd</span>
+        )}
+      </header>
+      <main className="mx-auto flex w-full max-w-[432px] flex-1 flex-col justify-center px-4 pb-16">{children}</main>
+      {footer && <footer className="px-6 py-5 text-meta text-muted">{footer}</footer>}
+    </div>
+  );
 }
 
 function humanizeError(err: unknown): string {
@@ -69,13 +109,38 @@ function writeLastEmail(email: string): void {
   }
 }
 
-export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgotPassword }: UnlockScreenProps) {
+const LINK_CLASS = "rounded-sm text-accent-text underline-offset-2 hover:underline";
+
+
+type Phase = "form" | "kit";
+
+export function UnlockScreen({
+  apiClient,
+  mode,
+  onSuccess,
+  onSwitchMode,
+  onForgotPassword,
+  onDownloadRecoveryKit,
+  homeHref,
+  footer,
+}: UnlockScreenProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [loadingStep, setLoadingStep] = useState<"kdf" | "auth" | null>(null);
+
+  const [phase, setPhase] = useState<Phase>("form");
+  const [kitCode, setKitCode] = useState<string | null>(null);
+  const [kitSaved, setKitSaved] = useState(false);
+  const [kitError, setKitError] = useState<string | null>(null);
+  const [kitPending, setKitPending] = useState(false);
+  // Held only between account creation and kit creation so a failed kit upload
+  // can be retried without asking for the password again. Zeroed afterwards.
+  const pendingKit = useRef<{ masterKey: Uint8Array; sessionToken: string } | null>(null);
+  const passwordInput = useRef<HTMLInputElement>(null);
 
   const { setSession } = useNopassStore();
 
@@ -84,7 +149,10 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
   useEffect(() => {
     if (mode === "login") {
       const last = readLastEmail();
-      if (last) setEmail((current) => current || last);
+      if (last) {
+        setEmail((current) => current || last);
+        passwordInput.current?.focus();
+      }
     }
   }, [mode]);
 
@@ -92,26 +160,49 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
     document.title = mode === "login" ? "Sign in — nopwd" : "Create account — nopwd";
   }, [mode]);
 
-  const strength = mode === "register" ? passwordStrength(password) : null;
+  useEffect(() => () => clearPendingKit(), []);
+
+  function clearPendingKit() {
+    pendingKit.current?.masterKey.fill(0);
+    pendingKit.current = null;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setLoading(true);
+    setPasswordError(null);
+    setConfirmError(null);
 
+    if (mode === "register") {
+      if (estimateStrength(password, [email]).level < MASTER_PASSWORD_MIN_LEVEL) {
+        setPasswordError("Choose a stronger master password. It has to reach Strong.");
+        return;
+      }
+      if (password !== confirm) {
+        setConfirmError("The passwords don't match.");
+        return;
+      }
+    }
+
+    setLoading(true);
     try {
       if (mode === "register") {
         await handleRegister();
       } else {
         await handleLogin();
       }
-      writeLastEmail(email);
-      onSuccess?.();
     } catch (err) {
       setError(humanizeError(err));
-    } finally {
       setLoading(false);
-      setLoadingStep(null);
+      return;
+    }
+    writeLastEmail(email);
+    setLoading(false);
+    if (mode === "register" && onDownloadRecoveryKit) {
+      setPhase("kit");
+      await createKit();
+    } else {
+      onSuccess?.();
     }
   }
 
@@ -119,7 +210,6 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
     const { generateSrpRegistration, stretchMasterKeyRaw } = await import("@nopass/crypto");
     const kdfParams = DEFAULT_KDF_PARAMS;
 
-    setLoadingStep("kdf");
     const masterKey = await deriveMasterKey(password, email, kdfParams);
     const keys = await stretchMasterKey(masterKey, email);
 
@@ -133,7 +223,6 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
     const { generateUserKeyPair } = await import("@nopass/crypto");
     const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-    setLoadingStep("auth");
     await apiClient.auth.register({
       emailHash: computeEmailHash(email),
       srpSalt,
@@ -146,18 +235,28 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
       protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
     });
 
-    await performLogin(keys);
+    let sessionToken: string;
+    try {
+      sessionToken = await performLogin(keys);
+    } catch {
+      masterKey.fill(0);
+      // The account exists now; a retry of register would only hit "already exists"
+      throw new Error("Your account was created, but signing in failed. Sign in to finish setting up your recovery kit.");
+    }
+    if (onDownloadRecoveryKit) {
+      pendingKit.current = { masterKey, sessionToken };
+    } else {
+      masterKey.fill(0);
+    }
   }
 
   async function handleLogin() {
-    setLoadingStep("kdf");
     const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
     const keys = await stretchMasterKey(masterKey, email);
-    setLoadingStep("auth");
     await performLogin(keys);
   }
 
-  async function performLogin(keys: Awaited<ReturnType<typeof stretchMasterKey>>) {
+  async function performLogin(keys: Awaited<ReturnType<typeof stretchMasterKey>>): Promise<string> {
     const emailHash = computeEmailHash(email);
     const step1 = srpStep1();
 
@@ -181,170 +280,181 @@ export function UnlockScreen({ apiClient, mode, onSuccess, onSwitchMode, onForgo
 
     step2.verifyServerProof(verifyResp.serverProofM2);
     setSession(verifyResp, email, keys);
+    return verifyResp.sessionToken;
   }
 
-  const loadingMessage =
-    loadingStep === "kdf"
-      ? "Deriving key with Argon2id…"
-      : loadingStep === "auth"
-        ? "Authenticating…"
-        : mode === "register"
-          ? "Creating account…"
-          : "Unlocking…";
+  /** Wraps the vault keys under a fresh recovery code and uploads the blob. */
+  async function createKit() {
+    const pending = pendingKit.current;
+    if (!pending) return;
+    setKitError(null);
+    setKitPending(true);
+    let subkeys: Awaited<ReturnType<typeof stretchMasterKeyAllRaw>> | null = null;
+    try {
+      subkeys = await stretchMasterKeyAllRaw(pending.masterKey, email);
+      const code = generateRecoveryCode();
+      const { authKeyB64, wrapKey } = await deriveRecoveryKeys(code, email);
+      const blob = await wrapVaultSubkeys(subkeys, wrapKey);
+      await apiClient.recovery.set(
+        { recoveryAuthKey: authKeyB64, recoveryBlob: blob.blob, recoveryBlobIv: blob.blobIv },
+        pending.sessionToken,
+      );
+      clearPendingKit();
+      setKitCode(code);
+    } catch (err) {
+      setKitError(humanizeError(err));
+    } finally {
+      subkeys?.smkBytes.fill(0);
+      subkeys?.encKeyBytes.fill(0);
+      subkeys?.macKeyBytes.fill(0);
+      setKitPending(false);
+    }
+  }
+
+  if (phase === "kit") {
+    return (
+      <AuthShell homeHref={homeHref} footer={footer}>
+        <h1 className="text-h1 font-semibold text-fg">Save your recovery kit</h1>
+        <p className="mt-2 text-body text-muted">
+          Your vault is created. If you forget your master password, this code is the only way back in. We can&apos;t
+          reset it for you. It is shown once.
+        </p>
+
+        {kitError && (
+          <Banner
+            tone="danger"
+            title="Couldn't create the recovery kit."
+            className="mt-6"
+            action={
+              <Button size="sm" onClick={createKit} pending={kitPending} pendingLabel="Retrying…">
+                Try again
+              </Button>
+            }
+          >
+            {kitError}
+          </Banner>
+        )}
+
+        {!kitCode && !kitError && (
+          <p role="status" className="mt-6 text-ui text-muted">
+            Creating your recovery kit…
+          </p>
+        )}
+
+        {kitCode && (
+          <div className="mt-6 flex flex-col gap-4">
+            <div className="select-all rounded-lg border border-border bg-surface p-4 text-mono-sm leading-6 sm:text-ui">
+              <SecretText value={kitCode} />
+            </div>
+            <Button onClick={() => onDownloadRecoveryKit?.(email, kitCode)}>Download recovery kit</Button>
+            <p className="text-meta text-muted">
+              Print it or keep it offline. Anyone who has this code and your email can take over the account.
+            </p>
+            <label className="flex items-start gap-2.5 text-ui text-fg">
+              <input
+                type="checkbox"
+                checked={kitSaved}
+                onChange={(e) => setKitSaved(e.target.checked)}
+                className="mt-0.5 size-4 accent-accent"
+              />
+              I&apos;ve saved my recovery kit
+            </label>
+            <Button variant="primary" size="lg" disabled={!kitSaved} onClick={() => onSuccess?.()}>
+              Continue to your vault
+            </Button>
+          </div>
+        )}
+      </AuthShell>
+    );
+  }
+
+  const isRegister = mode === "register";
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[#070706] px-4 py-12">
-      {/* Logo */}
-      <div className="mb-8">
-        <span className="font-mono text-sm font-semibold text-[#F4F1E8] tracking-tight">nopwd</span>
-      </div>
+    <AuthShell homeHref={homeHref} footer={footer}>
+      <h1 className="text-h1 font-semibold text-fg">{isRegister ? "Create your vault" : "Unlock your vault"}</h1>
+      <p className="mt-2 text-body text-muted">
+        {isRegister
+          ? "The server stores ciphertext. Your master password never leaves this device."
+          : "Your master password never leaves this device."}
+      </p>
 
-      <div className="w-full max-w-sm">
-        <div className="bg-[#11110F] border border-[#2B2923] p-8">
-          <h1 className="font-mono text-xl font-semibold text-[#F4F1E8] mb-1">
-            {mode === "login" ? "Unlock your vault" : "Create account"}
-          </h1>
-          <p className="text-sm text-[#9C988D] mb-6">
-            {mode === "login"
-              ? "Your master password never leaves this device."
-              : "Pick a strong master password — it encrypts your entire vault."}
-          </p>
+      <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-5">
+        <Field
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          autoComplete="email"
+          placeholder="you@example.com"
+        />
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-                placeholder="you@example.com"
-                className="w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D] focus:outline-none focus:border-[#D6FF3F] transition-colors"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
-                Master password
-              </label>
-              <div className="relative">
-                <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete={mode === "register" ? "new-password" : "current-password"}
-                  className="w-full px-3 py-2.5 pr-10 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm focus:outline-none focus:border-[#D6FF3F] transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((s) => !s)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-[#9C988D] hover:text-[#F4F1E8] transition-colors"
-                  tabIndex={-1}
-                >
-                  {showPassword ? (
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                    </svg>
-                  ) : (
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.75">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-              {/* Password strength — register only */}
-              {mode === "register" && strength && password && (
-                <div className="mt-2">
-                  <div className="flex gap-1 mb-1">
-                    {[1, 2, 3, 4].map((i) => (
-                      <div
-                        key={i}
-                        className={`h-0.5 flex-1 transition-all duration-300 ${
-                          i <= strength.score ? strength.bg : "bg-[#2B2923]"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  <p className={`font-mono text-xs ${strength.color}`}>{strength.label}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Recovery warning — register only */}
-            {mode === "register" && (
-              <div className="flex items-start gap-2.5 p-3 border border-amber-500/20 bg-amber-500/5">
-                <svg className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-                <p className="text-xs text-amber-400 leading-relaxed">
-                  <strong className="font-semibold">Write this password down.</strong> It encrypts your vault and cannot be reset — not even by us.
-                </p>
-              </div>
-            )}
-
-            {error && (
-              <div className="flex items-start gap-2.5 p-3 border border-[#FF5C39]/30 bg-[#FF5C39]/5">
-                <svg className="w-4 h-4 text-[#FF5C39] mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <p className="text-sm text-[#FF5C39]">{error}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2.5 px-4 bg-[#D6FF3F] hover:bg-[#c8ef3a] disabled:opacity-50 text-[#070706] font-mono font-semibold transition-colors text-sm flex items-center justify-center gap-2"
-            >
-              {loading && (
-                <svg className="w-4 h-4 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              )}
-              {loading ? loadingMessage : mode === "register" ? "Create account" : "Unlock"}
-            </button>
-          </form>
-
-          <p className="mt-5 text-center text-sm text-[#9C988D]">
-            {mode === "login" ? "New to nopwd? " : "Already have an account? "}
-            <button
-              onClick={onSwitchMode}
-              className="text-[#D6FF3F] hover:underline underline-offset-2 font-medium"
-            >
-              {mode === "login" ? "Create account" : "Sign in"}
-            </button>
-          </p>
-
-          {mode === "login" && onForgotPassword && (
-            <p className="mt-2 text-center text-xs text-[#9C988D]">
-              Forgot your master password?{" "}
-              <button
-                onClick={onForgotPassword}
-                className="text-[#9C988D] hover:text-[#D6FF3F] underline underline-offset-2 transition-colors"
-              >
-                Use your recovery kit
-              </button>
-            </p>
-          )}
+        <div className="flex flex-col gap-2">
+          <Field
+            ref={passwordInput}
+            label="Master password"
+            type="password"
+            revealable
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete={isRegister ? "new-password" : "current-password"}
+            error={passwordError}
+          />
+          {isRegister && <StrengthMeter password={password} userInputs={email ? [email] : undefined} />}
         </div>
 
-        {/* Security badge */}
-        <div className="mt-4 flex items-center justify-center gap-1.5 text-xs text-[#9C988D]">
-          <span className="font-mono">AES-256-GCM · Argon2id · SRP-6a · Zero-knowledge</span>
-        </div>
-      </div>
-    </div>
+        {isRegister && (
+          <Field
+            label="Confirm master password"
+            type="password"
+            revealable
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            required
+            autoComplete="new-password"
+            error={confirmError}
+          />
+        )}
+
+        {isRegister && (
+          <Banner tone="warning" title="No reset.">
+            If you forget this password, only your recovery kit can get you back in. You&apos;ll save it next.
+          </Banner>
+        )}
+
+        {error && <Banner tone="danger">{error}</Banner>}
+
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          pending={loading}
+          pendingLabel={isRegister ? "Creating your vault…" : "Unlocking your vault…"}
+        >
+          {isRegister ? "Create vault" : "Unlock"}
+        </Button>
+        <span role="status" aria-live="polite" className="sr-only">
+          {loading ? (isRegister ? "Creating your vault…" : "Unlocking your vault…") : ""}
+        </span>
+      </form>
+
+      {mode === "login" && onForgotPassword && (
+        <p className="mt-6 text-ui text-muted">
+          Forgot master password?{" "}
+          <button type="button" onClick={onForgotPassword} className={LINK_CLASS}>
+            Use your recovery kit
+          </button>
+        </p>
+      )}
+
+      <p className={mode === "login" && onForgotPassword ? "mt-2 text-ui text-muted" : "mt-6 text-ui text-muted"}>
+        {isRegister ? "Already have a vault? " : "New to nopwd? "}
+        <button type="button" onClick={onSwitchMode} className={LINK_CLASS}>
+          {isRegister ? "Sign in" : "Create a vault"}
+        </button>
+      </p>
+    </AuthShell>
   );
 }

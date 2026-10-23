@@ -1,9 +1,10 @@
 import { ErrorBoundary } from "@/components/error-boundary";
+import { VaultShell } from "@/components/vault/VaultShell";
 
 export default function VaultLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#070706]">
-      <ErrorBoundary>{children}</ErrorBoundary>
-    </div>
+    <ErrorBoundary>
+      <VaultShell>{children}</VaultShell>
+    </ErrorBoundary>
   );
 }

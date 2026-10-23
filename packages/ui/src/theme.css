@@ -1,0 +1,245 @@
+/*
+ * nopwd design tokens (DESIGN.md v2). Shared by the web app and the extension.
+ * Import after `@import "tailwindcss";` in each app's entry stylesheet.
+ * Components use the Tailwind utilities mapped below, never literal colors.
+ */
+
+:root {
+  color-scheme: light;
+
+  --bg: #fcfcfd;
+  --bg-subtle: #f7f8f9;
+  --surface: #ffffff;
+  --surface-hover: #eff0f3;
+  --surface-active: #e7e9ed;
+  --surface-selected: #dfe2e7;
+  --divider: #d7dae0;
+  --border: #c9cdd5;
+  --border-strong: #adb3bd;
+  --text-faint: #8a919c;
+  --icon: #6f7682;
+  --text-muted: #5c6370;
+  --text: #1a1d22;
+
+  --accent: #d2491b;
+  --accent-hover: #b53c13;
+  --accent-fg: #ffffff;
+  --accent-subtle: #fceee8;
+  --accent-text: #b53c13;
+  --focus: #d2491b;
+
+  --success: #1d7a4e;
+  --warning: #8a5a00;
+  --danger: #c42b32;
+  --danger-fill: #b4232a;
+  --danger-fill-fg: #ffffff;
+  --success-subtle: color-mix(in oklab, var(--success) 8%, var(--bg));
+  --warning-subtle: color-mix(in oklab, var(--warning) 8%, var(--bg));
+  --danger-subtle: color-mix(in oklab, var(--danger) 8%, var(--bg));
+
+  --glyph-letter: var(--text);
+  --glyph-digit: #2563c9;
+  --glyph-symbol: #b5398c;
+
+  --shadow-overlay: 0 1px 2px rgb(16 18 22 / 0.06), 0 12px 32px -8px rgb(16 18 22 / 0.18);
+  --overlay: rgb(0 0 0 / 0.5);
+}
+
+/* Dark tokens appear twice: once for the explicit override, once for the system preference. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e0f11;
+  --bg-subtle: #141518;
+  --surface: #1b1d21;
+  --surface-hover: #22252a;
+  --surface-active: #292c32;
+  --surface-selected: #30343a;
+  --divider: #30343a;
+  --border: #3a3f46;
+  --border-strong: #4c525b;
+  --text-faint: #7d848f;
+  --icon: #8b929d;
+  --text-muted: #a7aeb8;
+  --text: #edeef0;
+
+  --accent: #ff7a45;
+  --accent-hover: #ff915f;
+  --accent-fg: #1a0b04;
+  --accent-subtle: #2a1912;
+  --accent-text: #ff915f;
+  --focus: #ff7a45;
+
+  --success: #5bd69a;
+  --warning: #f2c35b;
+  --danger: #ff7b7f;
+  --danger-fill: #ff7b7f;
+  --danger-fill-fg: #1a0506;
+  --success-subtle: color-mix(in oklab, var(--success) 14%, var(--bg));
+  --warning-subtle: color-mix(in oklab, var(--warning) 14%, var(--bg));
+  --danger-subtle: color-mix(in oklab, var(--danger) 14%, var(--bg));
+
+  --glyph-digit: #7fb0ff;
+  --glyph-symbol: #f08bcf;
+
+  --shadow-overlay: 0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -8px rgb(0 0 0 / 0.6);
+  --overlay: rgb(0 0 0 / 0.6);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #0e0f11;
+    --bg-subtle: #141518;
+    --surface: #1b1d21;
+    --surface-hover: #22252a;
+    --surface-active: #292c32;
+    --surface-selected: #30343a;
+    --divider: #30343a;
+    --border: #3a3f46;
+    --border-strong: #4c525b;
+    --text-faint: #7d848f;
+    --icon: #8b929d;
+    --text-muted: #a7aeb8;
+    --text: #edeef0;
+
+    --accent: #ff7a45;
+    --accent-hover: #ff915f;
+    --accent-fg: #1a0b04;
+    --accent-subtle: #2a1912;
+    --accent-text: #ff915f;
+    --focus: #ff7a45;
+
+    --success: #5bd69a;
+    --warning: #f2c35b;
+    --danger: #ff7b7f;
+    --danger-fill: #ff7b7f;
+    --danger-fill-fg: #1a0506;
+    --success-subtle: color-mix(in oklab, var(--success) 14%, var(--bg));
+    --warning-subtle: color-mix(in oklab, var(--warning) 14%, var(--bg));
+    --danger-subtle: color-mix(in oklab, var(--danger) 14%, var(--bg));
+
+    --glyph-digit: #7fb0ff;
+    --glyph-symbol: #f08bcf;
+
+    --shadow-overlay: 0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -8px rgb(0 0 0 / 0.6);
+    --overlay: rgb(0 0 0 / 0.6);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border: var(--border-strong);
+    --divider: var(--border-strong);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-surface-selected: var(--surface-selected);
+  --color-divider: var(--divider);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-faint: var(--text-faint);
+  --color-icon: var(--icon);
+  --color-muted: var(--text-muted);
+  --color-fg: var(--text);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-text: var(--accent-text);
+  --color-focus: var(--focus);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-danger-fill: var(--danger-fill);
+  --color-danger-fill-fg: var(--danger-fill-fg);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-glyph-digit: var(--glyph-digit);
+  --color-glyph-symbol: var(--glyph-symbol);
+  --color-overlay: var(--overlay);
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  --shadow-overlay: var(--shadow-overlay);
+
+  --font-sans: var(--font-geist, "Geist Variable"), "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono, "Geist Mono Variable"), "Geist Mono", ui-monospace, monospace;
+
+  --text-display: 3.5rem;
+  --text-display--line-height: 3.75rem;
+  --text-display--letter-spacing: -0.03em;
+  --text-h1: 1.5rem;
+  --text-h1--line-height: 2rem;
+  --text-h1--letter-spacing: -0.015em;
+  --text-h2: 1.125rem;
+  --text-h2--line-height: 1.625rem;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h3: 0.9375rem;
+  --text-h3--line-height: 1.375rem;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.375rem;
+  --text-ui: 0.875rem;
+  --text-ui--line-height: 1.25rem;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.125rem;
+  --text-mono-sm: 0.75rem;
+  --text-mono-sm--line-height: 1rem;
+
+  --animate-overlay-in: overlay-in 160ms ease-out both;
+  --animate-fade-in: fade-in 160ms ease-out both;
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--accent-subtle);
+    color: var(--text);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    transition-duration: 0ms !important;
+  }
+}

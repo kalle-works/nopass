@@ -1,6 +1,7 @@
 "use client";
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Button } from "@nopass/ui";
 
 interface Props {
   children: ReactNode;
@@ -30,20 +31,18 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         this.props.fallback ?? (
-          <div className="min-h-screen bg-[#070706] flex items-center justify-center p-8">
-            <div className="max-w-md w-full border border-[#2B2923] p-6">
-              <p className="font-mono text-xs text-[#E8321A] uppercase tracking-widest mb-3">
-                Something went wrong
+          <div className="flex min-h-screen items-center justify-center bg-bg p-6 text-fg">
+            <div role="alert" className="w-full max-w-[400px]">
+              <h1 className="text-h1 font-semibold text-fg">Something went wrong</h1>
+              <p className="mt-2 text-body text-muted">
+                This page hit an error. Try again, and reload the page if it keeps happening.
               </p>
-              <p className="text-sm text-[#9C988D] font-mono break-words">
+              <p className="mt-4 break-words rounded border border-divider bg-surface-hover px-3 py-2 font-mono text-mono-sm text-muted">
                 {this.state.error.message}
               </p>
-              <button
-                onClick={() => this.setState({ error: null })}
-                className="mt-4 font-mono text-xs text-[#9C988D] border border-[#2B2923] px-3 py-1.5 hover:text-[#F4F1E8] hover:border-[#9C988D] transition-colors"
-              >
+              <Button className="mt-6" onClick={() => this.setState({ error: null })}>
                 Try again
-              </button>
+              </Button>
             </div>
           </div>
         )

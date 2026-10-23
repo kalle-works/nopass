@@ -3,6 +3,7 @@
  * Requires the web app + API to be running.
  */
 import { test, expect, Page } from "@playwright/test";
+import { itemRow, registerAccount } from "./helpers";
 
 const PASSWORD = "vault test password e2e";
 
@@ -12,11 +13,7 @@ function uniqueEmail() {
 }
 
 async function registerAndLogin(page: Page, email: string) {
-  await page.goto("/register");
-  await page.fill('input[type="email"]', email);
-  await page.fill('input[type="password"]', PASSWORD);
-  await page.click('button[type="submit"]');
-  await expect(page).toHaveURL(/\/vault/, { timeout: 30_000 });
+  await registerAccount(page, email, PASSWORD);
 }
 
 async function openNewItemModal(page: Page, type: "Login" | "Note" | "Card" | "Identity" = "Login") {
@@ -43,7 +40,7 @@ test.describe("Vault CRUD", () => {
 
     await page.click('button[type="submit"]');
 
-    await expect(page.locator("text=GitHub")).toBeVisible({ timeout: 10_000 });
+    await expect(itemRow(page, "GitHub")).toBeVisible({ timeout: 10_000 });
   });
 
   test("edit an existing item → updated name visible", async ({ page }) => {
@@ -53,7 +50,7 @@ test.describe("Vault CRUD", () => {
     await page.fill('input[placeholder="Username or email"]', "alice");
     await page.fill('input[type="password"]', "pass123");
     await page.click('button[type="submit"]');
-    await expect(page.locator("text=Twitter")).toBeVisible({ timeout: 10_000 });
+    await expect(itemRow(page, "Twitter")).toBeVisible({ timeout: 10_000 });
 
     await page.click('button:has-text("Edit")');
 
@@ -62,7 +59,7 @@ test.describe("Vault CRUD", () => {
     await nameField.fill("X (Twitter)");
     await page.click('button[type="submit"]');
 
-    await expect(page.getByText("X (Twitter)", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(itemRow(page, "X (Twitter)")).toBeVisible({ timeout: 10_000 });
     // Use exact match: "Twitter" must not appear as a standalone item name
     await expect(page.getByText("Twitter", { exact: true })).not.toBeVisible({ timeout: 5_000 });
   });
@@ -74,14 +71,12 @@ test.describe("Vault CRUD", () => {
     await page.fill('input[placeholder="Username or email"]', "user");
     await page.fill('input[type="password"]', "pw");
     await page.click('button[type="submit"]');
-    await expect(page.locator("text=ToDelete")).toBeVisible({ timeout: 10_000 });
+    await expect(itemRow(page, "ToDelete")).toBeVisible({ timeout: 10_000 });
 
-    await page.click('button:has-text("Delete")');
+    await page.getByRole("complementary", { name: "Item details" }).getByRole("button", { name: "Delete", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete item" }).click();
 
-    const confirmBtn = page.locator('button:has-text("Confirm"), button:has-text("Yes")');
-    if (await confirmBtn.isVisible({ timeout: 1_000 })) await confirmBtn.click();
-
-    await expect(page.locator("text=ToDelete")).not.toBeVisible({ timeout: 10_000 });
+    await expect(itemRow(page, "ToDelete")).not.toBeVisible({ timeout: 10_000 });
   });
 
   test("search filters items by name", async ({ page }) => {
@@ -91,12 +86,12 @@ test.describe("Vault CRUD", () => {
       await page.fill('input[placeholder="Username or email"]', "alice");
       await page.fill('input[type="password"]', "pw");
       await page.click('button[type="submit"]');
-      await expect(page.locator(`text=${name}`)).toBeVisible({ timeout: 10_000 });
+      await expect(itemRow(page, name)).toBeVisible({ timeout: 10_000 });
     }
 
     await page.fill('input[type="search"]', "GitHub");
-    await expect(page.locator("text=GitHub")).toBeVisible();
-    await expect(page.locator("text=GitLab")).not.toBeVisible();
+    await expect(itemRow(page, "GitHub")).toBeVisible();
+    await expect(itemRow(page, "GitLab")).not.toBeVisible();
   });
 
   test("lock button redirects to login", async ({ page }) => {
@@ -109,8 +104,8 @@ test.describe("Vault CRUD", () => {
     // Password field should already have a value (pre-generated, hidden)
     const passwordField = page.locator('input[type="password"]');
     await expect(passwordField).not.toHaveValue("");
-    // Strength bar should be visible (green)
-    await expect(page.locator(".bg-green-500, .bg-blue-500")).toBeVisible({ timeout: 3_000 });
+    // Strength meter should be visible
+    await expect(page.getByText(/to guess/)).toBeVisible({ timeout: 3_000 });
   });
 
   test("save shows toast notification", async ({ page }) => {
@@ -126,25 +121,26 @@ test.describe("Vault CRUD", () => {
     await page.fill('input[placeholder="Username or email"]', "alice@example.com");
     await page.fill('input[type="password"]', "mysecret123");
     await page.click('button[type="submit"]');
-    await expect(page.locator("text=HoverTest")).toBeVisible({ timeout: 10_000 });
+    await expect(itemRow(page, "HoverTest")).toBeVisible({ timeout: 10_000 });
 
     // Hover over the item row to reveal quick-copy buttons
-    const itemRow = page.locator("text=HoverTest").first();
-    await itemRow.hover();
+    await itemRow(page, "HoverTest").hover();
     // Copy password button should become visible
-    await expect(page.locator('button[title*="Copy password"]')).toBeVisible({ timeout: 3_000 });
+    await expect(itemRow(page, "HoverTest").getByRole("button", { name: "Copy password" })).toBeVisible({ timeout: 3_000 });
   });
 
-  test("keyboard shortcut C copies password of selected login item", async ({ page }) => {
+  test("keyboard shortcut C copies password of selected login item", async ({ page, context }) => {
+    // Headless Chromium blocks clipboard writes without an explicit grant; a real keypress counts as a user gesture.
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await openNewItemModal(page, "Login");
     await page.fill('input[placeholder="Name"]', "KeyTest");
     await page.fill('input[placeholder="Username or email"]', "keyuser");
     await page.fill('input[type="password"]', "keypw123");
     await page.click('button[type="submit"]');
-    await expect(page.locator("text=KeyTest")).toBeVisible({ timeout: 10_000 });
+    await expect(itemRow(page, "KeyTest")).toBeVisible({ timeout: 10_000 });
 
     // Click item to select it (opens detail pane)
-    await page.click("text=KeyTest");
+    await itemRow(page, "KeyTest").click();
     await expect(page.locator('aside:has-text("KeyTest")')).toBeVisible({ timeout: 5_000 });
 
     // Press C to copy password — toast should appear

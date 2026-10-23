@@ -302,7 +302,7 @@ describe.skipIf(!runnable)("extension end-to-end", () => {
 
     const result = await popup.waitFor<string>(
       `document.querySelector("input[type=search]") ? "unlocked"
-        : document.querySelector("p.text-danger")?.textContent || ""`,
+        : document.querySelector("[role=alert]")?.textContent || ""`,
       90_000,
     );
     expect(result).toBe("unlocked");
@@ -319,7 +319,7 @@ describe.skipIf(!runnable)("extension end-to-end", () => {
 
   it("autofills credentials into the page", async () => {
     await popup.eval(`{
-      const btn = [...document.querySelectorAll("button")].find(b => b.textContent === "Autofill");
+      const btn = [...document.querySelectorAll("button")].find(b => b.textContent === "Fill");
       btn.click();
     }`);
     await site.waitForFunction(

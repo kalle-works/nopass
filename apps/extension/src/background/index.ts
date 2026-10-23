@@ -293,13 +293,21 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const plain = await decryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
       if (plain.type !== "login") return { error: "not a login item" };
 
-      await chrome.tabs.sendMessage(message.tabId, {
-        type: "FILL_CREDENTIALS",
-        username: plain.username,
-        password: plain.password,
-      });
+      // The content script answers { filled: true } once it found a password
+      // field. No receiver, or no answer, means there was no form to fill.
+      let filled = false;
+      try {
+        const result = await chrome.tabs.sendMessage<unknown, { filled?: boolean } | undefined>(message.tabId, {
+          type: "FILL_CREDENTIALS",
+          username: plain.username,
+          password: plain.password,
+        });
+        filled = result?.filled === true;
+      } catch {
+        filled = false;
+      }
 
-      return { ok: true };
+      return filled ? { ok: true } : { error: "no_login_form" };
     }
 
     case "WEBAUTHN_HAS_CREDENTIAL": {

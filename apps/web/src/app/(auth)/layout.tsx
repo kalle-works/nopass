@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   },
 };
 
+// Each auth screen renders its own AuthShell so the page frame is identical
+// for the shared UnlockScreen (also used by the desktop app) and the web-only pages.
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  return <div className="min-h-screen bg-[#0a0a0a]">{children}</div>;
+  return children;
 }

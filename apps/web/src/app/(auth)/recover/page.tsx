@@ -18,7 +18,18 @@ import {
   wrapVaultSubkeys,
 } from "@nopass/crypto";
 import { DEFAULT_KDF_PARAMS, type RecoveryInitResponse, type ReencryptedItem } from "@nopass/types";
+import {
+  AuthShell,
+  Banner,
+  Button,
+  estimateStrength,
+  Field,
+  MASTER_PASSWORD_MIN_LEVEL,
+  SecretText,
+  StrengthMeter,
+} from "@nopass/ui";
 import { api } from "@/lib/api";
+import { AuthFooter } from "@/components/auth/auth-footer";
 import { downloadRecoveryKit } from "@/lib/recovery-kit";
 
 type Step = "code" | "new-password" | "done";
@@ -39,9 +50,6 @@ function humanizeError(err: unknown): string {
   }
   return msg || "Something went wrong. Please try again.";
 }
-
-const inputClass =
-  "w-full px-3 py-2.5 border border-[#2B2923] bg-[#070706] text-[#F4F1E8] text-sm placeholder:text-[#9C988D]/60 focus:outline-none focus:border-[#D6FF3F] transition-colors";
 
 export default function RecoverPage() {
   const router = useRouter();
@@ -99,6 +107,11 @@ export default function RecoverPage() {
   async function handleSetPassword(e: React.FormEvent) {
     e.preventDefault();
     if (!init || !oldSubkeys) return;
+    // Same policy as registration, so recovery can't set a weaker master password
+    if (estimateStrength(newPassword, email ? [email] : []).level < MASTER_PASSWORD_MIN_LEVEL) {
+      setError("Choose a stronger master password. It has to reach Strong.");
+      return;
+    }
     if (newPassword !== newPassword2) {
       setError("The passwords don't match.");
       return;
@@ -198,163 +211,113 @@ export default function RecoverPage() {
     }
   }
 
+  const LINK = "rounded-sm text-accent-text underline-offset-2 hover:underline";
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[#070706] px-4 py-12">
-      <div className="mb-8">
-        <span className="font-mono text-sm font-semibold text-[#F4F1E8] tracking-tight">nopwd</span>
-      </div>
+    <AuthShell homeHref="/" footer={<AuthFooter />}>
+      {step === "code" && (
+        <>
+          <h1 className="text-h1 font-semibold text-fg">Recover your account</h1>
+          <p className="mt-2 text-body text-muted">
+            Enter the recovery code from your kit. Decryption happens on this device.
+          </p>
+          <form onSubmit={handleVerifyCode} className="mt-8 flex flex-col gap-5">
+            <Field
+              label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              placeholder="you@example.com"
+            />
+            <Field
+              label="Recovery code"
+              mono
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              required
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+            />
+            {error && <Banner tone="danger">{error}</Banner>}
+            <Button type="submit" variant="primary" size="lg" pending={loading} pendingLabel={progress ?? "Working…"}>
+              Continue
+            </Button>
+          </form>
+          <p className="mt-6 text-ui text-muted">
+            Remembered it after all?{" "}
+            <button type="button" onClick={() => router.push("/login")} className={LINK}>
+              Sign in
+            </button>
+          </p>
+        </>
+      )}
 
-      <div className="w-full max-w-sm">
-        <div className="bg-[#11110F] border border-[#2B2923] p-8">
-          {step === "code" && (
-            <>
-              <h1 className="font-mono text-xl font-semibold text-[#F4F1E8] mb-1">Recover your account</h1>
-              <p className="text-sm text-[#9C988D] mb-6">
-                Enter the recovery code from your kit. Decryption happens on this device.
-              </p>
-              <form onSubmit={handleVerifyCode} className="space-y-4">
-                <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
-                    Email
-                  </label>
-                  <input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                    placeholder="you@example.com"
-                    className={inputClass}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="code" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
-                    Recovery code
-                  </label>
-                  <input
-                    id="code"
-                    type="text"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    required
-                    spellCheck={false}
-                    autoComplete="off"
-                    placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
-                    className={`${inputClass} font-mono`}
-                  />
-                </div>
-                {error && <p className="text-sm text-[#FF5C39]">{error}</p>}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-2.5 px-4 bg-[#D6FF3F] hover:bg-[#c8ef3a] disabled:opacity-50 text-[#070706] font-mono font-semibold transition-colors text-sm"
-                >
-                  {loading ? progress ?? "Working…" : "Continue"}
-                </button>
-              </form>
-              <p className="mt-5 text-center text-sm text-[#9C988D]">
-                Remembered it after all?{" "}
-                <button
-                  onClick={() => router.push("/login")}
-                  className="text-[#D6FF3F] hover:underline underline-offset-2 font-medium"
-                >
-                  Sign in
-                </button>
-              </p>
-            </>
-          )}
+      {step === "new-password" && (
+        <>
+          <h1 className="text-h1 font-semibold text-fg">Choose a new master password</h1>
+          <p className="mt-2 text-body text-muted">
+            Your vault will be re-encrypted on this device under the new password.
+          </p>
+          <form onSubmit={handleSetPassword} className="mt-8 flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <Field
+                label="New master password"
+                type="password"
+                revealable
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength={8}
+                autoComplete="new-password"
+              />
+              <StrengthMeter password={newPassword} userInputs={email ? [email] : undefined} />
+            </div>
+            <Field
+              label="Confirm new master password"
+              type="password"
+              revealable
+              value={newPassword2}
+              onChange={(e) => setNewPassword2(e.target.value)}
+              required
+              autoComplete="new-password"
+            />
+            {error && <Banner tone="danger">{error}</Banner>}
+            <Button type="submit" variant="primary" size="lg" pending={loading} pendingLabel={progress ?? "Working…"}>
+              Re-encrypt vault
+            </Button>
+          </form>
+        </>
+      )}
 
-          {step === "new-password" && (
-            <>
-              <h1 className="font-mono text-xl font-semibold text-[#F4F1E8] mb-1">Choose a new master password</h1>
-              <p className="text-sm text-[#9C988D] mb-6">
-                Your vault will be re-encrypted on this device under the new password.
-              </p>
-              <form onSubmit={handleSetPassword} className="space-y-4">
-                <div>
-                  <label htmlFor="new-password" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
-                    New master password
-                  </label>
-                  <input
-                    id="new-password"
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                    minLength={8}
-                    autoComplete="new-password"
-                    className={inputClass}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="new-password-2" className="block text-sm font-medium text-[#F4F1E8] mb-1.5">
-                    Repeat it
-                  </label>
-                  <input
-                    id="new-password-2"
-                    type="password"
-                    value={newPassword2}
-                    onChange={(e) => setNewPassword2(e.target.value)}
-                    required
-                    autoComplete="new-password"
-                    className={inputClass}
-                  />
-                </div>
-                {error && <p className="text-sm text-[#FF5C39]">{error}</p>}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-2.5 px-4 bg-[#D6FF3F] hover:bg-[#c8ef3a] disabled:opacity-50 text-[#070706] font-mono font-semibold transition-colors text-sm"
-                >
-                  {loading ? progress ?? "Working…" : "Re-encrypt vault"}
-                </button>
-              </form>
-            </>
-          )}
-
-          {step === "done" && newCode && (
-            <>
-              <h1 className="font-mono text-xl font-semibold text-[#7CFF6B] mb-1">Vault recovered</h1>
-              <p className="text-sm text-[#9C988D] mb-4">
-                Your old recovery code is now invalid. Here is your{" "}
-                <strong className="text-[#F4F1E8]">new</strong> one — shown once:
-              </p>
-              <div className="font-mono text-sm text-[#F4F1E8] bg-[#070706] border border-[#2B2923] p-4 break-all select-all mb-4">
-                {newCode}
-              </div>
-              <div className="space-y-3">
-                <button
-                  onClick={() => downloadRecoveryKit(email, newCode)}
-                  className="w-full py-2.5 px-4 border border-[#2B2923] text-[#F4F1E8] hover:bg-[#181713] font-mono font-semibold transition-colors text-sm"
-                >
-                  Download kit (.txt)
-                </button>
-                <label className="flex items-center gap-2 text-xs text-[#9C988D] cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={savedConfirmed}
-                    onChange={(e) => setSavedConfirmed(e.target.checked)}
-                    className="accent-[#D6FF3F]"
-                  />
-                  I have stored the new code somewhere safe
-                </label>
-                <button
-                  disabled={!savedConfirmed}
-                  onClick={() => router.replace("/login")}
-                  className="w-full py-2.5 px-4 bg-[#D6FF3F] hover:bg-[#c8ef3a] disabled:opacity-40 text-[#070706] font-mono font-semibold transition-colors text-sm"
-                >
-                  Sign in with the new password
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="mt-4 flex items-center justify-center gap-1.5 text-xs text-[#9C988D]">
-          <span className="font-mono">AES-256-GCM · Argon2id · SRP-6a · Zero-knowledge</span>
-        </div>
-      </div>
-    </div>
+      {step === "done" && newCode && (
+        <>
+          <h1 className="text-h1 font-semibold text-fg">Vault recovered</h1>
+          <p className="mt-2 text-body text-muted">
+            Your old recovery code no longer works. This is your new one. It is shown once.
+          </p>
+          <div className="mt-6 flex flex-col gap-4">
+            <div className="select-all rounded-lg border border-border bg-surface p-4 text-mono-sm leading-6 sm:text-ui">
+              <SecretText value={newCode} />
+            </div>
+            <Button onClick={() => downloadRecoveryKit(email, newCode)}>Download recovery kit</Button>
+            <label className="flex items-start gap-2.5 text-ui text-fg">
+              <input
+                type="checkbox"
+                checked={savedConfirmed}
+                onChange={(e) => setSavedConfirmed(e.target.checked)}
+                className="mt-0.5 size-4 accent-accent"
+              />
+              I&apos;ve saved the new recovery kit
+            </label>
+            <Button variant="primary" size="lg" disabled={!savedConfirmed} onClick={() => router.replace("/login")}>
+              Sign in with the new password
+            </Button>
+          </div>
+        </>
+      )}
+    </AuthShell>
   );
 }

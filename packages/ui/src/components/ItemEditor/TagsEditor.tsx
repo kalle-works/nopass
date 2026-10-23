@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import { X } from "lucide-react";
 
 /** Trim, drop empties, dedupe case-insensitively (first spelling wins). */
 export function normalizeTags(tags: string[]): string[] {
@@ -24,6 +25,7 @@ interface TagsEditorProps {
 
 export function TagsEditor({ tags, onChange }: TagsEditorProps) {
   const [draft, setDraft] = useState("");
+  const inputId = useId();
 
   function commitDraft() {
     if (!draft.trim()) return;
@@ -36,28 +38,29 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
   }
 
   return (
-    <div>
-      <label className="font-mono text-[10px] text-[#9C988D] uppercase tracking-widest block mb-1.5">
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={inputId} className="text-meta font-medium text-fg">
         Tags
       </label>
-      <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5 border border-[#2B2923] bg-[#070706] focus-within:border-[#D6FF3F] transition-colors">
+      <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded border border-border bg-surface px-2 py-1 transition-colors duration-[120ms] focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/30 hover:border-border-strong">
         {tags.map((tag) => (
           <span
             key={tag}
-            className="flex items-center gap-1 px-2 py-0.5 font-mono text-xs bg-[#181713] border border-[#2B2923] text-[#F4F1E8]"
+            className="flex items-center gap-1 rounded-sm bg-surface-active py-0.5 pl-2 pr-1 text-mono-sm text-fg"
           >
             {tag}
             <button
               type="button"
               onClick={() => removeTag(tag)}
               aria-label={`Remove tag ${tag}`}
-              className="text-[#9C988D] hover:text-[#E8321A] transition-colors leading-none"
+              className="flex size-4 items-center justify-center rounded-sm text-icon hover:bg-surface-selected hover:text-fg"
             >
-              ×
+              <X aria-hidden className="size-3" />
             </button>
           </span>
         ))}
         <input
+          id={inputId}
           type="text"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -71,9 +74,10 @@ export function TagsEditor({ tags, onChange }: TagsEditorProps) {
           }}
           onBlur={commitDraft}
           placeholder={tags.length === 0 ? "work, personal, …" : ""}
-          className="flex-1 min-w-24 px-1 py-1 bg-transparent text-[#F4F1E8] text-sm placeholder:text-[#9C988D]/60 focus:outline-none"
+          className="min-w-24 flex-1 bg-transparent px-1 py-1 text-ui text-fg placeholder:text-faint focus:outline-none"
         />
       </div>
+      <p className="text-meta text-muted">Press Enter or comma to add a tag.</p>
     </div>
   );
 }

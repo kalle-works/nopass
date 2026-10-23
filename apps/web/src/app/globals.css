@@ -1,37 +1,5 @@
 @import "tailwindcss";
+@import "@nopass/ui/theme.css";
 
-:root {
-  --background: #070706;
-  --foreground: #F4F1E8;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-ibm-plex-sans);
-  --font-mono: var(--font-martian-mono);
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-ibm-plex-sans), 'IBM Plex Sans', sans-serif;
-}
-
-@keyframes slide-in-from-right {
-  from { transform: translateX(1rem); opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
-}
-
-.animate-slide-in-right {
-  animation: slide-in-from-right 0.18s ease-out both;
-}
-
-@keyframes toast-in-up {
-  from { transform: translateX(-50%) translateY(0.5rem); opacity: 0; }
-  to   { transform: translateX(-50%) translateY(0);      opacity: 1; }
-}
-
-.animate-toast {
-  animation: toast-in-up 0.15s ease-out both;
-}
+/* Scan shared UI package sources for class names. */
+@source "../../../../packages/ui/src";

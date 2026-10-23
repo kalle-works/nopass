@@ -4,6 +4,7 @@
  * and the API running on http://localhost:4010.
  */
 import { test, expect } from "@playwright/test";
+import { logIn, registerAccount } from "./helpers";
 
 const PASSWORD = "correct horse battery staple e2e";
 
@@ -14,49 +15,29 @@ function uniqueEmail(label = "auth") {
 test.describe("Authentication", () => {
   test("register → redirects to vault", async ({ page }) => {
     const email = uniqueEmail("register");
-    await page.goto("/register");
-    await page.fill('input[type="email"]', email);
-    await page.fill('input[type="password"]', PASSWORD);
-    await page.click('button[type="submit"]');
-    await expect(page).toHaveURL(/\/vault/, { timeout: 30_000 });
+    await registerAccount(page, email, PASSWORD);
   });
 
   test("login with registered credentials → accesses vault", async ({ page }) => {
     const email = uniqueEmail("login");
 
     // Register
-    await page.goto("/register");
-    await page.fill('input[type="email"]', email);
-    await page.fill('input[type="password"]', PASSWORD);
-    await page.click('button[type="submit"]');
-    await expect(page).toHaveURL(/\/vault/, { timeout: 30_000 });
+    await registerAccount(page, email, PASSWORD);
 
     // Navigate to login (clears session)
-    await page.goto("/login");
-    await page.fill('input[type="email"]', email);
-    await page.fill('input[type="password"]', PASSWORD);
-    await page.click('button[type="submit"]');
+    await logIn(page, email, PASSWORD);
     await expect(page).toHaveURL(/\/vault/, { timeout: 30_000 });
   });
 
   test("wrong password shows error", async ({ page }) => {
     const email = uniqueEmail("wrong-pw");
 
-    await page.goto("/register");
-    await page.fill('input[type="email"]', email);
-    await page.fill('input[type="password"]', PASSWORD);
-    await page.click('button[type="submit"]');
-    await expect(page).toHaveURL(/\/vault/, { timeout: 30_000 });
+    await registerAccount(page, email, PASSWORD);
 
-    await page.goto("/login");
-    await page.fill('input[type="email"]', email);
-    await page.fill('input[type="password"]', "wrong password");
-    await page.click('button[type="submit"]');
+    await logIn(page, email, "wrong password");
 
     await expect(page).toHaveURL(/\/login/);
-    await expect(
-      page.locator("text=authentication failed").or(page.locator("p[class*='red']")),
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('form [role="alert"]')).toBeVisible({ timeout: 15_000 });
   });
 
   test("visiting /vault when locked redirects to /login", async ({ page }) => {
