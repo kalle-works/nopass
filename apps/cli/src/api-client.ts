@@ -23,6 +23,7 @@ import type {
   SrpVerifyRequest,
   SrpVerifyResponse,
   VaultInfo,
+  VaultFormatMarker,
 } from "@nopass/types";
 
 export class ApiError extends Error {
@@ -103,6 +104,9 @@ export function createApiClient(baseUrl: string) {
         get<EncryptedVaultItem[]>(`/vaults/${vaultId}/items`, token),
       createItem: (vaultId: string, req: CreateVaultItemRequest, token: string) =>
         post<EncryptedVaultItem>(`/vaults/${vaultId}/items`, req, token),
+    },
+    keys: {
+      vaultFormat: (token: string) => get<VaultFormatMarker>("/keys/vault-format", token),
     },
   };
 }

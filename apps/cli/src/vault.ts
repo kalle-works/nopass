@@ -16,7 +16,7 @@ export async function fetchAndDecryptItems(
   const active = perVault.flat().filter((i) => i.deletedAt === null);
 
   const keys = await importKeys(session);
-  const revisions = openRevisionStore(session.defaultVaultId);
+  const revisions = await openRevisionStore(keys.vaultMacKey, () => api.keys.vaultFormat(session.sessionToken));
   return Promise.all(
     active.map(async (item) => (await decryptVaultItem(item, bindingForItem(item), keys, revisions)).plaintext),
   );

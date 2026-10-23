@@ -23,6 +23,8 @@ import type {
   OrgDetails,
   OrgSummary,
   PendingInvite,
+  RewrapRequest,
+  RotateKeyRequest,
   PortalSessionResponse,
   PublicKeyResponse,
   RecoveryCompleteRequest,
@@ -54,6 +56,7 @@ import type {
   SyncRequest,
   SyncResponse,
   UpdateVaultItemRequest,
+  VaultFormatMarker,
   VaultInfo,
   ViewShareResponse,
 } from "@nopass/types";
@@ -195,19 +198,24 @@ export function createApiClient(baseUrl: string) {
       list: (token: string) => get<OrgSummary[]>("/organizations", token),
       get: (orgId: string, token: string) => get<OrgDetails>(`/organizations/${orgId}`, token),
       invites: (token: string) => get<PendingInvite[]>("/organizations/invites", token),
+      rewrap: (orgId: string, req: RewrapRequest, token: string) =>
+        put<void>(`/organizations/${orgId}/wraps`, req, token),
+      items: (orgId: string, token: string) => get<EncryptedVaultItem[]>(`/organizations/${orgId}/items`, token),
+      rotate: (orgId: string, req: RotateKeyRequest, token: string) =>
+        post<void>(`/organizations/${orgId}/rotate`, req, token),
       create: (req: CreateOrgRequest, token: string) => post<OrgSummary>("/organizations", req, token),
       invite: (orgId: string, req: InviteMemberRequest, token: string) =>
         post<void>(`/organizations/${orgId}/members`, req, token),
       accept: (orgId: string, token: string) =>
         post<void>(`/organizations/${orgId}/accept`, {}, token),
-      removeMember: (orgId: string, userId: string, token: string) =>
-        del<void>(`/organizations/${orgId}/members/${userId}`, token),
       getPublicKey: (emailHash: string, token: string) =>
         get<PublicKeyResponse>(`/organizations/public-key/${emailHash}`, token),
     },
     keys: {
       me: (token: string) => get<PublicKeyResponse>("/keys/me", token),
       setIdentity: (req: SetIdentityRequest, token: string) => put<void>("/keys/identity", req, token),
+      vaultFormat: (token: string) => get<VaultFormatMarker>("/keys/vault-format", token),
+      setVaultFormat: (req: { marker: string }, token: string) => put<void>("/keys/vault-format", req, token),
     },
     billing: {
       status: (token: string) => get<BillingStatus>("/billing/status", token),

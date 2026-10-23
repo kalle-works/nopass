@@ -335,6 +335,8 @@ export interface CreateOrgRequest {
   encryptedOrgKey: string;
   /** Creator's identity-key signature over their own wrap (signOrgKeyWrap) */
   wrapSignature?: string;
+  /** Org key epoch the creator's wrap was signed for */
+  keyEpoch?: number;
 }
 
 export interface OrgSummary {
@@ -370,20 +372,40 @@ export interface OrgDetails extends OrgSummary {
   members: OrgMember[];
   /** Org AES key encrypted with the caller's RSA public key */
   encryptedOrgKey: string;
-  /** Signature over the caller's wrap; null for wraps made before signing existed */
-  wrapSignature: string | null;
-  /** Who made the caller's wrap: the inviter, or the caller for an org they created */
-  wrapSignerId: string;
+  /** Signed chain for the caller's wrap, starting with it; verify with verifyOrgKeyChain */
+  wrapChain: WrapLink[];
 }
 
-/** A pending invite as the invitee sees it — verify with verifyOrgKeyWrap before accepting. */
+/** One member's org-key wrap and the key bundle of whoever signed it. */
+export interface WrapLink {
+  recipientUserId: string;
+  role: OrgRole;
+  encryptedOrgKey: string;
+  /** null for wraps made before signing existed */
+  wrapSignature: string | null;
+  keyEpoch: number | null;
+  signerUserId: string;
+  signer: KeyBundle;
+}
+
+/** A pending invite as the invitee sees it — verify wrapChain before accepting. */
 export interface PendingInvite {
   orgId: string;
   orgName: string;
   role: OrgRole;
-  encryptedOrgKey: string;
-  wrapSignature: string | null;
-  inviter: KeyBundle;
+  wrapChain: WrapLink[];
+}
+
+/** Owner-only org key rotation; see POST /organizations/{id}/rotate. */
+export interface RotateKeyRequest {
+  newEpoch: number;
+  removeUserId?: string;
+  wraps: RewrapRequest["wraps"];
+  items: Array<{ id: string; blob: string; blobIv: string; blobMac: string }>;
+}
+
+export interface RewrapRequest {
+  wraps: Array<{ userId: string; encryptedOrgKey: string; wrapSignature: string; keyEpoch: number }>;
 }
 
 export interface InviteMemberRequest {
@@ -394,6 +416,8 @@ export interface InviteMemberRequest {
   encryptedOrgKey: string;
   /** Inviter's identity-key signature over the wrap (signOrgKeyWrap) */
   wrapSignature: string;
+  /** Org key epoch the wrap was signed for */
+  keyEpoch: number;
 }
 
 export interface AcceptInviteRequest {
@@ -401,6 +425,11 @@ export interface AcceptInviteRequest {
 }
 
 export type PublicKeyResponse = KeyBundle;
+
+/** HMAC under the vault MAC key saying every item is v2; see applyV2OnlyMarker */
+export interface VaultFormatMarker {
+  marker: string | null;
+}
 
 export interface SetIdentityRequest {
   identityPublicKey: string;

@@ -1,5 +1,6 @@
 use axum::{extract::State, http::StatusCode, routing::{get, put}, Extension, Json, Router};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     db::keys::{self as db_keys, SetIdentityOutcome},
@@ -13,6 +14,37 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/me", get(get_own_bundle))
         .route("/identity", put(set_identity))
+        .route("/vault-format", get(get_vault_format).put(set_vault_format))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultFormatMarker {
+    marker: Option<String>,
+}
+
+/// The account's v2-only marker, if a client has set one.
+async fn get_vault_format(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+) -> ApiResult<Json<VaultFormatMarker>> {
+    let marker = db_keys::get_vault_format_marker(&state.db, auth.user_id).await?;
+    Ok(Json(VaultFormatMarker { marker }))
+}
+
+/// Store the v2-only marker. It is an HMAC only the account's clients can
+/// compute; the server keeps it opaque.
+async fn set_vault_format(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Json(body): Json<VaultFormatMarker>,
+) -> ApiResult<StatusCode> {
+    let marker = body.marker.ok_or_else(|| ApiError::BadRequest("marker is required".into()))?;
+    if B64.decode(&marker).map(|m| m.len()) != Ok(32) {
+        return Err(ApiError::BadRequest("marker must be 32 bytes of base64".into()));
+    }
+    db_keys::set_vault_format_marker(&state.db, auth.user_id, &marker).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The caller's published key bundle, so the client can check what the server

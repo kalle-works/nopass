@@ -22,9 +22,12 @@ import {
   OwnKeyMismatchError,
   ensureIdentityPublished,
   openRevisionStore,
+  publishV2Only,
 } from "@nopass/ui";
 import {
   ItemRollbackError,
+  LegacyItemRejectedError,
+  type MemoryRevisionStore,
   bindingForItem,
   decryptBytes,
   decryptVaultItem,
@@ -157,7 +160,9 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   } = useNopassStore();
 
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
-  const revisions = useMemo(() => (defaultVaultId ? openRevisionStore(defaultVaultId) : null), [defaultVaultId]);
+  // Keyed by the account key (not a server-supplied id) and primed with the
+  // account's v2-only marker; null until both are loaded.
+  const [revisions, setRevisions] = useState<MemoryRevisionStore | null>(null);
   const legacyUpgradeStarted = useRef(false);
   const [vaults, setVaults] = useState<VaultInfo[]>([]);
   const [vaultNames, setVaultNames] = useState<Map<string, string>>(new Map());
@@ -302,7 +307,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
           const { plaintext } = await decryptVaultItem(item, bindingForItem(item), keys, revisions);
           return [item.id, plaintext] as const;
         } catch (err) {
-          if (err instanceof ItemRollbackError) rolledBack++;
+          if (err instanceof ItemRollbackError || err instanceof LegacyItemRejectedError) rolledBack++;
           return null;
         }
       }),
@@ -324,21 +329,42 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     };
   }, [activeItems, vaultEncKey, vaultMacKey, revisions]);
 
+  useEffect(() => {
+    if (!vaultMacKey || !sessionToken) return;
+    let cancelled = false;
+    openRevisionStore(vaultMacKey, api, sessionToken).then((store) => {
+      if (!cancelled) setRevisions(store);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultMacKey, sessionToken]);
+
   // One background pass per unlock re-encrypts items still in the v1 format,
-  // so they gain id/type/revision binding without waiting for an edit.
+  // so they gain id/type/revision binding without waiting for an edit. Once
+  // nothing is left in v1, the account is marked v2-only so no device accepts
+  // a v1 blob again.
   useEffect(() => {
     if (legacyUpgradeStarted.current || isLoading || !sessionToken || !vaultEncKey || !vaultMacKey || !revisions) return;
-    if (!activeItems.some((i) => i.blobMac !== "")) return;
+    if (revisions.v2Only) return;
     legacyUpgradeStarted.current = true;
-    void upgradeLegacyItems(activeItems, { vaultEncKey, vaultMacKey }, revisions, async (item, encrypted) => {
-      const { version, updatedAt } = await api.vault.update(
-        item.vaultId,
-        item.id,
-        { ...encrypted, version: item.version },
-        sessionToken,
+    void (async () => {
+      const { failed } = await upgradeLegacyItems(
+        activeItems,
+        { vaultEncKey, vaultMacKey },
+        revisions,
+        async (item, encrypted) => {
+          const { version, updatedAt } = await api.vault.update(
+            item.vaultId,
+            item.id,
+            { ...encrypted, version: item.version },
+            sessionToken,
+          );
+          upsertItem({ ...item, ...encrypted, version, updatedAt });
+        },
       );
-      upsertItem({ ...item, ...encrypted, version, updatedAt });
-    });
+      if (failed === 0) await publishV2Only(vaultMacKey, revisions, api, sessionToken).catch(() => undefined);
+    })();
   }, [activeItems, isLoading, sessionToken, vaultEncKey, vaultMacKey, revisions, upsertItem]);
 
   // --- Derived data ---------------------------------------------------------
@@ -540,6 +566,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
             { scope: { kind: "personal" }, itemId: id, itemType: plaintext.type },
             vaultEncKey,
             revisions,
+            null,
           );
           const created = await api.vault.create(targetVault, { id, itemType: plaintext.type, ...encrypted }, sessionToken);
           revisions.record(id, revision);
@@ -549,12 +576,11 @@ export function VaultProvider({ children }: { children: ReactNode }) {
         } else if (editing && selectedEntry) {
           const { item } = selectedEntry;
           if (plaintext.type !== item.itemType) throw new Error("An item's type cannot change");
-          const { encrypted, revision } = await encryptVaultItem(
-            plaintext,
-            bindingForItem(item),
-            vaultEncKey,
-            revisions,
-          );
+          if (!vaultMacKey) return;
+          // Decrypt the blob being replaced so the new revision beats it
+          const binding = bindingForItem(item);
+          const current = await decryptVaultItem(item, binding, { vaultEncKey, vaultMacKey }, revisions);
+          const { encrypted, revision } = await encryptVaultItem(plaintext, binding, vaultEncKey, revisions, current);
           await api.vault.update(item.vaultId, item.id, { ...encrypted, version: item.version }, sessionToken);
           revisions.record(item.id, revision);
           upsertItem({
@@ -586,6 +612,7 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       activeVaultId,
       vaults,
       vaultEncKey,
+      vaultMacKey,
       revisions,
       upsertItem,
       showNotice,

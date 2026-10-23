@@ -87,7 +87,8 @@ export async function importKeys(
 
   const [vaultEncKey, vaultMacKey] = await Promise.all([
     crypto.subtle.importKey("raw", encKeyBytes, { name: "AES-GCM", length: 256 }, false, write ? ["encrypt", "decrypt"] : ["decrypt"]),
-    crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, write ? ["sign", "verify"] : ["verify"]),
+    // sign is needed even read-only: local trust state is named by an HMAC under this key
+    crypto.subtle.importKey("raw", macKeyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]),
   ]);
 
   encKeyBytes.fill(0);

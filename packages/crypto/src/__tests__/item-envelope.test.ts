@@ -4,11 +4,15 @@ import { encryptItem } from "../aes-gcm";
 import {
   type ItemBinding,
   ItemRollbackError,
+  LegacyItemRejectedError,
   MemoryRevisionStore,
+  applyV2OnlyMarker,
   decryptVaultItem,
   encryptItemV2,
   encryptVaultItem,
+  trustStateId,
   upgradeLegacyItems,
+  v2OnlyMarker,
 } from "../item-envelope";
 import { stretchMasterKey } from "../kdf";
 
@@ -99,10 +103,31 @@ describe("rollback protection", () => {
 
   it("writes past the highest revision seen", async () => {
     const keys = await keysPromise;
-    const store = new MemoryRevisionStore({ [ITEM_A]: 7 });
-    const { encrypted, revision } = await encryptVaultItem(LOGIN, bindingA, keys.vaultEncKey, store);
+    const store = new MemoryRevisionStore({ revisions: { [ITEM_A]: 7 } });
+    const { encrypted, revision } = await encryptVaultItem(LOGIN, bindingA, keys.vaultEncKey, store, { revision: 3 });
     expect(revision).toBe(8);
     await expect(decryptVaultItem(encrypted, bindingA, keys, store)).resolves.toMatchObject({ revision: 8 });
+  });
+
+  it("writes past the item's current revision on a device with no history", async () => {
+    const keys = await keysPromise;
+    const current = await decryptVaultItem(await encryptItemV2(LOGIN, bindingA, 5, keys.vaultEncKey), bindingA, keys);
+    const otherDevice = new MemoryRevisionStore({ revisions: { [ITEM_A]: 5 } });
+
+    const edit = await encryptVaultItem(LOGIN, bindingA, keys.vaultEncKey, new MemoryRevisionStore(), current);
+    await expect(decryptVaultItem(edit.encrypted, bindingA, keys, otherDevice)).resolves.toMatchObject({
+      revision: 6,
+    });
+  });
+
+  it("rejects revisions beyond the safe integer range", async () => {
+    const keys = await keysPromise;
+    const enc = await encryptItemV2(LOGIN, bindingA, 1, keys.vaultEncKey);
+    const bytes = Uint8Array.from(atob(enc.blob), (c) => c.charCodeAt(0));
+    new DataView(bytes.buffer).setBigUint64(1, 2n ** 53n);
+    await expect(
+      decryptVaultItem({ ...enc, blob: btoa(String.fromCharCode(...bytes)) }, bindingA, keys),
+    ).rejects.toThrow(/out-of-range/);
   });
 });
 
@@ -125,5 +150,35 @@ describe("upgradeLegacyItems", () => {
     expect([...written.keys()]).toEqual([ITEM_A]);
     const upgraded = await decryptVaultItem(written.get(ITEM_A)!, bindingA, keys, store);
     expect(upgraded).toMatchObject({ plaintext: LOGIN, format: 2 });
+  });
+});
+
+describe("v2-only marker", () => {
+  it("refuses v1 items once a marker made with this account's key is applied", async () => {
+    const keys = await keysPromise;
+    const v1 = await encryptItem(LOGIN, keys.vaultEncKey, keys.vaultMacKey);
+    const store = new MemoryRevisionStore();
+
+    await applyV2OnlyMarker(await v2OnlyMarker(keys.vaultMacKey), keys.vaultMacKey, store);
+    await expect(decryptVaultItem(v1, bindingA, keys, store)).rejects.toBeInstanceOf(LegacyItemRejectedError);
+  });
+
+  it("ignores a marker the server forged", async () => {
+    const keys = await keysPromise;
+    const other = await stretchMasterKey(new Uint8Array(32).fill(0x43), "other@example.com");
+    const v1 = await encryptItem(LOGIN, keys.vaultEncKey, keys.vaultMacKey);
+    const store = new MemoryRevisionStore();
+
+    await applyV2OnlyMarker(await v2OnlyMarker(other.vaultMacKey), keys.vaultMacKey, store);
+    await expect(decryptVaultItem(v1, bindingA, keys, store)).resolves.toMatchObject({ format: 1 });
+  });
+});
+
+describe("trustStateId", () => {
+  it("is fixed by the account key alone", async () => {
+    const keys = await keysPromise;
+    const other = await stretchMasterKey(new Uint8Array(32).fill(0x43), "other@example.com");
+    expect(await trustStateId(keys.vaultMacKey)).toBe(await trustStateId(keys.vaultMacKey));
+    expect(await trustStateId(keys.vaultMacKey)).not.toBe(await trustStateId(other.vaultMacKey));
   });
 });

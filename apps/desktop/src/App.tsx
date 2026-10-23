@@ -12,7 +12,7 @@ import {
   ensureIdentityPublished,
   openRevisionStore,
 } from "@nopass/ui";
-import { bindingForItem, decryptVaultItem, encryptVaultItem } from "@nopass/crypto";
+import { type MemoryRevisionStore, bindingForItem, decryptVaultItem, encryptVaultItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { createApiClient } from "@nopass/ui";
 import { useBiometric } from "./hooks/useBiometric";
@@ -224,7 +224,17 @@ function VaultScreen({
 }: VaultScreenProps) {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
-  const revisions = useMemo(() => openRevisionStore(defaultVaultId), [defaultVaultId]);
+  // Keyed by the account key and primed with the account's v2-only marker
+  const [revisions, setRevisions] = useState<MemoryRevisionStore | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    openRevisionStore(vaultMacKey, api, sessionToken).then((store) => {
+      if (!cancelled) setRevisions(store);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultMacKey, api, sessionToken]);
   const { userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
@@ -240,6 +250,7 @@ function VaultScreen({
   ).length;
 
   useEffect(() => {
+    if (!revisions) return;
     const active = items.filter((i) => i.deletedAt === null);
     Promise.all(
       active.map(async (item) => {
@@ -291,19 +302,21 @@ function VaultScreen({
     setSaving(true);
     setError(null);
     try {
+      if (!revisions) throw new Error("The vault is still loading");
       if (modal?.mode === "create") {
         const id = crypto.randomUUID();
         const { encrypted: enc, revision } = await encryptVaultItem(
-          plaintext, { scope: { kind: "personal" }, itemId: id, itemType: plaintext.type }, vaultEncKey, revisions,
+          plaintext, { scope: { kind: "personal" }, itemId: id, itemType: plaintext.type }, vaultEncKey, revisions, null,
         );
         const created = await api.vault.create(defaultVaultId, { id, itemType: plaintext.type, ...enc }, sessionToken);
         revisions.record(id, revision);
         upsertItem(created);
         await upsertLocalItem(created);
       } else if (modal?.mode === "edit") {
-        const { encrypted: enc, revision } = await encryptVaultItem(
-          plaintext, bindingForItem(modal.entry.item), vaultEncKey, revisions,
-        );
+        // Decrypt the blob being replaced so the new revision beats it
+        const binding = bindingForItem(modal.entry.item);
+        const current = await decryptVaultItem(modal.entry.item, binding, { vaultEncKey, vaultMacKey }, revisions);
+        const { encrypted: enc, revision } = await encryptVaultItem(plaintext, binding, vaultEncKey, revisions, current);
         await api.vault.update(defaultVaultId, modal.entry.item.id, {
           ...enc, version: modal.entry.item.version,
         }, sessionToken);
@@ -318,7 +331,7 @@ function VaultScreen({
     } finally {
       setSaving(false);
     }
-  }, [modal, api, sessionToken, defaultVaultId, vaultEncKey, revisions, upsertItem]);
+  }, [modal, api, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, revisions, upsertItem]);
 
   const handleDelete = useCallback(async (item: EncryptedVaultItem) => {
     if (!confirm("Delete this item?")) return;

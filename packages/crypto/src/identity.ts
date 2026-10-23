@@ -16,7 +16,7 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
-import type { KeyBundle } from "@nopass/types";
+import type { KeyBundle, WrapLink } from "@nopass/types";
 import { decryptBytes } from "./aes-gcm";
 
 const enc = new TextEncoder();
@@ -169,13 +169,19 @@ export class UnverifiableKeyError extends Error {
 export interface VerifiedKey {
   rsaPublicKeyB64: string;
   safetyNumber: string;
-  /** true when this call pinned the key (first contact — compare safety numbers) */
+  /**
+   * true when this user's identity key is not pinned yet. Nothing is pinned
+   * here: show the safety number, and call confirmKey only after the user has
+   * compared it out of band.
+   */
   firstSeen: boolean;
 }
 
 /**
  * Accept a member's RSA key only if their bundle is self-signed and their
- * identity key matches the pin (pinning it on first contact).
+ * identity key matches the pin. An unpinned key is returned with
+ * firstSeen = true and is NOT pinned; callers must not act on it (wrap or
+ * accept an org key) until the user confirms the safety number.
  */
 export function verifyMemberKey(bundle: KeyBundle, pins: KeyPinStore): VerifiedKey {
   if (!bundle.identityPublicKey || !bundle.publicKeySignature) {
@@ -191,7 +197,6 @@ export function verifyMemberKey(bundle: KeyBundle, pins: KeyPinStore): VerifiedK
   if (pinned !== undefined && pinned !== bundle.identityPublicKey) {
     throw new PinnedKeyChangedError(bundle.userId);
   }
-  if (pinned === undefined) pins.set(bundle.userId, bundle.identityPublicKey);
   return {
     rsaPublicKeyB64: bundle.publicKey,
     safetyNumber: safetyNumber(bundle.userId, bundle.identityPublicKey),
@@ -199,26 +204,41 @@ export function verifyMemberKey(bundle: KeyBundle, pins: KeyPinStore): VerifiedK
   };
 }
 
+/** Pin a user's identity key after the user explicitly confirmed its safety number. */
+export function confirmKey(bundle: KeyBundle, pins: KeyPinStore): void {
+  const verified = verifyMemberKey(bundle, pins);
+  if (verified.firstSeen) pins.set(bundle.userId, bundle.identityPublicKey!);
+}
+
 // ── Signed org-key wraps ─────────────────────────────────────────────────────
 
-/** Who wrapped an org key for whom. The signature covers all of it. */
+const ORG_ADMIN_ROLES = new Set(["owner", "admin"]);
+
+/** Who wrapped which epoch of an org key for whom. The signature covers all of it. */
 export interface OrgKeyWrap {
   orgId: string;
+  /** Org key version; a wrap is never accepted below the highest epoch seen for its org */
+  epoch: number;
   recipientUserId: string;
   signerUserId: string;
+  /** The recipient's role, as granted by the signer */
   role: string;
   /** base64 RSA-OAEP ciphertext of the org key */
   encryptedOrgKey: string;
 }
 
-/** label || 0 || orgId || recipient || signer || len(role) || role || ciphertext */
+/** label || 0 || orgId || epoch (u32) || recipient || signer || len(role) || role || ciphertext */
 function wrapMessage(wrap: OrgKeyWrap): Uint8Array {
   const role = enc.encode(wrap.role);
   if (role.length > 255) throw new Error("role too long");
+  if (!Number.isInteger(wrap.epoch) || wrap.epoch < 1 || wrap.epoch > 0xffffffff) throw new Error("invalid key epoch");
+  const epoch = new Uint8Array(4);
+  new DataView(epoch.buffer).setUint32(0, wrap.epoch);
   return concat(
-    enc.encode("nopwd-org-key-wrap-v1"),
+    enc.encode("nopwd-org-key-wrap-v2"),
     Uint8Array.of(0),
     uuidBytes(wrap.orgId),
+    epoch,
     uuidBytes(wrap.recipientUserId),
     uuidBytes(wrap.signerUserId),
     Uint8Array.of(role.length),
@@ -238,29 +258,111 @@ export class UntrustedOrgKeyError extends Error {
   }
 }
 
-/**
- * Check that an org-key wrap was made by `signer` (whose bundle must pass
- * verifyMemberKey — pinned, or pinned now on first contact) and is for this
- * org, recipient and role. A server that wrapped a key of its own choosing to
- * the recipient cannot produce this signature.
- */
-export function verifyOrgKeyWrap(
-  wrap: OrgKeyWrap,
-  signature: string | null,
-  signer: KeyBundle,
-  pins: KeyPinStore,
-): VerifiedKey {
-  if (signer.userId !== wrap.signerUserId) throw new UntrustedOrgKeyError("org key signer does not match the inviter");
-  const verified = verifyMemberKey(signer, pins);
-  if (!signature) throw new UntrustedOrgKeyError("This org key is not signed by the person who shared it.");
-  let ok = false;
-  try {
-    ok = ed25519.verify(fromBase64(signature), wrapMessage(wrap), fromBase64(signer.identityPublicKey!), {
-      zip215: false,
-    });
-  } catch {
-    ok = false;
+/** Some signers in an org-key chain have not been confirmed by the user yet. */
+export class UnconfirmedSignersError extends Error {
+  constructor(readonly signers: Array<{ bundle: KeyBundle; safetyNumber: string }>) {
+    super("Confirm the safety numbers of the people who shared this organization's key before using it.");
+    this.name = "UnconfirmedSignersError";
   }
-  if (!ok) throw new UntrustedOrgKeyError("This org key's signature is invalid — it may have been replaced by the server.");
-  return verified;
+}
+
+/** One link of an org-key chain: a member's wrap and the bundle of whoever signed it. */
+export interface SignedWrapLink {
+  wrap: OrgKeyWrap;
+  signature: string | null;
+  signer: KeyBundle;
+}
+
+/** Highest org-key epoch accepted per org on this device. */
+export interface OrgEpochStore {
+  get(orgId: string): number | undefined;
+  record(orgId: string, epoch: number): void;
+}
+
+/**
+ * Verify the chain of wraps that vouches for `chain[0]`, the caller's own
+ * wrap. Each link must be signed by the recipient of the next link, every
+ * signer must hold the owner or admin role in their own signed link, and the
+ * chain must end in an owner's self-signed wrap. Every signer's identity key
+ * must already be pinned (confirmed by the user); otherwise
+ * UnconfirmedSignersError lists who to confirm. Unsigned wraps and wraps
+ * below the highest epoch seen for the org are refused.
+ *
+ * Returns the caller's verified wrap. Record its epoch only after the org key
+ * has been accepted.
+ */
+export function verifyOrgKeyChain(
+  chain: SignedWrapLink[],
+  expected: { orgId: string; recipientUserId: string },
+  pins: KeyPinStore,
+  epochs: OrgEpochStore,
+): OrgKeyWrap {
+  const own = chain[0];
+  if (!own || own.wrap.orgId !== expected.orgId || own.wrap.recipientUserId !== expected.recipientUserId) {
+    throw new UntrustedOrgKeyError("The server did not return your copy of this organization's key.");
+  }
+  if (chain.length > 16) throw new UntrustedOrgKeyError("This organization's key chain is too long.");
+
+  const unconfirmed: Array<{ bundle: KeyBundle; safetyNumber: string }> = [];
+  for (let i = 0; i < chain.length; i++) {
+    const link = chain[i]!;
+    const { wrap, signature, signer } = link;
+    if (!signature) {
+      throw new UntrustedOrgKeyError(
+        "This organization's key is not signed by whoever shared it. Ask the owner to re-sign the organization.",
+      );
+    }
+    if (wrap.orgId !== expected.orgId || wrap.epoch !== own.wrap.epoch) {
+      throw new UntrustedOrgKeyError("This organization's key chain mixes organizations or key versions.");
+    }
+    if (signer.userId !== wrap.signerUserId) throw new UntrustedOrgKeyError("Key chain signer mismatch.");
+
+    const selfSigned = wrap.signerUserId === wrap.recipientUserId;
+    const next = chain[i + 1];
+    if (selfSigned) {
+      if (wrap.role !== "owner" || next) {
+        throw new UntrustedOrgKeyError("Only the organization owner can vouch for their own key.");
+      }
+    } else if (!next || next.wrap.recipientUserId !== wrap.signerUserId || !ORG_ADMIN_ROLES.has(next.wrap.role)) {
+      throw new UntrustedOrgKeyError("This organization's key was shared by someone who is not an admin or owner.");
+    }
+
+    const verified = verifyMemberKey(signer, pins);
+    let ok = false;
+    try {
+      ok = ed25519.verify(fromBase64(signature), wrapMessage(wrap), fromBase64(signer.identityPublicKey!), {
+        zip215: false,
+      });
+    } catch {
+      ok = false;
+    }
+    if (!ok) throw new UntrustedOrgKeyError("This organization key's signature is invalid — it may have been replaced.");
+    if (verified.firstSeen && !unconfirmed.some((u) => u.bundle.userId === signer.userId)) {
+      unconfirmed.push({ bundle: signer, safetyNumber: verified.safetyNumber });
+    }
+  }
+
+  const highest = epochs.get(expected.orgId);
+  if (highest !== undefined && own.wrap.epoch < highest) {
+    throw new UntrustedOrgKeyError("This organization's key is older than one this device already uses — refusing a rollback.");
+  }
+  if (unconfirmed.length > 0) throw new UnconfirmedSignersError(unconfirmed);
+  return own.wrap;
+}
+
+/** Turn a server-served wrap chain into links for verifyOrgKeyChain. */
+export function chainFromServer(orgId: string, chain: WrapLink[]): SignedWrapLink[] {
+  return chain.map((l) => ({
+    wrap: {
+      orgId,
+      // Unsigned legacy wraps carry no epoch; verifyOrgKeyChain refuses them for the missing signature
+      epoch: l.keyEpoch ?? 0,
+      recipientUserId: l.recipientUserId,
+      signerUserId: l.signerUserId,
+      role: l.role,
+      encryptedOrgKey: l.encryptedOrgKey,
+    },
+    signature: l.keyEpoch === null ? null : l.wrapSignature,
+    signer: l.signer,
+  }));
 }

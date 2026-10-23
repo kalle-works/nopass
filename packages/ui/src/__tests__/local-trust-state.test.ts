@@ -1,0 +1,35 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  ItemRollbackError,
+  type ItemBinding,
+  decryptVaultItem,
+  encryptItemV2,
+  stretchMasterKey,
+} from "@nopass/crypto";
+import type { LoginItem } from "@nopass/types";
+import { openRevisionStore } from "../lib/local-trust-state";
+
+const ITEM = "11111111-1111-4111-8111-111111111111";
+const binding: ItemBinding = { scope: { kind: "personal" }, itemId: ITEM, itemType: "login" };
+const LOGIN: LoginItem = { type: "login", name: "x", username: "u", password: "p", urls: [], customFields: [] };
+
+describe("openRevisionStore", () => {
+  beforeEach(() => localStorage.clear());
+
+  // The server once chose the store's name (via the default vault id it
+  // served). Whatever ids it serves now, the same account must land in the
+  // same store, so a replay stays refused.
+  it("keeps refusing a replayed revision however the account's vault ids change", async () => {
+    const keys = await stretchMasterKey(new Uint8Array(32).fill(7), "a@example.com");
+    const old = await encryptItemV2(LOGIN, binding, 1, keys.vaultEncKey);
+    const current = await encryptItemV2(LOGIN, binding, 2, keys.vaultEncKey);
+
+    // Session 1: the server reports default vault A
+    const sessionA = await openRevisionStore(keys.vaultMacKey);
+    await decryptVaultItem(current, binding, keys, sessionA);
+
+    // Session 2: the server now reports default vault B and replays revision 1
+    const sessionB = await openRevisionStore(keys.vaultMacKey);
+    await expect(decryptVaultItem(old, binding, keys, sessionB)).rejects.toBeInstanceOf(ItemRollbackError);
+  });
+});
