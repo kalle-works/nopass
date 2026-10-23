@@ -67,6 +67,17 @@ pub async fn delete_sessions_for_user(pool: &PgPool, user_id: Uuid) -> Result<()
     Ok(())
 }
 
+/// Delete every session of the user except the one identified by `keep_token`.
+/// Returns how many sessions were ended.
+pub async fn delete_other_sessions(pool: &PgPool, user_id: Uuid, keep_token: &str) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2")
+        .bind(user_id)
+        .bind(hash_token(keep_token))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// Remove sessions that have passed their expiry. Called from the hourly
 /// housekeeping task — without this they accumulate indefinitely since
 /// `find_session_by_token` filters them out but never deletes them.

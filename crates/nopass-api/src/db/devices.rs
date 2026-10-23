@@ -42,13 +42,36 @@ pub async fn list_devices_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<D
     Ok(devices)
 }
 
+/// Delete a device and every session issued to it in one transaction, so a
+/// revoked device can never keep using a token it already holds.
 pub async fn delete_device(pool: &PgPool, device_id: Uuid, user_id: Uuid) -> Result<bool> {
+    let mut tx = pool.begin().await?;
     let result = sqlx::query("DELETE FROM devices WHERE id = $1 AND user_id = $2")
         .bind(device_id)
         .bind(user_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    Ok(result.rows_affected() > 0)
+    let deleted = result.rows_affected() > 0;
+    if deleted {
+        sqlx::query("DELETE FROM sessions WHERE device_id = $1 AND user_id = $2")
+            .bind(device_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(deleted)
+}
+
+pub async fn device_belongs_to_user(pool: &PgPool, device_id: Uuid, user_id: Uuid) -> Result<bool> {
+    let row = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND user_id = $2)",
+    )
+    .bind(device_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
 }
 
 pub async fn touch_device(pool: &PgPool, device_id: Uuid) -> Result<()> {

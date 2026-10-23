@@ -2,6 +2,7 @@ use std::{net::IpAddr, num::NonZeroU32, sync::Arc};
 
 use governor::{DefaultKeyedRateLimiter, Quota};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::{config::Config, stripe::StripeClient};
 
@@ -21,6 +22,8 @@ pub struct AppState {
     pub config: Config,
     /// Per-IP rate limiter for auth endpoints (20 req/min, burst 10).
     pub auth_rate_limiter: Arc<DefaultKeyedRateLimiter<IpAddr>>,
+    /// Per-share limiter for the public view endpoint (6 req/min, burst 3).
+    pub share_rate_limiter: Arc<DefaultKeyedRateLimiter<Uuid>>,
     /// Stripe client — `None` when STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are not set.
     pub stripe: Option<StripeClient>,
 }
@@ -30,6 +33,11 @@ impl AppState {
         let auth_rate_limiter = Arc::new(DefaultKeyedRateLimiter::keyed(
             Quota::per_minute(NonZeroU32::new(20).expect("non-zero"))
                 .allow_burst(NonZeroU32::new(10).expect("non-zero")),
+        ));
+
+        let share_rate_limiter = Arc::new(DefaultKeyedRateLimiter::keyed(
+            Quota::per_minute(NonZeroU32::new(6).expect("non-zero"))
+                .allow_burst(NonZeroU32::new(3).expect("non-zero")),
         ));
 
         let stripe = match (&config.stripe_secret_key, &config.stripe_webhook_secret) {
@@ -48,6 +56,7 @@ impl AppState {
             db,
             config,
             auth_rate_limiter,
+            share_rate_limiter,
             stripe,
         }
     }

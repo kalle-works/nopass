@@ -118,6 +118,8 @@ export function createApiClient(baseUrl: string) {
       register: (req: RegisterDeviceRequest, token: string) =>
         post<{ deviceId: string }>("/devices", req, token),
       remove: (deviceId: string, token: string) => del<void>(`/devices/${deviceId}`, token),
+      signOutOthers: (token: string) =>
+        post<{ signedOut: number }>("/devices/sign-out-others", {}, token),
     },
     vault: {
       list: (token: string) => get<VaultInfo[]>("/vaults", token),

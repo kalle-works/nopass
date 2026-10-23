@@ -5,6 +5,7 @@ use uuid::Uuid;
 use crate::models::vault::SyncEvent;
 
 pub async fn push_sync_events(pool: &PgPool, events: &[SyncEvent]) -> Result<()> {
+    let mut tx = pool.begin().await?;
     for event in events {
         sqlx::query(
             r#"
@@ -12,7 +13,7 @@ pub async fn push_sync_events(pool: &PgPool, events: &[SyncEvent]) -> Result<()>
                 (id, user_id, device_id, sequence_number, event_type, item_id,
                  encrypted_delta, delta_iv, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (device_id, sequence_number) DO NOTHING
+            ON CONFLICT DO NOTHING
             "#,
         )
         .bind(event.id)
@@ -24,9 +25,10 @@ pub async fn push_sync_events(pool: &PgPool, events: &[SyncEvent]) -> Result<()>
         .bind(event.encrypted_delta.as_deref())
         .bind(event.delta_iv.as_deref())
         .bind(event.created_at)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 
