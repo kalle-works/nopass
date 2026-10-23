@@ -7,15 +7,30 @@
  *   readable only from trusted extension contexts (never content scripts).
  *   Without it the ephemeral SW would re-lock the vault ~30s after idle and
  *   force a master-password prompt several times a minute.
- * - Explicit Lock wipes both the in-memory state and storage.session.
+ * - Explicit Lock wipes both the in-memory state and storage.session, and so
+ *   does auto-lock: after the configured inactivity window (chrome.alarms),
+ *   or as soon as the OS reports the machine idle or screen-locked.
+ * - Autofill goes to exactly one frame (the one whose field the user last
+ *   focused, else the top frame) and only when that frame's origin matches
+ *   the item per lib/url-match. A mismatch needs explicit popup confirmation,
+ *   which is never accepted for a subframe.
  * - Only extension pages (popup) may trigger UNLOCK/LOCK/AUTOFILL.
  *   Content scripts (running in web pages) are rejected for these operations.
  * - Raw key bytes are zeroed immediately after CryptoKey import.
  */
 
 import {
-  decryptItem,
-  encryptItem,
+  MemoryRevisionStore,
+  type DecryptedItem,
+  type RevisionSnapshot,
+  type TrustIndex,
+  applyV2OnlyMarker,
+  ownLegacyKeys,
+  recordLegacyIds,
+  bindingForItem,
+  trustStateId,
+  decryptVaultItem,
+  encryptVaultItem,
   generateCredential,
   buildAuthenticatorData,
   buildAttestationObject,
@@ -24,15 +39,14 @@ import {
   bytesToB64u,
   b64uToBytes,
   FLAG_UP,
-  FLAG_UV,
   SYNCED_FLAGS,
 } from "@nopass/crypto";
 import { createApiClient } from "@nopass/ui";
-import { parse as parseDomain } from "tldts";
 import type { EncryptedVaultItem, LoginItem } from "@nopass/types";
 import { base64ToBytes } from "../lib/base64";
-import { urlMatches, nameMatches } from "../lib/url-match";
+import { urlMatches, nameMatches, isFillableOrigin, registrableDomain } from "../lib/url-match";
 import { log } from "../lib/logger";
+import { AUTO_LOCK_SETTING, parseAutoLockMinutes } from "../lib/auto-lock";
 
 // Configurable at build time via Vite define; falls back to dev server.
 const API_BASE: string =
@@ -47,6 +61,7 @@ let vaultState: {
   vaultEncKey: CryptoKey;
   vaultMacKey: CryptoKey;
   items: EncryptedVaultItem[];
+  revisions: MemoryRevisionStore;
 } | null = null;
 
 const SESSION_KEY = "vaultSession";
@@ -71,6 +86,108 @@ async function importVaultKeys(encKeyB64: string, macKeyB64: string) {
   return { vaultEncKey, vaultMacKey };
 }
 
+/**
+ * Highest revision seen per item, kept in storage.local so it survives
+ * restarts: a server serving an older blob than this is refused. Named by
+ * the account key, not a server-supplied id, and primed with the account's
+ * v2-only marker when the server has one.
+ */
+const TRUST_INDEX_KEY = "trustIndex";
+
+async function loadRevisions(
+  vaultMacKey: CryptoKey,
+  sessionToken: string,
+  defaultVaultId: string,
+): Promise<MemoryRevisionStore> {
+  const trustId = await trustStateId(vaultMacKey);
+  const key = `itemRevisions:v2:${trustId}`;
+  const stored = (await chrome.storage.local.get(key))[key] as Partial<RevisionSnapshot> | undefined;
+  const store = new MemoryRevisionStore(stored ?? {}, (snapshot) => {
+    void chrome.storage.local.set({ [key]: snapshot });
+  });
+  // Before the upgrade the store was named by the default vault id. Each
+  // unlock records locally which vault ids belong to this account; only a
+  // legacy record this account recorded, and no other account did, is folded
+  // in (max per item) and removed. Other accounts' records stay in place.
+  const index = recordLegacyIds(
+    ((await chrome.storage.local.get(TRUST_INDEX_KEY))[TRUST_INDEX_KEY] as TrustIndex | undefined) ?? {},
+    trustId,
+    [defaultVaultId],
+  );
+  await chrome.storage.local.set({ [TRUST_INDEX_KEY]: index });
+  const all = await chrome.storage.local.get(null);
+  for (const legacyKey of ownLegacyKeys(index, trustId, Object.keys(all), "itemRevisions:")) {
+    for (const [itemId, revision] of Object.entries(all[legacyKey] as Record<string, number>)) {
+      store.record(itemId, revision);
+    }
+    await chrome.storage.local.remove(legacyKey);
+  }
+  try {
+    const { marker } = await api.keys.vaultFormat(sessionToken);
+    await applyV2OnlyMarker(marker, vaultMacKey, store);
+  } catch {
+    // offline — keep what this device already knows
+  }
+  return store;
+}
+
+async function decryptStored(
+  item: EncryptedVaultItem,
+  state: { vaultEncKey: CryptoKey; vaultMacKey: CryptoKey; revisions: MemoryRevisionStore },
+) {
+  return decryptVaultItem(item, bindingForItem(item), state, state.revisions);
+}
+
+// ─── Auto-lock ────────────────────────────────────────────────────────────────
+
+const AUTO_LOCK_ALARM = "autoLock";
+
+async function autoLockMinutes(): Promise<number> {
+  return parseAutoLockMinutes((await chrome.storage.local.get(AUTO_LOCK_SETTING))[AUTO_LOCK_SETTING]);
+}
+
+/** (Re)starts the inactivity countdown. Called on unlock and on every vault use. */
+async function armAutoLock(): Promise<void> {
+  const minutes = await autoLockMinutes();
+  chrome.idle.setDetectionInterval(minutes * 60);
+  await chrome.alarms.create(AUTO_LOCK_ALARM, { delayInMinutes: minutes });
+}
+
+/**
+ * Wipes keys and session token from memory and storage.session, then revokes
+ * the session server-side so a copied token dies with the lock. The revoke is
+ * best effort: locking must work offline, and the local wipe has already
+ * happened by the time the request goes out.
+ */
+async function lockVault(reason: string): Promise<void> {
+  lockGeneration++; // a restore in flight must not resurrect the session
+  const sessionToken =
+    vaultState?.sessionToken ??
+    ((await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY] as PersistedSession | undefined)?.sessionToken;
+  vaultState = null;
+  await chrome.storage.session.remove(SESSION_KEY);
+  await chrome.alarms.clear(AUTO_LOCK_ALARM);
+  log.info("vault locked", { reason });
+  if (sessionToken) {
+    api.auth.logout(sessionToken).catch((err: unknown) => {
+      log.warn("server-side session revoke failed", { err: String(err) });
+    });
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === AUTO_LOCK_ALARM) void lockVault("inactivity");
+});
+
+chrome.idle.onStateChanged.addListener((state) => {
+  if (state === "idle" || state === "locked") void lockVault(`system ${state}`);
+});
+
+// A changed timeout takes effect immediately rather than after the next use
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && AUTO_LOCK_SETTING in changes && vaultState) void armAutoLock();
+});
+
 // Single in-flight restore so concurrent messages after an SW restart don't
 // each refetch the vault. (vaultState is assigned before the promise resolves
 // and `restoring` is cleared, so a later caller that misses the in-flight
@@ -93,6 +210,7 @@ function restoreVaultState(): Promise<void> {
     try {
       const { vaultEncKey, vaultMacKey } = await importVaultKeys(stored.encKeyB64, stored.macKeyB64);
       const items = await api.vault.items(stored.defaultVaultId, stored.sessionToken);
+      const revisions = await loadRevisions(vaultMacKey, stored.sessionToken, stored.defaultVaultId);
       // A LOCK (or a fresh UNLOCK) that happened while we awaited wins
       if (lockGeneration !== generation || vaultState) return;
       vaultState = {
@@ -101,6 +219,7 @@ function restoreVaultState(): Promise<void> {
         vaultEncKey,
         vaultMacKey,
         items,
+        revisions,
       };
       log.info("session restored after SW restart", { items: items.length });
     } catch (err) {
@@ -126,7 +245,9 @@ type Message =
   | { type: "GET_ITEMS" }
   | { type: "SEARCH_ITEMS"; query: string; url?: string }
   | { type: "GET_CREDENTIALS"; itemId: string }
-  | { type: "AUTOFILL"; itemId: string; tabId: number }
+  | { type: "AUTOFILL"; itemId: string; tabId: number; confirmedOrigin?: string }
+  | { type: "FILL_TARGET" }
+  | { type: "WEBAUTHN_AVAILABLE"; rpId: string }
   | { type: "WEBAUTHN_HAS_CREDENTIAL"; rpId: string; allowCredentialIdsB64u: string[] }
   | {
       type: "WEBAUTHN_CREATE";
@@ -136,13 +257,16 @@ type Message =
       userDisplayName: string;
       userHandleB64u: string;
       excludeCredentialIdsB64u: string[];
+      challengeB64u: string;
     }
   | {
       type: "WEBAUTHN_GET";
       rpId: string;
-      clientDataJSONB64u: string;
+      challengeB64u: string;
       allowCredentialIdsB64u: string[];
-    };
+    }
+  | { type: "CONSENT_DETAILS"; requestId: string }
+  | { type: "CONSENT_RESULT"; requestId: string; approved: boolean };
 
 chrome.runtime.onMessage.addListener((message: Message, sender, sendResponse) => {
   const t0 = performance.now();
@@ -201,8 +325,17 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
 
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
       lockGeneration++; // invalidate any restore still in flight
-      vaultState = { sessionToken: message.sessionToken, defaultVaultId: message.defaultVaultId, vaultEncKey, vaultMacKey, items };
+      const revisions = await loadRevisions(vaultMacKey, message.sessionToken, message.defaultVaultId);
+      vaultState = {
+        sessionToken: message.sessionToken,
+        defaultVaultId: message.defaultVaultId,
+        vaultEncKey,
+        vaultMacKey,
+        items,
+        revisions,
+      };
       log.info("vault unlocked", { items: items.length });
+      await armAutoLock();
 
       const persisted: PersistedSession = {
         sessionToken: message.sessionToken,
@@ -216,10 +349,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
 
     case "LOCK": {
       if (!isExtensionPage(sender)) return { error: "unauthorized" };
-      lockGeneration++; // a restore in flight must not resurrect the session
-      vaultState = null;
-      await chrome.storage.session.remove(SESSION_KEY);
-      log.info("vault locked");
+      await lockVault("user");
       return { ok: true };
     }
 
@@ -232,21 +362,23 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
     case "GET_ITEMS": {
       if (!isExtensionContext(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
+      await armAutoLock();
       return { items: vaultState.items };
     }
 
     case "SEARCH_ITEMS": {
       if (!isExtensionContext(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
+      await armAutoLock();
       const { query, url } = message;
-      const { vaultEncKey, vaultMacKey, items } = vaultState;
+      const state = vaultState;
 
       const results = await Promise.all(
-        items
+        state.items
           .filter((i) => i.deletedAt === null && i.itemType === "login")
           .map(async (item) => {
             try {
-              const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
+              const { plaintext: plain } = await decryptStored(item, state);
               if (plain.type !== "login") return null;
               if (nameMatches(plain.name, query) || (url ? urlMatches(plain.urls, url) : !query)) {
                 return {
@@ -272,13 +404,24 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       // extension pages hosted in a tab (which have a sender.tab).
       if (!isExtensionPage(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
+      await armAutoLock();
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
 
-      const plain = await decryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const { plaintext: plain } = await decryptStored(item, vaultState);
       if (plain.type !== "login") return { error: "not a login item" };
 
       return { username: plain.username, password: plain.password };
+    }
+
+    case "FILL_TARGET": {
+      // A content script reports the frame whose login field the user is
+      // interacting with. Everything recorded comes from the browser-set
+      // sender, never from the message body.
+      const target = senderFrame(sender);
+      if (!target || sender.tab?.id === undefined) return { ok: false };
+      await chrome.storage.session.set({ [fillTargetKey(sender.tab.id)]: target });
+      return { ok: true };
     }
 
     case "AUTOFILL": {
@@ -286,32 +429,74 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       // Content scripts running in web pages must not be able to initiate credential fills.
       if (!isExtensionPage(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
+      await armAutoLock();
 
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
 
-      const plain = await decryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const { plaintext: plain } = await decryptStored(item, vaultState);
       if (plain.type !== "login") return { error: "not a login item" };
 
-      // The content script answers { filled: true } once it found a password
-      // field. No receiver, or no answer, means there was no form to fill.
+      const target = await resolveFillTarget(message.tabId);
+      if (!target) return { error: "no_login_form" };
+
+      if (!urlMatches(plain.urls, target.origin)) {
+        // The user may knowingly fill a login saved for another site, but
+        // only into the top frame of a secure page, and only after seeing
+        // this exact origin. A subframe must match on its own.
+        const confirmable = target.frameId === 0 && isFillableOrigin(target.origin);
+        if (!confirmable || message.confirmedOrigin !== target.origin) {
+          return { error: "origin_mismatch", origin: target.origin, confirmable };
+        }
+      }
+
+      // The content script answers { filled: true } once it found a visible
+      // password field. No receiver, or no answer, means there was no form.
       let filled = false;
       try {
-        const result = await chrome.tabs.sendMessage<unknown, { filled?: boolean } | undefined>(message.tabId, {
-          type: "FILL_CREDENTIALS",
-          username: plain.username,
-          password: plain.password,
-        });
+        const result = await chrome.tabs.sendMessage<unknown, { filled?: boolean } | undefined>(
+          message.tabId,
+          {
+            type: "FILL_CREDENTIALS",
+            username: plain.username,
+            password: plain.password,
+            // The frame re-checks its own origin: a navigation between
+            // resolving the target and delivery must not receive the fill
+            origin: target.origin,
+          },
+          target.documentId !== undefined
+            ? { frameId: target.frameId, documentId: target.documentId }
+            : { frameId: target.frameId },
+        );
         filled = result?.filled === true;
       } catch {
         filled = false;
       }
 
+      // A stale recorded frame (navigated away) falls back to the top frame
+      // on the next attempt
+      if (!filled) await chrome.storage.session.remove(fillTargetKey(message.tabId));
       return filled ? { ok: true } : { error: "no_login_form" };
     }
 
+    case "WEBAUTHN_AVAILABLE": {
+      // The relay's pre-check before offering to save a passkey. IS_UNLOCKED
+      // answers "locked" to every web page by design, so the relay asks this
+      // instead: only for an rpId the asking page owns, and it reveals no
+      // more than whether a CREATE for that rpId would proceed.
+      const origin = senderOrigin(sender);
+      if (!origin || !vaultState) return { available: false };
+      return { available: rpIdMatchesOrigin(message.rpId, origin) && isRegistrableRpId(message.rpId) };
+    }
+
     case "WEBAUTHN_HAS_CREDENTIAL": {
-      if (!senderOrigin(sender) || !vaultState) return { matches: false };
+      // Same gate as CREATE/GET: otherwise any page could probe which
+      // sites the user holds passkeys for by asking about foreign rpIds
+      const origin = senderOrigin(sender);
+      if (!origin || !vaultState) return { matches: false };
+      if (!rpIdMatchesOrigin(message.rpId, origin) || !isRegistrableRpId(message.rpId)) {
+        return { matches: false };
+      }
       const matches = await findPasskeyLogins(message.rpId, message.allowCredentialIdsB64u);
       return { matches: matches.length > 0 };
     }
@@ -335,10 +520,16 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         return { error: "already registered" };
       }
 
+      const clientDataJSON = buildClientDataJSON("webauthn.create", message.challengeB64u, origin);
+      if (!clientDataJSON) return { error: "invalid challenge" };
+      if (!(await requestConsent({ kind: "create", rpId: message.rpId, origin }))) return { error: "declined" };
+      if (!vaultState) return { error: "locked" };
+
+      await armAutoLock();
       const cred = await generateCredential();
       const authData = await buildAuthenticatorData(
         message.rpId,
-        FLAG_UP | FLAG_UV | SYNCED_FLAGS,
+        AUTHENTICATOR_FLAGS,
         0,
         { credentialId: cred.credentialId, cosePublicKey: cred.cosePublicKey },
       );
@@ -363,12 +554,20 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       };
       cred.privateKeyPkcs8.fill(0);
 
-      const blob = await encryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const itemId = crypto.randomUUID();
+      const { encrypted, revision } = await encryptVaultItem(
+        item,
+        { scope: { kind: "personal" }, itemId, itemType: "login" },
+        vaultState.vaultEncKey,
+        vaultState.revisions,
+        null,
+      );
       const created = await api.vault.create(
         vaultState.defaultVaultId,
-        { itemType: "login", blob: blob.blob, blobIv: blob.blobIv, blobMac: blob.blobMac },
+        { id: itemId, itemType: "login", ...encrypted },
         vaultState.sessionToken,
       );
+      vaultState.revisions.record(itemId, revision);
       vaultState.items.push(created);
 
       return {
@@ -377,6 +576,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
           attestationObjectB64u: bytesToB64u(attestationObject),
           authDataB64u: bytesToB64u(authData),
           publicKeySpkiB64u: bytesToB64u(cred.publicKeySpki),
+          clientDataJSONB64u: bytesToB64u(clientDataJSON),
         },
       };
     }
@@ -392,11 +592,20 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const candidates = await findPasskeyLogins(message.rpId, message.allowCredentialIdsB64u);
       if (candidates.length === 0) return { error: "no matching credential" };
 
+      // The signed clientDataJSON is built here from the browser-set sender
+      // origin. Taking it from the page would let script sign any origin,
+      // type, or challenge with the user's key.
+      const clientDataJSON = buildClientDataJSON("webauthn.get", message.challengeB64u, origin);
+      if (!clientDataJSON) return { error: "invalid challenge" };
+      if (!(await requestConsent({ kind: "get", rpId: message.rpId, origin }))) return { error: "declined" };
+      if (!vaultState) return { error: "locked" };
+      await armAutoLock();
+
       // Most recently created wins when the RP doesn't narrow it down
       candidates.sort((a, b) =>
         (b.plain.passkey!.createdAt ?? "").localeCompare(a.plain.passkey!.createdAt ?? ""),
       );
-      const { item, plain } = candidates[0]!;
+      const { item, plain, current } = candidates[0]!;
       const passkey = plain.passkey!;
 
       // Sign FIRST — persisting an incremented signCount before a failed
@@ -405,11 +614,11 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const newCount = passkey.signCount + 1;
       const authData = await buildAuthenticatorData(
         message.rpId,
-        FLAG_UP | FLAG_UV | SYNCED_FLAGS,
+        AUTHENTICATOR_FLAGS,
         newCount,
       );
       const clientDataHash = new Uint8Array(
-        await crypto.subtle.digest("SHA-256", b64uToBytes(message.clientDataJSONB64u)),
+        await crypto.subtle.digest("SHA-256", clientDataJSON),
       );
       const pkcs8 = new Uint8Array(base64ToBytes(passkey.privateKeyPkcs8B64));
       const signature = await signAssertion(pkcs8, authData, clientDataHash);
@@ -419,14 +628,21 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         ...plain,
         passkey: { ...passkey, signCount: newCount },
       };
-      const blob = await encryptItem(updatedPlain, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const { encrypted, revision } = await encryptVaultItem(
+        updatedPlain,
+        bindingForItem(item),
+        vaultState.vaultEncKey,
+        vaultState.revisions,
+        current,
+      );
       const updated = await api.vault.update(
         item.vaultId,
         item.id,
-        { blob: blob.blob, blobIv: blob.blobIv, blobMac: blob.blobMac, version: item.version },
+        { ...encrypted, version: item.version },
         vaultState.sessionToken,
       );
-      Object.assign(item, blob, { version: updated.version, updatedAt: updated.updatedAt });
+      vaultState.revisions.record(item.id, revision);
+      Object.assign(item, encrypted, { version: updated.version, updatedAt: updated.updatedAt });
 
       return {
         data: {
@@ -434,8 +650,21 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
           authDataB64u: bytesToB64u(authData),
           signatureB64u: bytesToB64u(signature),
           userHandleB64u: passkey.userHandleB64u,
+          clientDataJSONB64u: bytesToB64u(clientDataJSON),
         },
       };
+    }
+
+    case "CONSENT_DETAILS": {
+      if (!isConsentPage(sender)) return { error: "unauthorized" };
+      const pending = pendingConsents.get(message.requestId);
+      return pending ? { request: pending.request } : { error: "expired" };
+    }
+
+    case "CONSENT_RESULT": {
+      if (!isConsentPage(sender)) return { error: "unauthorized" };
+      pendingConsents.get(message.requestId)?.settle(message.approved === true);
+      return { ok: true };
     }
 
     default:
@@ -443,9 +672,140 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
   }
 }
 
+// ─── WebAuthn ceremony helpers ─────────────────────────────────────────────────
+
+/** WebAuthn §13.4.3: challenges must carry at least 16 random bytes. */
+const MIN_CHALLENGE_BYTES = 16;
+
+/**
+ * Collected client data for a ceremony, serialized as the browser would.
+ * Returns null for a malformed or too-short challenge.
+ */
+function buildClientDataJSON(
+  type: "webauthn.create" | "webauthn.get",
+  challengeB64u: string,
+  origin: string,
+): Uint8Array<ArrayBuffer> | null {
+  if (typeof challengeB64u !== "string" || !/^[A-Za-z0-9_-]+$/.test(challengeB64u)) return null;
+  let challenge: Uint8Array;
+  try {
+    challenge = b64uToBytes(challengeB64u);
+  } catch {
+    return null;
+  }
+  if (challenge.length < MIN_CHALLENGE_BYTES) return null;
+  // The relay only runs in top frames, so the request is never cross-origin
+  return new TextEncoder().encode(
+    JSON.stringify({ type, challenge: bytesToB64u(challenge), origin, crossOrigin: false }),
+  );
+}
+
+export interface ConsentRequest {
+  kind: "create" | "get";
+  rpId: string;
+  origin: string;
+}
+
+const CONSENT_PAGE = "src/consent/index.html";
+const CONSENT_TIMEOUT_MS = 115_000;
+
+const pendingConsents = new Map<string, { request: ConsentRequest; settle: (approved: boolean) => void }>();
+
+/** True only for our own consent window, never a content script or other extension page. */
+function isConsentPage(sender: chrome.runtime.MessageSender): boolean {
+  return (
+    sender.id === chrome.runtime.id &&
+    (sender.url?.startsWith(chrome.runtime.getURL(CONSENT_PAGE)) ?? false)
+  );
+}
+
+/**
+ * Asks the user in an extension-owned window. The page cannot style, cover,
+ * or script that window, so it cannot trick a click into it (an overlay in
+ * the page's own DOM could be made transparent and clickjacked). Closing the
+ * window, or no answer before the timeout, counts as a decline.
+ */
+async function requestConsent(request: ConsentRequest): Promise<boolean> {
+  const requestId = crypto.randomUUID();
+  let windowId: number | undefined;
+  const decision = new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => settle(false), CONSENT_TIMEOUT_MS);
+    const onRemoved = (closedId: number) => {
+      if (closedId === windowId) settle(false);
+    };
+    function settle(approved: boolean) {
+      clearTimeout(timer);
+      chrome.windows.onRemoved.removeListener(onRemoved);
+      pendingConsents.delete(requestId);
+      resolve(approved);
+    }
+    chrome.windows.onRemoved.addListener(onRemoved);
+    pendingConsents.set(requestId, { request, settle });
+  });
+  try {
+    const win = await chrome.windows.create({
+      url: chrome.runtime.getURL(`${CONSENT_PAGE}?id=${requestId}`),
+      type: "popup",
+      width: 380,
+      height: 240,
+      focused: true,
+    });
+    windowId = win?.id;
+  } catch {
+    pendingConsents.get(requestId)?.settle(false);
+  }
+  const approved = await decision;
+  if (windowId !== undefined) chrome.windows.remove(windowId).catch(() => {});
+  return approved;
+}
+
+/**
+ * User presence only. The consent window proves a human clicked, but nothing
+ * re-verifies who they are at ceremony time (the vault may have been unlocked
+ * minutes ago by someone else), so asserting UV would be a lie the RP relies
+ * on. The MAIN-world interceptor hands userVerification: "required" requests
+ * to the native authenticator instead.
+ */
+const AUTHENTICATOR_FLAGS = FLAG_UP | SYNCED_FLAGS;
+
+interface FillTarget {
+  frameId: number;
+  documentId?: string | undefined;
+  origin: string;
+}
+
+function fillTargetKey(tabId: number): string {
+  return `fillTarget:${tabId}`;
+}
+
+/** Frame identity of a content-script sender, from browser-set fields only. */
+function senderFrame(sender: chrome.runtime.MessageSender): FillTarget | undefined {
+  const origin = senderOrigin(sender);
+  if (!origin || sender.frameId === undefined) return undefined;
+  return { frameId: sender.frameId, documentId: sender.documentId, origin };
+}
+
+/**
+ * The frame an autofill goes to: the one whose field the user last focused
+ * in this tab, else the top frame.
+ */
+async function resolveFillTarget(tabId: number): Promise<FillTarget | undefined> {
+  const key = fillTargetKey(tabId);
+  const recorded = (await chrome.storage.session.get(key))[key] as FillTarget | undefined;
+  if (recorded) return recorded;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.url) return undefined;
+    return { frameId: 0, origin: new URL(tab.url).origin };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Origin of a content-script sender — undefined for anything else. */
 function senderOrigin(sender: chrome.runtime.MessageSender): string | undefined {
   if (sender.id !== chrome.runtime.id || !sender.tab || !sender.url) return undefined;
+  if (sender.origin) return sender.origin;
   try {
     return new URL(sender.url).origin;
   } catch {
@@ -457,25 +817,27 @@ function senderOrigin(sender: chrome.runtime.MessageSender): string | undefined 
  * rpIdMatchesOrigin checks label boundaries, but per WebAuthn §5.1.3 the rp.id
  * must also be a REGISTRABLE domain — "com", "co.uk", or "github.io" would
  * otherwise let one site mint credentials every sibling site can discover.
+ * Private PSL suffixes count (github.io), as they do for cookies.
  */
 function isRegistrableRpId(rpId: string): boolean {
   if (rpId === "localhost") return true; // dev convenience, matches browsers
-  return parseDomain(rpId).domain !== null;
+  return registrableDomain(rpId) !== null;
 }
 
 async function findPasskeyLogins(
   rpId: string,
   allowCredentialIdsB64u: string[],
-): Promise<Array<{ item: EncryptedVaultItem; plain: LoginItem }>> {
+): Promise<Array<{ item: EncryptedVaultItem; plain: LoginItem; current: DecryptedItem }>> {
   if (!vaultState) return [];
-  const { vaultEncKey, vaultMacKey, items } = vaultState;
+  const state = vaultState;
 
   const results = await Promise.all(
-    items
+    state.items
       .filter((i) => i.deletedAt === null && i.itemType === "login")
       .map(async (item) => {
         try {
-          const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
+          const current = await decryptStored(item, state);
+          const plain = current.plaintext;
           if (plain.type !== "login" || !plain.passkey) return null;
           if (plain.passkey.rpId !== rpId) return null;
           if (
@@ -484,11 +846,11 @@ async function findPasskeyLogins(
           ) {
             return null;
           }
-          return { item, plain };
+          return { item, plain, current };
         } catch {
           return null;
         }
       }),
   );
-  return results.filter((r): r is { item: EncryptedVaultItem; plain: LoginItem } => r !== null);
+  return results.filter((r): r is { item: EncryptedVaultItem; plain: LoginItem; current: DecryptedItem } => r !== null);
 }

@@ -31,3 +31,22 @@ spec:
       port: 80
       targetPort: 3000
       protocol: TCP
+---
+# Metrics scrape target, separate from nopwd-api so the Ingress backend never
+# carries the metrics port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nopwd-api-metrics
+  namespace: nopwd
+  labels:
+    app.kubernetes.io/name: nopwd-api-metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: nopwd-api
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+      protocol: TCP

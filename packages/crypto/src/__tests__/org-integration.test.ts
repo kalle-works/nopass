@@ -4,20 +4,26 @@ import {
   computeEmailHash,
   deriveMasterKey,
   stretchMasterKey,
-  srpStep1,
-  srpStep2,
+  createOpaqueRegistration,
+  loginWithPassword,
+  memoryAccountState,
   generateUserKeyPair,
   generateOrgKey,
   encryptOrgKeyForMember,
   decryptOrgKey,
   decryptUserPrivateKey,
-  generateSrpRegistration,
   stretchMasterKeyRaw,
   encryptBytes,
+  deriveIdentityKey,
+  signOrgKeyWrap,
 } from "../index.js";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
+import { liveAuthApi } from "./support/live-api";
 
-const BASE = "http://127.0.0.1:3001/v1";
+// Point at another API instance with NOPASS_TEST_API_URL (e.g. http://127.0.0.1:3021/v1)
+// (this package has no Node types, so read process.env through globalThis)
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env;
+const BASE = env?.["NOPASS_TEST_API_URL"] ?? "http://127.0.0.1:3001/v1";
 
 async function apiPost(path: string, body: unknown, token?: string) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -35,20 +41,24 @@ async function apiGet(path: string, token: string) {
   return JSON.parse(text);
 }
 
+const auth = liveAuthApi((_method, path, body, token) => apiPost(path, body, token));
+
 async function registerAndLogin(email: string, password: string) {
   const kdfParams = DEFAULT_KDF_PARAMS;
   const masterKey = await deriveMasterKey(password, email, kdfParams);
   const keys = await stretchMasterKey(masterKey, email);
   const { encKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-  const { srpSalt, srpVerifier } = generateSrpRegistration(email, password);
+  const emailHash = computeEmailHash(email);
+  const registrationRecord = await createOpaqueRegistration(password, kdfParams, (registrationRequest) =>
+    auth.opaqueRegisterStart({ emailHash, registrationRequest }),
+  );
   const protectedKey = await encryptBytes(encKeyBytes, keys.stretchedMasterKey);
   encKeyBytes.fill(0);
   const keyPair = await generateUserKeyPair(keys.stretchedMasterKey);
 
-  await apiPost("/auth/register", {
-    emailHash: computeEmailHash(email),
-    srpSalt,
-    srpVerifier,
+  await auth.opaqueRegisterFinish({
+    emailHash,
+    registrationRecord,
     kdfParams,
     protectedSymmetricKey: protectedKey.blob,
     protectedSymmetricKeyIv: protectedKey.blobIv,
@@ -57,19 +67,8 @@ async function registerAndLogin(email: string, password: string) {
     protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
   });
 
-  const step1 = srpStep1();
-  const initResp = await apiPost("/auth/srp/init", {
-    emailHash: computeEmailHash(email),
-    clientPublicA: step1.clientPublicA,
-  });
-  const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-  const verifyResp = await apiPost("/auth/srp/verify", {
-    sessionId: initResp.sessionId,
-    clientProofM1: step2.clientProofM1,
-  });
-  step2.verifyServerProof(verifyResp.serverProofM2);
-
-  return { token: verifyResp.sessionToken as string, keys, keyPair };
+  const session = await loginWithPassword(auth, { email, password, accountState: memoryAccountState() });
+  return { token: session.sessionToken, keys, keyPair };
 }
 
 const timestamp = Date.now();
@@ -194,11 +193,33 @@ describe.skipIf(!apiAvailable)("Organization API — end-to-end", () => {
     const orgKey = await decryptOrgKey(orgEncryptedKey, alicePrivateKey);
     const encKeyForBob = await encryptOrgKeyForMember(orgKey, pkResp.publicKey as string);
 
+    // Alice signs the wrap so Bob can tell it came from her
+    const aliceUserId = (await apiGet(`/organizations/public-key/${computeEmailHash(ALICE_EMAIL)}`, aliceToken))
+      .userId as string;
+    const aliceIdentity = await deriveIdentityKey(
+      aliceKeyPair.protectedPrivateKey,
+      aliceKeyPair.protectedPrivateKeyIv,
+      aliceKeys.stretchedMasterKey,
+    );
+    const wrapSignature = signOrgKeyWrap(
+      {
+        orgId,
+        epoch: 1,
+        recipientUserId: pkResp.userId as string,
+        signerUserId: aliceUserId,
+        role: "member",
+        encryptedOrgKey: encKeyForBob,
+      },
+      aliceIdentity.secretKey,
+    );
+
     // Invite Bob
     await apiPost(`/organizations/${orgId}/members`, {
       emailHash: bobEmailHash,
       role: "member",
       encryptedOrgKey: encKeyForBob,
+      wrapSignature,
+      keyEpoch: 1,
     }, aliceToken);
 
     // Bob accepts

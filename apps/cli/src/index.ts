@@ -5,6 +5,7 @@ import { listCommand } from "./commands/list.js";
 import { getCommand } from "./commands/get.js";
 import { runCommand } from "./commands/run.js";
 import { recoverCommand } from "./commands/recover.js";
+import { passwdCommand } from "./commands/passwd.js";
 import { adoptCommand } from "./commands/adopt.js";
 
 const program = new Command();
@@ -16,6 +17,7 @@ program
 
 program.addCommand(loginCommand);
 program.addCommand(recoverCommand);
+program.addCommand(passwdCommand);
 program.addCommand(getCommand);
 program.addCommand(listCommand);
 program.addCommand(lockCommand);

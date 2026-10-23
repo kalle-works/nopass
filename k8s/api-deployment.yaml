@@ -27,19 +27,29 @@ spec:
       nodeSelector:
         role: apps
         kubernetes.io/arch: amd64
+      # Neither workload talks to the Kubernetes API
+      automountServiceAccountToken: false
       imagePullSecrets:
         - name: ghcr-pull-secret
       securityContext:
         runAsUser: 10001
+        runAsGroup: 10001
         runAsNonRoot: true
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: api
-          image: ghcr.io/kalle-works/nopwd-api:v0.2.0
+          image: ghcr.io/kalle-works/nopwd-api
+          # The tag and digest are set by the images block in kustomization.yaml
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3001
               name: http
+            # Internal metrics listener; no Service port or Ingress points at it
+            # except the nopwd-api-metrics Service that Prometheus scrapes
+            - containerPort: 9100
+              name: metrics
           envFrom:
             - configMapRef:
                 name: nopwd-api-config
@@ -49,11 +59,20 @@ spec:
                 secretKeyRef:
                   name: nopwd-secrets
                   key: database-url
-            - name: NOPASS_SESSION_SECRET
+            # OPAQUE server setup: `nopass-api generate-opaque-setup`. Set once;
+            # replacing it invalidates every account's login.
+            - name: NOPASS_OPAQUE_SERVER_SETUP
               valueFrom:
                 secretKeyRef:
                   name: nopwd-secrets
-                  key: session-secret
+                  key: opaque-server-setup
+            # HMAC key for stored email hashes: `openssl rand -base64 32`. Set
+            # once; replacing it orphans every account.
+            - name: NOPASS_EMAIL_LOOKUP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nopwd-secrets
+                  key: email-lookup-key
           resources:
             requests:
               memory: "128Mi"
@@ -61,18 +80,18 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "1000m"
+          # Exec probes: the kubelet's network path into the pod is not needed, so
+          # the namespace default-deny needs no node-network rule
           livenessProbe:
-            httpGet:
-              path: /v1/health
-              port: 3001
+            exec:
+              command: ["nopass-api", "healthcheck"]
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /v1/health
-              port: 3001
+            exec:
+              command: ["nopass-api", "healthcheck"]
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3

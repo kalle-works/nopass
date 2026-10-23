@@ -5,7 +5,7 @@ const ROWS: Array<[string, string, string, string]> = [
   ["Client source code available", "Yes, MIT", "No", "Yes, GPL and AGPL"],
   ["Independent security audit published", "Not yet", "Yes", "Yes"],
   ["Master password key derivation", "Argon2id, 64 MiB, 3 passes", "PBKDF2-HMAC-SHA256, plus a Secret Key", "PBKDF2-SHA256 by default, Argon2id optional"],
-  ["Login protocol", "SRP-6a, password hash not sent", "SRP", "Derived hash of the password sent to the server"],
+  ["Login protocol", "OPAQUE (RFC 9807), password never sent", "SRP", "Derived hash of the password sent to the server"],
   ["Command-line tool", "Yes", "Yes", "Yes"],
   ["Run a command with secrets in its environment", "Yes, nopwd run", "Yes, op run", "Separate product (Secrets Manager)"],
   ["Browser extension and passkeys", "Yes", "Yes", "Yes"],

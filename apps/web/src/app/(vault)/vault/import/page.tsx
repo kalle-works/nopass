@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Banner, Button, Spinner, cx, useNopassStore } from "@nopass/ui";
 import { PageShell } from "@/components/vault/PageShell";
 import { TYPE_PLURAL } from "@/components/vault/vault-model";
-import { encryptItem } from "@nopass/crypto";
+import { encryptItemV2 } from "@nopass/crypto";
 import type { VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { api } from "@/lib/api";
 import { parseOnePux, type ImportResult } from "@/lib/import/onepassword";
@@ -23,7 +23,7 @@ function countByType(items: VaultItemPlaintext[]): Partial<Record<VaultItemType,
 
 export default function ImportPage() {
   const router = useRouter();
-  const { sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, upsertItem } =
+  const { sessionToken, defaultVaultId, vaultEncKey, upsertItem } =
     useNopassStore();
 
   const [phase, setPhase] = useState<Phase>("select");
@@ -72,7 +72,7 @@ export default function ImportPage() {
   );
 
   const handleImport = useCallback(async () => {
-    if (!parsed || !sessionToken || !defaultVaultId || !vaultEncKey || !vaultMacKey) return;
+    if (!parsed || !sessionToken || !defaultVaultId || !vaultEncKey) return;
 
     setPhase("importing");
     setProgress({ done: 0, failed: 0, total: parsed.items.length });
@@ -81,10 +81,16 @@ export default function ImportPage() {
     let failed = 0;
     for (const plaintext of parsed.items) {
       try {
-        const encrypted = await encryptItem(plaintext, vaultEncKey, vaultMacKey);
+        const id = crypto.randomUUID();
+        const encrypted = await encryptItemV2(
+          plaintext,
+          { scope: { kind: "personal" }, itemId: id, itemType: plaintext.type },
+          1,
+          vaultEncKey,
+        );
         const created = await api.vault.create(
           defaultVaultId,
-          { itemType: plaintext.type, ...encrypted },
+          { id, itemType: plaintext.type, ...encrypted },
           sessionToken,
         );
         upsertItem(created);
@@ -96,7 +102,7 @@ export default function ImportPage() {
     }
 
     setPhase("done");
-  }, [parsed, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, upsertItem]);
+  }, [parsed, sessionToken, defaultVaultId, vaultEncKey, upsertItem]);
 
   const card = "rounded-lg border border-divider bg-surface p-6";
 

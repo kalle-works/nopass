@@ -13,18 +13,33 @@ pub struct SshKeyPayload {
 
 // ─── Keychain ────────────────────────────────────────────────────────────────
 
+/// Every keychain entry belongs to this service. It is not a command
+/// parameter: a compromised webview must not be able to read or overwrite
+/// entries of other apps (or other services) through our commands.
+const KEYCHAIN_SERVICE: &str = "app.nopass.desktop";
+
+fn keychain_entry(account: &str) -> Result<Entry, String> {
+    let valid = !account.is_empty()
+        && account.len() <= 64
+        && account
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    if !valid {
+        return Err("invalid keychain account".to_string());
+    }
+    Entry::new(KEYCHAIN_SERVICE, account).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-pub fn keychain_save(service: &str, account: &str, password: &str) -> Result<(), String> {
-    Entry::new(service, account)
-        .map_err(|e| e.to_string())?
+pub fn keychain_save(account: &str, password: &str) -> Result<(), String> {
+    keychain_entry(account)?
         .set_password(password)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn keychain_load(service: &str, account: &str) -> Result<Option<String>, String> {
-    let entry = Entry::new(service, account).map_err(|e| e.to_string())?;
-    match entry.get_password() {
+pub fn keychain_load(account: &str) -> Result<Option<String>, String> {
+    match keychain_entry(account)?.get_password() {
         Ok(pw) => Ok(Some(pw)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.to_string()),
@@ -32,9 +47,8 @@ pub fn keychain_load(service: &str, account: &str) -> Result<Option<String>, Str
 }
 
 #[tauri::command]
-pub fn keychain_delete(service: &str, account: &str) -> Result<(), String> {
-    let entry = Entry::new(service, account).map_err(|e| e.to_string())?;
-    match entry.delete_credential() {
+pub fn keychain_delete(account: &str) -> Result<(), String> {
+    match keychain_entry(account)?.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
@@ -136,6 +150,7 @@ pub fn ssh_agent_list() -> Result<String, String> {
 /// Returns the absolute path written.
 #[tauri::command]
 pub fn ssh_write_key_file(filename: String, private_key: String, public_key: Option<String>) -> Result<String, String> {
+    validate_key_filename(&filename)?;
     let ssh_dir = dirs_path()?;
     std::fs::create_dir_all(&ssh_dir).map_err(|e| e.to_string())?;
 
@@ -153,6 +168,7 @@ pub fn ssh_write_key_file(filename: String, private_key: String, public_key: Opt
 /// Delete a key pair from ~/.ssh/.
 #[tauri::command]
 pub fn ssh_delete_key_file(filename: String) -> Result<(), String> {
+    validate_key_filename(&filename)?;
     let ssh_dir = dirs_path()?;
     let key_path = ssh_dir.join(&filename);
     let pub_path = ssh_dir.join(format!("{}.pub", filename));
@@ -164,6 +180,26 @@ pub fn ssh_delete_key_file(filename: String) -> Result<(), String> {
         let _ = std::fs::remove_file(&pub_path);
     }
     Ok(())
+}
+
+/// Key files live directly in ~/.ssh under a plain name. Rejecting separators,
+/// leading dots and the files ssh itself reads keeps these commands from being
+/// used to overwrite authorized_keys, config, or anything outside ~/.ssh.
+fn validate_key_filename(filename: &str) -> Result<(), String> {
+    const RESERVED: [&str; 5] = ["authorized_keys", "config", "known_hosts", "environment", "rc"];
+    let valid = !filename.is_empty()
+        && filename.len() <= 128
+        && !filename.starts_with('.')
+        && !filename.ends_with(".pub")
+        && !RESERVED.contains(&filename)
+        && filename
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    if valid {
+        Ok(())
+    } else {
+        Err("invalid key file name".to_string())
+    }
 }
 
 fn dirs_path() -> Result<std::path::PathBuf, String> {
@@ -309,5 +345,28 @@ mod biometric_tests {
     fn touch_id_availability_probe() {
         let available = super::touch_id_available_blocking();
         println!("touch_id_available: {available}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_filename_rejects_paths_and_ssh_control_files() {
+        for bad in ["", "../x", "a/b", ".hidden", "authorized_keys", "config", "id.pub", "a b", "..", "x\0"] {
+            assert!(validate_key_filename(bad).is_err(), "{bad:?} must be rejected");
+        }
+        for good in ["id_ed25519", "work-key_2", "deploy.key"] {
+            assert!(validate_key_filename(good).is_ok(), "{good:?} must be accepted");
+        }
+    }
+
+    #[test]
+    fn keychain_account_rejects_foreign_shapes() {
+        for bad in ["", "a/b", "a b", &"x".repeat(65), "acct\n"] {
+            assert!(keychain_entry(bad).is_err(), "{bad:?} must be rejected");
+        }
+        assert!(keychain_entry("device-enc-key").is_ok());
     }
 }

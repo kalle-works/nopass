@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get},
+    routing::{delete, get, post},
     Extension, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -9,7 +9,7 @@ use nopass_models::{DeviceInfo, RegisterDeviceRequest};
 use uuid::Uuid;
 
 use crate::{
-    db::activity,
+    db::{activity, sessions},
     db::devices as db_devices,
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
@@ -20,6 +20,7 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_devices).post(register_device))
+        .route("/sign-out-others", post(sign_out_others))
         .route("/{device_id}", delete(remove_device))
 }
 
@@ -97,4 +98,16 @@ async fn remove_device(
     } else {
         Err(ApiError::NotFound("device not found".into()))
     }
+}
+
+/// End every session except the caller's own. Devices stay registered; each
+/// one has to authenticate again.
+async fn sign_out_others(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let ended = sessions::delete_other_sessions(&state.db, auth.user_id, &auth.raw_token).await?;
+    activity::record(&state.db, auth.user_id, "sessions_revoked", Some(&client_ip.to_string()), None).await;
+    Ok(Json(serde_json::json!({ "signedOut": ended })))
 }

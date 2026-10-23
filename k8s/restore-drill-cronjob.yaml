@@ -1,0 +1,101 @@
+# Monthly restore drill (scripts: ops/restore-drill.sh). Restores the newest
+# local backup into a throwaway Postgres inside the pod, never touching the
+# production database, and fails the Job if any sanity check fails.
+# NopwdRestoreDrillFailed / NopwdRestoreDrillStale watch the result.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nopwd-restore-drill
+  namespace: nopwd
+  labels:
+    app.kubernetes.io/name: nopwd-restore-drill
+spec:
+  schedule: "40 5 1 * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: nopwd-restore-drill
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          imagePullSecrets:
+            - name: ghcr-pull-secret
+          securityContext:
+            runAsUser: 70
+            runAsGroup: 70
+            runAsNonRoot: true
+            fsGroup: 70
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: drill
+              image: ghcr.io/kalle-works/nopwd-ops
+              imagePullPolicy: IfNotPresent
+              command: ["restore-drill.sh"]
+              env:
+                # Only for restoring dumps in the older openssl format
+                - name: BACKUP_PASSPHRASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: nopwd-backup-secrets
+                      key: passphrase
+                      optional: true
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+                - name: age-identity
+                  mountPath: /age
+                  readOnly: true
+                # initdb and the postmaster write their runtime files here
+                - name: pg-run
+                  mountPath: /var/run/postgresql
+              resources:
+                requests:
+                  memory: "256Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "1000m"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: nopwd-backups
+                readOnly: true
+            # optional so the pod starts without it; the drill then fails with a
+            # message that names the missing identity
+            - name: age-identity
+              secret:
+                secretName: nopwd-backup-secrets
+                defaultMode: 0400
+                optional: true
+                items:
+                  - key: age-identity
+                    path: identity
+            # The throwaway database holds a full copy of production data
+            # (ciphertext, email hashes, SRP verifiers). In memory it cannot
+            # outlive the pod on a node disk; the size limit bounds the
+            # restore, and the memory it takes counts against the container
+            # limit. Raise both together when the database outgrows 1Gi.
+            - name: tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Gi
+            - name: pg-run
+              emptyDir: {}

@@ -7,12 +7,19 @@ use nopass_models::{
 use uuid::Uuid;
 
 use crate::{
-    db::sync as db_sync,
+    db::{devices as db_devices, sync as db_sync},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     models::vault::SyncEvent as DbSyncEvent,
     state::AppState,
 };
+
+/// Events accepted per push; larger batches are split by the client.
+const MAX_EVENTS_PER_PUSH: usize = 500;
+/// Ciphertext cap per event delta. Deltas are field-level, so this is generous.
+const MAX_DELTA_BYTES: usize = 64 * 1024;
+/// AES-GCM nonce length.
+const DELTA_IV_BYTES: usize = 12;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -49,25 +56,49 @@ async fn pull_sync(
     }))
 }
 
+/// Push events from the caller's devices.
+///
+/// Ordering guarantee is per (device_id, sequence_number) only: the client
+/// owns the sequence of each of its own devices, and the server never uses
+/// sequence numbers to order events across devices or to trust one device's
+/// clock over another's. Each event's device_id must be a device of the
+/// authenticated user, so a caller cannot write into another user's stream.
 async fn push_events(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
     Json(req): Json<Vec<ModelSyncEvent>>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let db_events: Result<Vec<DbSyncEvent>, ApiError> = req
-        .into_iter()
-        .map(|e| {
-            // Validate event belongs to the authenticated user
-            if e.user_id != auth.user_id {
-                return Err(ApiError::Unauthorized(
-                    "event user_id does not match session".into(),
-                ));
-            }
-            model_to_db_event(e)
-        })
-        .collect();
+    if req.len() > MAX_EVENTS_PER_PUSH {
+        return Err(ApiError::BadRequest(format!(
+            "at most {MAX_EVENTS_PER_PUSH} events per push"
+        )));
+    }
 
-    let db_events = db_events?;
+    let mut device_ids: Vec<Uuid> = Vec::new();
+    for e in &req {
+        // Validate event belongs to the authenticated user
+        if e.user_id != auth.user_id {
+            return Err(ApiError::Unauthorized(
+                "event user_id does not match session".into(),
+            ));
+        }
+        if e.sequence_number < 0 {
+            return Err(ApiError::BadRequest("sequence_number must be non-negative".into()));
+        }
+        if !device_ids.contains(&e.device_id) {
+            device_ids.push(e.device_id);
+        }
+    }
+    for device_id in device_ids {
+        if !db_devices::device_belongs_to_user(&state.db, device_id, auth.user_id).await? {
+            return Err(ApiError::Forbidden("unknown device".into()));
+        }
+    }
+
+    let db_events = req
+        .into_iter()
+        .map(model_to_db_event)
+        .collect::<Result<Vec<DbSyncEvent>, ApiError>>()?;
     db_sync::push_sync_events(&state.db, &db_events).await?;
 
     Ok(Json(serde_json::json!({ "accepted": db_events.len() })))
@@ -117,6 +148,13 @@ fn model_to_db_event(e: ModelSyncEvent) -> Result<DbSyncEvent, ApiError> {
         .map(|b| B64.decode(b))
         .transpose()
         .map_err(|_| ApiError::BadRequest("invalid delta_iv base64".into()))?;
+
+    if encrypted_delta.as_ref().is_some_and(|d| d.len() > MAX_DELTA_BYTES) {
+        return Err(ApiError::BadRequest("encrypted_delta too large".into()));
+    }
+    if delta_iv.as_ref().is_some_and(|iv| iv.len() != DELTA_IV_BYTES) {
+        return Err(ApiError::BadRequest("delta_iv must be 12 bytes".into()));
+    }
 
     Ok(DbSyncEvent {
         id: e.id,

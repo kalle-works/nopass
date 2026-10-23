@@ -174,4 +174,10 @@ describe("rpIdMatchesOrigin", () => {
     expect(rpIdMatchesOrigin("", "https://example.com")).toBe(false);
     expect(rpIdMatchesOrigin("example.com", "not-a-url")).toBe(false);
   });
+
+  it("requires a secure origin: https, or http only on loopback", () => {
+    expect(rpIdMatchesOrigin("bank.com", "http://bank.com")).toBe(false);
+    expect(rpIdMatchesOrigin("bank.com", "ftp://bank.com")).toBe(false);
+    expect(rpIdMatchesOrigin("localhost", "http://localhost:3000")).toBe(true);
+  });
 });

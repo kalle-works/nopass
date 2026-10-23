@@ -22,6 +22,11 @@ use crate::{
 /// 64 KiB of ciphertext is plenty for a single item snapshot and keeps the
 /// public endpoint from becoming free blob hosting.
 const MAX_BLOB_BYTES: usize = 64 * 1024;
+/// AES-GCM nonce and tag sizes; anything shorter cannot be a valid ciphertext.
+const IV_BYTES: usize = 12;
+const MIN_CIPHERTEXT_BYTES: usize = 16;
+/// Encrypted label is a short display string.
+const MAX_LABEL_BYTES: usize = 1024;
 const MAX_VIEWS: i32 = 10;
 const MAX_HOURS: i64 = 168; // 7 days
 
@@ -60,6 +65,15 @@ async fn create_share(
 
     if blob.len() > MAX_BLOB_BYTES {
         return Err(ApiError::BadRequest("share blob too large".into()));
+    }
+    if blob.len() < MIN_CIPHERTEXT_BYTES || label_blob.len() < MIN_CIPHERTEXT_BYTES {
+        return Err(ApiError::BadRequest("share ciphertext too short".into()));
+    }
+    if label_blob.len() > MAX_LABEL_BYTES {
+        return Err(ApiError::BadRequest("share label too large".into()));
+    }
+    if blob_iv.len() != IV_BYTES || label_iv.len() != IV_BYTES {
+        return Err(ApiError::BadRequest(format!("iv must be {IV_BYTES} bytes")));
     }
 
     let expires_at = Utc::now() + Duration::hours(req.expires_in_hours as i64);
@@ -121,6 +135,11 @@ async fn view_share(
     Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Path(share_id): Path<Uuid>,
 ) -> ApiResult<Json<ViewShareResponse>> {
+    // Keyed by share, not IP: hammering one link (or a scanner fan-out from
+    // many addresses) must not drain its views faster than a human could.
+    if state.share_rate_limiter.check_key(&share_id).is_err() {
+        return Err(ApiError::TooManyRequests);
+    }
     let share = db_shares::consume_view(&state.db, share_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("share not found".into()))?;

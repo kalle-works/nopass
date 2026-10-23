@@ -1,18 +1,20 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Extension, Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use uuid::Uuid;
 
 use crate::{
-    db::{auth as db_auth, orgs as db_orgs, subscriptions as db_subs},
+    db::{auth as db_auth, keys as db_keys, orgs as db_orgs, subscriptions as db_subs},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     models::org::{
         CreateOrgBody, InviteMemberBody, OrgDetailsResponse,
-        OrgSummaryResponse, PublicKeyResponse,
+        OrgItemResponse, OrgSummaryResponse, PendingInviteResponse, PublicKeyResponse, RewrapBody,
+        RotateKeyBody,
     },
     state::AppState,
 };
@@ -20,10 +22,14 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_orgs).post(create_org))
+        .route("/invites", get(list_invites))
         .route("/{org_id}", get(get_org))
         .route("/{org_id}/members", post(invite_member))
         .route("/{org_id}/members/{user_id}", delete(remove_member))
         .route("/{org_id}/accept", post(accept_invite))
+        .route("/{org_id}/wraps", put(rewrap_members))
+        .route("/{org_id}/items", get(list_org_items))
+        .route("/{org_id}/rotate", post(rotate_key))
         // Look up a user's public key by email hash (needed before sending an invite)
         .route("/public-key/{email_hash}", get(get_public_key))
 }
@@ -62,9 +68,12 @@ async fn create_org(
 
     let org = db_orgs::create_org(
         &state.db,
+        body.id,
         body.name.trim(),
         auth.user_id,
         &body.encrypted_org_key,
+        body.wrap_signature.as_deref(),
+        body.key_epoch,
     )
     .await?;
 
@@ -112,6 +121,7 @@ async fn get_org(
         created_at: org.created_at,
         members,
         encrypted_org_key,
+        wrap_chain: db_orgs::wrap_chain(&state.db, org_id, auth.user_id).await?,
     }))
 }
 
@@ -148,21 +158,60 @@ async fn invite_member(
 
     // Compute email hash client-side and pass it; server looks up user by it.
     // The invite body contains the email hash (not plaintext email) for privacy.
-    let (invitee_id, _) = db_auth::get_public_key_by_email_hash(&state.db, &body.email_hash)
+    let (invitee_id, _) = db_auth::get_public_key_by_account_key(&state.db, &state.account_key(&body.email_hash))
         .await?
         .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
 
-    db_orgs::invite_member(
+    if B64.decode(&body.wrap_signature).map(|s| s.len()) != Ok(64) {
+        return Err(ApiError::BadRequest("wrapSignature must be 64 bytes of base64".into()));
+    }
+    // A wrap for an older epoch carries a key that a rotation already retired
+    let invited = db_orgs::invite_member(
         &state.db,
         org_id,
         invitee_id,
         &body.role,
-        &body.encrypted_org_key,
+        db_orgs::SignedWrap {
+            encrypted_org_key: &body.encrypted_org_key,
+            wrap_signature: &body.wrap_signature,
+            key_epoch: body.key_epoch,
+        },
         auth.user_id,
     )
     .await?;
+    if !invited {
+        return Err(ApiError::Conflict("keyEpoch is not the org's current key epoch".into()));
+    }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Owner-only: replace members' org-key wraps with owner-signed ones, e.g. to
+/// bring an org created before signed wraps under verification.
+async fn rewrap_members(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(org_id): Path<Uuid>,
+    Json(body): Json<RewrapBody>,
+) -> ApiResult<StatusCode> {
+    require_owner(&state, org_id, auth.user_id).await?;
+    let epoch = db_orgs::current_key_epoch(&state.db, org_id).await?.unwrap_or(1);
+    for w in &body.wraps {
+        if B64.decode(&w.wrap_signature).map(|s| s.len()) != Ok(64) || w.key_epoch != epoch {
+            return Err(ApiError::BadRequest("each wrap needs a 64-byte signature at the current key epoch".into()));
+        }
+    }
+    if !db_orgs::rewrap_members(&state.db, org_id, auth.user_id, &body.wraps).await? {
+        return Err(ApiError::BadRequest("every wrap must be for a member of this org".into()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_invites(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+) -> ApiResult<Json<Vec<PendingInviteResponse>>> {
+    Ok(Json(db_orgs::list_pending_invites(&state.db, auth.user_id).await?))
 }
 
 async fn accept_invite(
@@ -177,34 +226,115 @@ async fn accept_invite(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Removing a member is only possible as part of a key rotation (POST
+/// /{org_id}/rotate with removeUserId): otherwise the removed member would
+/// keep the org key and could read everything written afterwards.
 async fn remove_member(
-    State(state): State<AppState>,
-    Extension(auth): Extension<AuthUser>,
-    Path((org_id, user_id)): Path<(Uuid, Uuid)>,
+    State(_state): State<AppState>,
+    Extension(_auth): Extension<AuthUser>,
+    Path((_org_id, _user_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
-    let caller = db_orgs::get_org_member(&state.db, org_id, auth.user_id)
+    Err(ApiError::Conflict(
+        "members are removed by rotating the org key: POST /organizations/{id}/rotate with removeUserId".into(),
+    ))
+}
+
+async fn require_owner(state: &AppState, org_id: Uuid, user_id: Uuid) -> ApiResult<()> {
+    let caller = db_orgs::get_org_member(&state.db, org_id, user_id)
         .await?
         .ok_or_else(|| ApiError::Forbidden("not a member of this org".into()))?;
-
-    if caller.status != "active" || (caller.role != "owner" && caller.role != "admin") {
-        return Err(ApiError::Forbidden(
-            "must be an admin to remove members".into(),
-        ));
+    if caller.status != "active" || caller.role != "owner" {
+        return Err(ApiError::Forbidden("only the owner can do this".into()));
     }
+    Ok(())
+}
 
-    // Members may also remove themselves
-    if user_id != auth.user_id && caller.role != "owner" && caller.role != "admin" {
-        return Err(ApiError::Forbidden("insufficient permissions".into()));
+/// All org items, tombstones included, for active members.
+async fn list_org_items(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(org_id): Path<Uuid>,
+) -> ApiResult<Json<Vec<OrgItemResponse>>> {
+    let member = db_orgs::get_org_member(&state.db, org_id, auth.user_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("org not found".into()))?;
+    if member.status != "active" {
+        return Err(ApiError::Forbidden("invite not yet accepted".into()));
     }
+    let items = db_orgs::list_org_items(&state.db, org_id)
+        .await?
+        .into_iter()
+        .map(|i| OrgItemResponse {
+            id: i.id,
+            vault_id: i.vault_id,
+            user_id: i.user_id,
+            org_id: i.org_id,
+            item_type: i.item_type,
+            blob: B64.encode(&i.blob),
+            blob_iv: B64.encode(&i.blob_iv),
+            blob_mac: B64.encode(&i.blob_mac),
+            version: i.version,
+            deleted_at: i.deleted_at,
+            created_at: i.created_at,
+            updated_at: i.updated_at,
+        })
+        .collect();
+    Ok(Json(items))
+}
 
-    let removed = db_orgs::remove_member(&state.db, org_id, user_id).await?;
-    if !removed {
-        return Err(ApiError::NotFound(
-            "member not found or cannot remove owner".into(),
-        ));
+/// Owner-only key rotation, optionally removing a member. Everything (member
+/// removal, every org item, every remaining wrap, the epoch) changes in one
+/// transaction or not at all.
+async fn rotate_key(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Path(org_id): Path<Uuid>,
+    Json(body): Json<RotateKeyBody>,
+) -> ApiResult<StatusCode> {
+    require_owner(&state, org_id, auth.user_id).await?;
+    if body.remove_user_id == Some(auth.user_id) {
+        return Err(ApiError::BadRequest("the owner cannot remove themselves".into()));
     }
+    for w in &body.wraps {
+        if B64.decode(&w.wrap_signature).map(|s| s.len()) != Ok(64) {
+            return Err(ApiError::BadRequest("each wrap needs a 64-byte signature".into()));
+        }
+    }
+    let items = body
+        .items
+        .iter()
+        .map(|i| {
+            let decode = |v: &str, what: &str| B64.decode(v).map_err(|_| ApiError::BadRequest(format!("invalid {what}")));
+            let (blob, blob_iv, blob_mac) = (decode(&i.blob, "blob")?, decode(&i.blob_iv, "blob_iv")?, decode(&i.blob_mac, "blob_mac")?);
+            if blob_iv.len() != 12 || blob.is_empty() || !(blob_mac.is_empty() || blob_mac.len() == 32) {
+                return Err(ApiError::BadRequest("malformed re-encrypted item".into()));
+            }
+            Ok(db_orgs::ReencryptedItem { id: i.id, blob, blob_iv, blob_mac })
+        })
+        .collect::<ApiResult<Vec<_>>>()?;
 
-    Ok(StatusCode::NO_CONTENT)
+    let rotation = db_orgs::Rotation {
+        new_epoch: body.new_epoch,
+        remove_user_id: body.remove_user_id,
+        wraps: &body.wraps,
+        items,
+        delete_item_ids: &body.delete_item_ids,
+    };
+    match db_orgs::rotate_key(&state.db, org_id, auth.user_id, rotation).await? {
+        db_orgs::RotationOutcome::Rotated => Ok(StatusCode::NO_CONTENT),
+        db_orgs::RotationOutcome::StaleEpoch => {
+            Err(ApiError::Conflict("newEpoch must be the current key epoch + 1".into()))
+        }
+        db_orgs::RotationOutcome::BadRemoval => {
+            Err(ApiError::BadRequest("member to remove not found, or is the owner".into()))
+        }
+        db_orgs::RotationOutcome::IncompleteWraps => Err(ApiError::BadRequest(
+            "wraps must cover every remaining member exactly once, at newEpoch".into(),
+        )),
+        db_orgs::RotationOutcome::IncompleteItems => {
+            Err(ApiError::BadRequest("items must cover every org item exactly once".into()))
+        }
+    }
 }
 
 async fn get_public_key(
@@ -212,10 +342,14 @@ async fn get_public_key(
     Extension(_auth): Extension<AuthUser>,
     Path(email_hash): Path<String>,
 ) -> ApiResult<Json<PublicKeyResponse>> {
-    let (user_id, public_key) =
-        db_auth::get_public_key_by_email_hash(&state.db, &email_hash)
-            .await?
-            .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
+    let bundle = db_keys::get_bundle_by_account_key(&state.db, &state.account_key(&email_hash))
+        .await?
+        .ok_or_else(|| ApiError::NotFound("user not found or has no public key".into()))?;
 
-    Ok(Json(PublicKeyResponse { user_id, public_key }))
+    Ok(Json(PublicKeyResponse {
+        user_id: bundle.user_id,
+        public_key: bundle.public_key,
+        identity_public_key: bundle.identity_public_key,
+        public_key_signature: bundle.public_key_signature,
+    }))
 }

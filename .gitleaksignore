@@ -1,0 +1,11 @@
+# Test vectors and a code comment, reviewed as false positives (gitleaks fingerprints)
+269a9b9fe735afba10cab268e7be49b01bfb28e6:crates/nopass-crypto/tests/fixtures/serenity-opaque.json:generic-api-key:11
+4ba7ed7c3e89a544955d68e8abf7a6bccf3b9fb8:packages/crypto/src/__tests__/org-integration.test.ts:generic-api-key:78
+75738be6a2f2dc2fb4f1045124666c87140e68ea:apps/cli/src/__tests__/adopt.test.ts:generic-api-key:67
+7d968a28ba9b6764cfebb64b58116740b6f65e37:packages/crypto/src/__tests__/cross-platform-parity.test.ts:generic-api-key:27
+7d968a28ba9b6764cfebb64b58116740b6f65e37:packages/crypto/src/__tests__/cross-platform-parity.test.ts:generic-api-key:28
+7d968a28ba9b6764cfebb64b58116740b6f65e37:packages/crypto/src/__tests__/cross-platform-parity.test.ts:generic-api-key:29
+a78ea650bfc6daca022e36119869ce8aa1e94ebd:packages/crypto/src/__tests__/recovery-integration.test.ts:generic-api-key:81
+d2a42440fc9c76a019d34481d4208c09262338b2:apps/desktop/src/App.tsx:generic-api-key:69
+f6d85c8bf6bc612ef22ddeeaa39925c3b07c4ed5:packages/ui/src/__tests__/totp.test.ts:generic-api-key:11
+f6d85c8bf6bc612ef22ddeeaa39925c3b07c4ed5:packages/ui/src/__tests__/totp.test.ts:generic-api-key:5

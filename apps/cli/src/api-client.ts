@@ -2,15 +2,33 @@ import type {
   CreateVaultItemRequest,
   DeviceInfo,
   EncryptedVaultItem,
+  LoginResponse,
+  OpaqueLoginFinishRequest,
+  OpaqueLoginStartRequest,
+  OpaqueLoginStartResponse,
+  OpaqueRegisterStartRequest,
+  OpaqueRegisterStartResponse,
+  PasswordChangeFinishRequest,
+  PasswordChangeStartRequest,
+  PasswordChangeStartResponse,
+  PasswordProofStartRequest,
+  PasswordProofStartResponse,
+  UpgradeFinishRequest,
+  UpgradeFinishResponse,
+  UpgradeStartRequest,
+  UpgradeStartResponse,
+  SetAccountKeyRequest,
   RecoveryCompleteRequest,
   RecoveryInitRequest,
   RecoveryInitResponse,
+  RecoveryOpaqueStartRequest,
   RegisterDeviceRequest,
   SrpInitRequest,
   SrpInitResponse,
   SrpVerifyRequest,
   SrpVerifyResponse,
   VaultInfo,
+  VaultFormatMarker,
 } from "@nopass/types";
 
 export class ApiError extends Error {
@@ -54,11 +72,29 @@ export function createApiClient(baseUrl: string) {
 
   return {
     auth: {
+      opaqueLoginStart: (req: OpaqueLoginStartRequest) =>
+        post<OpaqueLoginStartResponse>("/auth/opaque/login/start", req),
+      opaqueLoginFinish: (req: OpaqueLoginFinishRequest) =>
+        post<LoginResponse>("/auth/opaque/login/finish", req),
+      proofStart: (req: PasswordProofStartRequest, token: string) =>
+        post<PasswordProofStartResponse>("/auth/proof/start", req, token),
+      setAccountKey: (req: SetAccountKeyRequest, token: string) => post<void>("/auth/account-key", req, token),
+      upgradeStart: (req: UpgradeStartRequest, token: string) =>
+        post<UpgradeStartResponse>("/auth/upgrade/start", req, token),
+      upgradeFinish: (req: UpgradeFinishRequest, token: string) =>
+        post<UpgradeFinishResponse>("/auth/upgrade/finish", req, token),
+      passwordChangeStart: (req: PasswordChangeStartRequest, token: string) =>
+        post<PasswordChangeStartResponse>("/auth/password/start", req, token),
+      passwordChangeFinish: (req: PasswordChangeFinishRequest, token: string) =>
+        post<void>("/auth/password/finish", req, token),
+      // Legacy SRP, used only by loginWithPassword's fallback for unmigrated accounts
       srpInit: (req: SrpInitRequest) => post<SrpInitResponse>("/auth/srp/init", req),
       srpVerify: (req: SrpVerifyRequest) => post<SrpVerifyResponse>("/auth/srp/verify", req),
       logout: (token: string) => post<void>("/auth/logout", {}, token),
       recoveryInit: (req: RecoveryInitRequest) =>
         post<RecoveryInitResponse>("/auth/recovery/init", req),
+      recoveryOpaqueStart: (req: RecoveryOpaqueStartRequest) =>
+        post<OpaqueRegisterStartResponse>("/auth/recovery/opaque/start", req),
       recoveryComplete: (req: RecoveryCompleteRequest) =>
         post<void>("/auth/recovery/complete", req),
     },
@@ -74,6 +110,9 @@ export function createApiClient(baseUrl: string) {
         get<EncryptedVaultItem[]>(`/vaults/${vaultId}/items`, token),
       createItem: (vaultId: string, req: CreateVaultItemRequest, token: string) =>
         post<EncryptedVaultItem>(`/vaults/${vaultId}/items`, req, token),
+    },
+    keys: {
+      vaultFormat: (token: string) => get<VaultFormatMarker>("/keys/vault-format", token),
     },
   };
 }

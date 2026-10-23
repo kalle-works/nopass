@@ -82,6 +82,7 @@ async fn vault_delete_rules(pool: PgPool) {
         .post(&format!("/v1/vaults/{}/items", second.id))
         .authorization_bearer(&session.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Note,
             blob: random_b64(64),
             blob_iv: random_b64(12),
@@ -132,6 +133,7 @@ async fn vault_move_rejects_foreign_destination(pool: PgPool) {
         .post(&format!("/v1/vaults/{}/items", owner.default_vault_id))
         .authorization_bearer(&owner.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Note,
             blob: random_b64(64),
             blob_iv: random_b64(12),

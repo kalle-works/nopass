@@ -1,21 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel } from "@nopass/ui";
-import { decryptItem, encryptItem } from "@nopass/crypto";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ChangePasswordForm,
+  UnlockScreen,
+  useNopassStore,
+  DecryptedVaultItemCard,
+  ItemEditor,
+  OrgPanel,
+  OwnKeyMismatchError,
+  ensureIdentityPublished,
+  openRevisionStore,
+} from "@nopass/ui";
+import { type MemoryRevisionStore, bindingForItem, decryptVaultItem, encryptVaultItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { createApiClient } from "@nopass/ui";
 import { useBiometric } from "./hooks/useBiometric";
 import { keychain, DEVICE_KEY_ACCOUNT } from "./hooks/useKeychain";
+import { resolveApiBase } from "./api-base";
 import { loadLocalItems, upsertLocalItem } from "./hooks/useLocalDb";
 import { sshAgent } from "./hooks/useSshAgent";
 import type { SshKeyItem } from "@nopass/types";
 
-const API_BASE = import.meta.env["VITE_API_URL"] ?? "http://localhost:3001";
+const API_BASE = resolveApiBase({ PROD: import.meta.env.PROD, VITE_API_URL: import.meta.env["VITE_API_URL"] });
 const api = createApiClient(API_BASE);
 
-type Screen = "unlock-mode-select" | "unlock-srp" | "unlock-register" | "vault";
-type SidebarTab = "vault" | "orgs";
+type Screen = "unlock-mode-select" | "unlock-password" | "unlock-register" | "vault";
+type SidebarTab = "vault" | "orgs" | "account";
 type Filter = "all" | VaultItemType;
 
 const TYPE_LABELS: Record<VaultItemType, string> = {
@@ -28,7 +39,7 @@ const TYPE_LABELS: Record<VaultItemType, string> = {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("unlock-mode-select");
-  const [srpMode, setSrpMode] = useState<"login" | "register">("login");
+  const [passwordMode, setPasswordMode] = useState<"login" | "register">("login");
   const biometric = useBiometric();
 
   const {
@@ -118,13 +129,13 @@ export default function App() {
     );
   }
 
-  if (screen === "unlock-srp" || screen === "unlock-register") {
+  if (screen === "unlock-password" || screen === "unlock-register") {
     return (
       <UnlockScreen
         apiClient={api}
-        mode={srpMode}
+        mode={passwordMode}
         onSuccess={async () => {
-          // After SRP login, save keys to Keychain for biometric unlock
+          // After password login, save keys to Keychain for biometric unlock
           const state = useNopassStore.getState();
           if (state.vaultEncKey && state.vaultMacKey && biometric.available) {
             try {
@@ -145,7 +156,7 @@ export default function App() {
           setScreen("vault");
         }}
         onSwitchMode={() => {
-          setSrpMode((m) => (m === "login" ? "register" : "login"));
+          setPasswordMode((m) => (m === "login" ? "register" : "login"));
         }}
       />
     );
@@ -171,7 +182,7 @@ export default function App() {
           )}
 
           <button
-            onClick={() => { setSrpMode("login"); setScreen("unlock-srp"); }}
+            onClick={() => { setPasswordMode("login"); setScreen("unlock-password"); }}
             className={`w-full py-3 px-4 font-medium rounded-xl transition-colors text-sm ${
               biometric.available
                 ? "bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-900 dark:text-white"
@@ -182,7 +193,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => { setSrpMode("register"); setScreen("unlock-register"); }}
+            onClick={() => { setPasswordMode("register"); setScreen("unlock-register"); }}
             className="w-full py-3 px-4 bg-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm transition-colors"
           >
             Create new account
@@ -213,6 +224,18 @@ function VaultScreen({
 }: VaultScreenProps) {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("vault");
   const [decrypted, setDecrypted] = useState<Map<string, VaultItemPlaintext>>(new Map());
+  const { userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv } = useNopassStore();
+  // Keyed by the account key and primed with the account's v2-only marker
+  const [revisions, setRevisions] = useState<MemoryRevisionStore | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    openRevisionStore(vaultMacKey, api, sessionToken, { vaultId: defaultVaultId, userId }).then((store) => {
+      if (!cancelled) setRevisions(store);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultMacKey, api, sessionToken, defaultVaultId, userId]);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<
@@ -227,11 +250,18 @@ function VaultScreen({
   ).length;
 
   useEffect(() => {
+    if (!revisions) return;
     const active = items.filter((i) => i.deletedAt === null);
     Promise.all(
       active.map(async (item) => {
         try {
-          return [item.id, await decryptItem(item, vaultEncKey, vaultMacKey)] as const;
+          const { plaintext } = await decryptVaultItem(
+            item,
+            bindingForItem(item),
+            { vaultEncKey, vaultMacKey },
+            revisions,
+          );
+          return [item.id, plaintext] as const;
         } catch {
           return null;
         }
@@ -251,24 +281,46 @@ function VaultScreen({
         }));
       sshAgent.loadVaultKeys(sshKeys).catch(() => {/* agent not running */});
     });
-  }, [items, vaultEncKey, vaultMacKey]);
+  }, [items, vaultEncKey, vaultMacKey, revisions]);
+
+  // Accounts created before identity keys existed publish one on first unlock;
+  // every unlock also checks the server still serves our own keys unchanged.
+  useEffect(() => {
+    if (!userId || !stretchedMasterKey || !protectedPrivateKey || !protectedPrivateKeyIv) return;
+    ensureIdentityPublished(api, sessionToken, {
+      userId,
+      protectedPrivateKey,
+      protectedPrivateKeyIv,
+      stretchedMasterKey,
+    }).catch((err) => {
+      // Anything else (offline, server hiccup) is retried on the next unlock
+      if (err instanceof OwnKeyMismatchError) setError(err.message);
+    });
+  }, [api, sessionToken, userId, stretchedMasterKey, protectedPrivateKey, protectedPrivateKeyIv]);
 
   const handleSave = useCallback(async (plaintext: VaultItemPlaintext) => {
     setSaving(true);
     setError(null);
     try {
-      const enc = await encryptItem(plaintext, vaultEncKey, vaultMacKey);
-
+      if (!revisions) throw new Error("The vault is still loading");
       if (modal?.mode === "create") {
-        const created = await api.vault.create(defaultVaultId, {
-          itemType: plaintext.type, blob: enc.blob, blobIv: enc.blobIv, blobMac: enc.blobMac,
-        }, sessionToken);
+        const id = crypto.randomUUID();
+        const { encrypted: enc, revision } = await encryptVaultItem(
+          plaintext, { scope: { kind: "personal" }, itemId: id, itemType: plaintext.type }, vaultEncKey, revisions, null,
+        );
+        const created = await api.vault.create(defaultVaultId, { id, itemType: plaintext.type, ...enc }, sessionToken);
+        revisions.record(id, revision);
         upsertItem(created);
         await upsertLocalItem(created);
       } else if (modal?.mode === "edit") {
+        // Decrypt the blob being replaced so the new revision beats it
+        const binding = bindingForItem(modal.entry.item);
+        const current = await decryptVaultItem(modal.entry.item, binding, { vaultEncKey, vaultMacKey }, revisions);
+        const { encrypted: enc, revision } = await encryptVaultItem(plaintext, binding, vaultEncKey, revisions, current);
         await api.vault.update(defaultVaultId, modal.entry.item.id, {
-          blob: enc.blob, blobIv: enc.blobIv, blobMac: enc.blobMac, version: modal.entry.item.version,
+          ...enc, version: modal.entry.item.version,
         }, sessionToken);
+        revisions.record(modal.entry.item.id, revision);
         const updated = { ...modal.entry.item, blob: enc.blob, blobIv: enc.blobIv, blobMac: enc.blobMac, version: modal.entry.item.version + 1 };
         upsertItem(updated);
         await upsertLocalItem(updated);
@@ -279,7 +331,7 @@ function VaultScreen({
     } finally {
       setSaving(false);
     }
-  }, [modal, api, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, upsertItem]);
+  }, [modal, api, sessionToken, defaultVaultId, vaultEncKey, vaultMacKey, revisions, upsertItem]);
 
   const handleDelete = useCallback(async (item: EncryptedVaultItem) => {
     if (!confirm("Delete this item?")) return;
@@ -372,7 +424,7 @@ function VaultScreen({
         </div>
         {/* Sidebar tab switcher */}
         <div className="flex border-b border-gray-200 dark:border-gray-700">
-          {(["vault", "orgs"] as SidebarTab[]).map((t) => (
+          {(["vault", "orgs", "account"] as SidebarTab[]).map((t) => (
             <button key={t} onClick={() => setSidebarTab(t)}
               className={`flex-1 py-2 text-xs font-medium transition-colors ${
                 sidebarTab === t
@@ -380,7 +432,7 @@ function VaultScreen({
                   : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
               }`}
             >
-              {t === "vault" ? "Vault" : "Teams"}
+              {t === "vault" ? "Vault" : t === "orgs" ? "Teams" : "Account"}
             </button>
           ))}
         </div>
@@ -399,6 +451,11 @@ function VaultScreen({
               </span>
             </button>
           ))}
+          {sidebarTab === "account" && (
+            <div className="px-3 py-2">
+              <ChangePasswordForm apiClient={api} />
+            </div>
+          )}
           {sidebarTab === "orgs" && (
             <OrgPanel
               apiClient={api}

@@ -1,20 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Badge, Banner, Button, Dialog, Field, IconButton, SecretText, useNopassStore } from "@nopass/ui";
+import { Badge, Banner, Button, browserAccountState, Dialog, Field, IconButton, SecretText, useNopassStore } from "@nopass/ui";
 import { X } from "lucide-react";
 import { PageShell } from "@/components/vault/PageShell";
 import {
-  computeEmailHash,
-  deriveMasterKey,
   deriveRecoveryKeys,
   generateRecoveryCode,
-  srpStep1,
-  srpStep2,
-  stretchMasterKeyAllRaw,
+  loginWithPassword,
+  unlockAccount,
   wrapVaultSubkeys,
+  zeroAccount,
+  type UnlockedAccount,
 } from "@nopass/crypto";
-import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import { api } from "@/lib/api";
 import { downloadRecoveryKit } from "@/lib/recovery-kit";
 
@@ -70,28 +68,17 @@ export default function RecoveryPage() {
     if (!sessionToken || !email) return;
     setError(null);
     setPhase("working");
-    let subkeys: Awaited<ReturnType<typeof stretchMasterKeyAllRaw>> | null = null;
+    let subkeys: UnlockedAccount | null = null;
     try {
       // The vault keys in memory are non-extractable, so the kit is built from
-      // the entered password — which also means we must prove it's the right
-      // one before uploading a blob a future recovery would depend on.
-      const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
-
-      const step1 = srpStep1();
-      const initResp = await api.auth.srpInit({
-        emailHash: computeEmailHash(email),
-        clientPublicA: step1.clientPublicA,
-      });
-      const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-      const verifyResp = await api.auth.srpVerify({
-        sessionId: initResp.sessionId,
-        clientProofM1: step2.clientProofM1,
-      });
-      step2.verifyServerProof(verifyResp.serverProofM2);
+      // the account key opened with the entered password — after proving the
+      // password with a login, since a future recovery depends on this blob.
+      const accountState = browserAccountState();
+      const check = await loginWithPassword(api.auth, { email, password, accountState });
+      subkeys = await unlockAccount(api.auth, { email, password, session: check, accountState });
       // The check above opened a session we don't need — close it
-      api.auth.logout(verifyResp.sessionToken).catch(() => {});
+      api.auth.logout(check.sessionToken).catch(() => {});
 
-      subkeys = await stretchMasterKeyAllRaw(masterKey, email);
       const newCode = generateRecoveryCode();
       const { authKeyB64, wrapKey } = await deriveRecoveryKeys(newCode, email);
       const blob = await wrapVaultSubkeys(subkeys, wrapKey);
@@ -116,9 +103,7 @@ export default function RecoveryPage() {
       setPhase("confirm-password");
     } finally {
       // Zero key material on every path, including failures
-      subkeys?.smkBytes.fill(0);
-      subkeys?.encKeyBytes.fill(0);
-      subkeys?.macKeyBytes.fill(0);
+      if (subkeys) zeroAccount(subkeys);
     }
   }
 

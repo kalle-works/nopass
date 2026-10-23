@@ -16,13 +16,23 @@ export const DEFAULT_KDF_PARAMS: KdfParams = {
   parallelism: 4,
 };
 
-export interface RegisterRequest {
-  /** SHA-256("nopass-v1-email:" + lowercase(email)) */
+// OPAQUE (RFC 9807) messages are base64url without padding, as produced and
+// consumed by @serenity-kit/opaque.
+
+export interface OpaqueRegisterStartRequest {
+  /** SHA-256("nopass-v1-email:" + lowercase(email)), hex — also the OPAQUE credential identifier */
   emailHash: string;
-  /** base64 Argon2id salt */
-  srpSalt: string;
-  /** base64 SRP-6a verifier */
-  srpVerifier: string;
+  registrationRequest: string;
+}
+
+export interface OpaqueRegisterStartResponse {
+  registrationResponse: string;
+}
+
+export interface OpaqueRegisterFinishRequest {
+  emailHash: string;
+  registrationRecord: string;
+  /** Argon2id parameters for both the vault KDF and the OPAQUE key-stretching function */
   kdfParams: KdfParams;
   /** base64 AES-GCM encrypted vault key */
   protectedSymmetricKey: string;
@@ -37,6 +47,103 @@ export interface RegisterRequest {
 export interface RegisterResponse {
   userId: string;
 }
+
+/** A fresh OPAQUE proof of the password inside an authenticated request. */
+/** What a proof authorizes; the server redeems it only at that endpoint. */
+export type ProofPurpose = "account_key" | "identity_key";
+
+export interface PasswordProofStartRequest {
+  emailHash: string;
+  startLoginRequest: string;
+  purpose: ProofPurpose;
+}
+
+export interface PasswordProofStartResponse {
+  proofId: string;
+  loginResponse: string;
+  kdfParams: KdfParams;
+}
+
+export interface PasswordProof {
+  proofId: string;
+  finishLoginRequest: string;
+}
+
+/** SRP → OPAQUE upgrade, round 1: a fresh SRP challenge plus an OPAQUE registration. */
+export interface UpgradeStartRequest {
+  emailHash: string;
+  clientPublicA: string;
+  registrationRequest: string;
+}
+
+export interface UpgradeStartResponse {
+  upgradeId: string;
+  serverPublicB: string;
+  srpSalt: string;
+  kdfParams: KdfParams;
+  registrationResponse: string;
+}
+
+/** Round 2: SRP proof, OPAQUE record and wrapped account key, applied together. */
+export interface UpgradeFinishRequest {
+  upgradeId: string;
+  clientProofM1: string;
+  registrationRecord: string;
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
+}
+
+export interface UpgradeFinishResponse {
+  serverProofM2: string;
+}
+
+export interface OpaqueLoginStartRequest {
+  emailHash: string;
+  startLoginRequest: string;
+}
+
+/** Identical in status and shape whether or not the account exists. */
+export interface OpaqueLoginStartResponse {
+  loginId: string;
+  loginResponse: string;
+  kdfParams: KdfParams;
+}
+
+export interface OpaqueLoginFinishRequest {
+  loginId: string;
+  finishLoginRequest: string;
+  /** Optional: link this session to an existing trusted device. */
+  deviceId?: string;
+}
+
+/** A successful login, by OPAQUE or legacy SRP. */
+export interface LoginResponse {
+  sessionToken: string;
+  userId: string;
+  defaultVaultId: string;
+  protectedSymmetricKey: string;
+  protectedSymmetricKeyIv: string;
+  protectedPrivateKey?: string | null;
+  protectedPrivateKeyIv?: string | null;
+  /** Account key wrapped under the password KEK; absent until the account has migrated */
+  wrappedAccountKey?: string | null;
+  wrappedAccountKeyIv?: string | null;
+}
+
+/** One-time migration of an OPAQUE account to the password-independent account key. */
+export interface SetAccountKeyRequest {
+  proof: PasswordProof;
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
+  /** RSA private key moved from the password-derived wrap to the account-key-derived one */
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
+}
+
+// Legacy SRP login — only for accounts that haven't logged in since OPAQUE
+// shipped. See docs/auth.md "Removing SRP".
 
 export interface SrpInitRequest {
   emailHash: string;
@@ -61,16 +168,38 @@ export interface SrpVerifyRequest {
   deviceId?: string;
 }
 
-export interface SrpVerifyResponse {
+export interface SrpVerifyResponse extends LoginResponse {
   /** base64 server proof M2 — client MUST verify this before trusting the session */
   serverProofM2: string;
-  sessionToken: string;
-  userId: string;
-  defaultVaultId: string;
-  protectedSymmetricKey: string;
-  protectedSymmetricKeyIv: string;
-  protectedPrivateKey?: string | null;
-  protectedPrivateKeyIv?: string | null;
+}
+
+// ─── Password change ─────────────────────────────────────────────────────────
+
+/** Round 1: OPAQUE login with the current password plus registration of the new one. */
+export interface PasswordChangeStartRequest {
+  emailHash: string;
+  startLoginRequest: string;
+  registrationRequest: string;
+}
+
+export interface PasswordChangeStartResponse {
+  changeId: string;
+  loginResponse: string;
+  kdfParams: KdfParams;
+  registrationResponse: string;
+  /** current account-key wrap, to open with the current password and re-wrap */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
+}
+
+export interface PasswordChangeFinishRequest {
+  changeId: string;
+  /** proof of the current password */
+  finishLoginRequest: string;
+  registrationRecord: string;
+  /** the same account key, wrapped under the new password's KEK */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
 }
 
 // ─── Recovery ────────────────────────────────────────────────────────────────
@@ -113,17 +242,25 @@ export interface ReencryptedItem {
   blobMac: string;
 }
 
+/** OPAQUE registration round 1 for the new master password, authorized by the recovery token. */
+export interface RecoveryOpaqueStartRequest {
+  recoveryToken: string;
+  emailHash: string;
+  registrationRequest: string;
+}
+
 export interface RecoveryCompleteRequest {
   recoveryToken: string;
-  /** new SRP credentials derived from the new master password */
-  srpSalt: string;
-  srpVerifier: string;
+  /** OPAQUE record for the new master password (from recovery/opaque/start) */
+  registrationRecord: string;
   protectedSymmetricKey: string;
   protectedSymmetricKeyIv: string;
   /** RSA private key re-wrapped under the new stretched master key (when the user has one) */
   protectedPrivateKey?: string;
   protectedPrivateKeyIv?: string;
-  items: ReencryptedItem[];
+  /** the account key from the kit, wrapped under the new password's KEK */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
   /** replacement recovery kit — the used code is burned */
   recoveryAuthKey: string;
   recoveryBlob: string;
@@ -231,6 +368,8 @@ export type OrgRole = "owner" | "admin" | "member";
 export type OrgMemberStatus = "pending" | "active";
 
 export interface CreateOrgRequest {
+  /** Client-chosen UUID, so the creator can sign their own org-key wrap */
+  id?: string;
   name: string;
   /** base64 RSA-OAEP SPKI public key */
   publicKey: string;
@@ -239,6 +378,10 @@ export interface CreateOrgRequest {
   protectedPrivateKeyIv: string;
   /** Org AES-256-GCM key encrypted with the owner's RSA public key */
   encryptedOrgKey: string;
+  /** Creator's identity-key signature over their own wrap (signOrgKeyWrap) */
+  wrapSignature?: string;
+  /** Org key epoch the creator's wrap was signed for */
+  keyEpoch?: number;
 }
 
 export interface OrgSummary {
@@ -249,17 +392,67 @@ export interface OrgSummary {
   createdAt: string;
 }
 
+/** A user's published keys; verify with verifyKeyBundle before trusting publicKey. */
+export interface KeyBundle {
+  userId: string;
+  /** RSA-OAEP SPKI, base64 */
+  publicKey: string;
+  /** Ed25519 public key, base64; null until the user's client has migrated */
+  identityPublicKey: string | null;
+  /** Ed25519 signature over the bundle, base64 */
+  publicKeySignature: string | null;
+}
+
 export interface OrgMember {
   userId: string;
   role: OrgRole;
   status: OrgMemberStatus;
   joinedAt: string | null;
+  publicKey: string | null;
+  identityPublicKey: string | null;
+  publicKeySignature: string | null;
 }
 
 export interface OrgDetails extends OrgSummary {
   members: OrgMember[];
   /** Org AES key encrypted with the caller's RSA public key */
   encryptedOrgKey: string;
+  /** Signed chain for the caller's wrap, starting with it; verify with verifyOrgKeyChain */
+  wrapChain: WrapLink[];
+}
+
+/** One member's org-key wrap and the key bundle of whoever signed it. */
+export interface WrapLink {
+  recipientUserId: string;
+  role: OrgRole;
+  encryptedOrgKey: string;
+  /** null for wraps made before signing existed */
+  wrapSignature: string | null;
+  keyEpoch: number | null;
+  signerUserId: string;
+  signer: KeyBundle;
+}
+
+/** A pending invite as the invitee sees it — verify wrapChain before accepting. */
+export interface PendingInvite {
+  orgId: string;
+  orgName: string;
+  role: OrgRole;
+  wrapChain: WrapLink[];
+}
+
+/** Owner-only org key rotation; see POST /organizations/{id}/rotate. */
+export interface RotateKeyRequest {
+  newEpoch: number;
+  removeUserId?: string;
+  wraps: RewrapRequest["wraps"];
+  items: Array<{ id: string; blob: string; blobIv: string; blobMac: string }>;
+  /** Items the owner chose to delete because they could not be decrypted */
+  deleteItemIds?: string[];
+}
+
+export interface RewrapRequest {
+  wraps: Array<{ userId: string; encryptedOrgKey: string; wrapSignature: string; keyEpoch: number }>;
 }
 
 export interface InviteMemberRequest {
@@ -268,15 +461,28 @@ export interface InviteMemberRequest {
   role: Exclude<OrgRole, "owner">;
   /** Org AES key pre-encrypted with the invitee's RSA public key */
   encryptedOrgKey: string;
+  /** Inviter's identity-key signature over the wrap (signOrgKeyWrap) */
+  wrapSignature: string;
+  /** Org key epoch the wrap was signed for */
+  keyEpoch: number;
 }
 
 export interface AcceptInviteRequest {
   orgId: string;
 }
 
-export interface PublicKeyResponse {
-  userId: string;
-  publicKey: string;
+export type PublicKeyResponse = KeyBundle;
+
+/** HMAC under the vault MAC key saying every item is v2; see applyV2OnlyMarker */
+export interface VaultFormatMarker {
+  marker: string | null;
+}
+
+export interface SetIdentityRequest {
+  identityPublicKey: string;
+  publicKeySignature: string;
+  /** Required for the first publish */
+  proof?: PasswordProof;
 }
 
 // ─── Billing ─────────────────────────────────────────────────────────────────

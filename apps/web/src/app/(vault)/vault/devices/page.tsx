@@ -24,6 +24,8 @@ export default function DevicesPage() {
   const [error, setError] = useState<string | null>(null);
   const [toRevoke, setToRevoke] = useState<DeviceInfo | null>(null);
   const [revoking, setRevoking] = useState(false);
+  const [confirmSignOutOthers, setConfirmSignOutOthers] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     document.title = "Devices — nopwd";
@@ -62,10 +64,28 @@ export default function DevicesPage() {
     }
   }
 
+  async function handleSignOutOthers() {
+    if (!sessionToken) return;
+    setSigningOut(true);
+    try {
+      await api.devices.signOutOthers(sessionToken);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to sign out other devices");
+    } finally {
+      setConfirmSignOutOthers(false);
+      setSigningOut(false);
+    }
+  }
+
   return (
     <PageShell
       title="Devices"
       description="Devices that have signed in as you. Revoke any you don't recognize; that signs out all of its active sessions."
+      actions={
+        <Button variant="ghost" onClick={() => setConfirmSignOutOthers(true)}>
+          Sign out all other devices
+        </Button>
+      }
     >
       {error && (
         <Banner
@@ -154,6 +174,23 @@ export default function DevicesPage() {
             </Button>
             <Button variant="danger" onClick={handleRevoke} pending={revoking} pendingLabel="Revoking…">
               Revoke device
+            </Button>
+          </>
+        }
+      />
+
+      <Dialog
+        open={confirmSignOutOthers}
+        onClose={() => setConfirmSignOutOthers(false)}
+        title="Sign out all other devices?"
+        description="Every session except this one ends. Other devices stay registered but have to authenticate again."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmSignOutOthers(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleSignOutOthers} pending={signingOut} pendingLabel="Signing out…">
+              Sign out others
             </Button>
           </>
         }

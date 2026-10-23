@@ -2,6 +2,7 @@
 name = "nopass-crypto"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 nopass-models = { path = "../nopass-models" }
@@ -16,9 +17,11 @@ rand = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
 srp = { workspace = true }
+opaque-ke = { workspace = true }
 
 serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 hex-literal = "0.4"
+serde_json = { workspace = true }

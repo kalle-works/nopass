@@ -22,15 +22,36 @@ import type {
   MoveItemRequest,
   OrgDetails,
   OrgSummary,
+  PendingInvite,
+  RewrapRequest,
+  RotateKeyRequest,
   PortalSessionResponse,
   PublicKeyResponse,
   RecoveryCompleteRequest,
   RecoveryInitRequest,
   RecoveryInitResponse,
   RecoveryStatusResponse,
+  LoginResponse,
+  OpaqueLoginFinishRequest,
+  OpaqueLoginStartRequest,
+  OpaqueLoginStartResponse,
+  OpaqueRegisterFinishRequest,
+  OpaqueRegisterStartRequest,
+  OpaqueRegisterStartResponse,
+  PasswordChangeFinishRequest,
+  PasswordChangeStartRequest,
+  PasswordChangeStartResponse,
+  PasswordProofStartRequest,
+  PasswordProofStartResponse,
+  UpgradeFinishRequest,
+  UpgradeFinishResponse,
+  UpgradeStartRequest,
+  UpgradeStartResponse,
+  SetAccountKeyRequest,
+  RecoveryOpaqueStartRequest,
   RegisterDeviceRequest,
-  RegisterRequest,
   RegisterResponse,
+  SetIdentityRequest,
   SetRecoveryRequest,
   ShareInfo,
   SrpInitRequest,
@@ -40,6 +61,7 @@ import type {
   SyncRequest,
   SyncResponse,
   UpdateVaultItemRequest,
+  VaultFormatMarker,
   VaultInfo,
   ViewShareResponse,
 } from "@nopass/types";
@@ -98,7 +120,26 @@ export function createApiClient(baseUrl: string) {
 
   return {
     auth: {
-      register: (req: RegisterRequest) => post<RegisterResponse>("/auth/register", req),
+      opaqueRegisterStart: (req: OpaqueRegisterStartRequest) =>
+        post<OpaqueRegisterStartResponse>("/auth/opaque/register/start", req),
+      opaqueRegisterFinish: (req: OpaqueRegisterFinishRequest) =>
+        post<RegisterResponse>("/auth/opaque/register/finish", req),
+      opaqueLoginStart: (req: OpaqueLoginStartRequest) =>
+        post<OpaqueLoginStartResponse>("/auth/opaque/login/start", req),
+      opaqueLoginFinish: (req: OpaqueLoginFinishRequest) =>
+        post<LoginResponse>("/auth/opaque/login/finish", req),
+      proofStart: (req: PasswordProofStartRequest, token: string) =>
+        post<PasswordProofStartResponse>("/auth/proof/start", req, token),
+      setAccountKey: (req: SetAccountKeyRequest, token: string) => post<void>("/auth/account-key", req, token),
+      upgradeStart: (req: UpgradeStartRequest, token: string) =>
+        post<UpgradeStartResponse>("/auth/upgrade/start", req, token),
+      upgradeFinish: (req: UpgradeFinishRequest, token: string) =>
+        post<UpgradeFinishResponse>("/auth/upgrade/finish", req, token),
+      passwordChangeStart: (req: PasswordChangeStartRequest, token: string) =>
+        post<PasswordChangeStartResponse>("/auth/password/start", req, token),
+      passwordChangeFinish: (req: PasswordChangeFinishRequest, token: string) =>
+        post<void>("/auth/password/finish", req, token),
+      // Legacy SRP, used only by loginWithPassword's fallback for unmigrated accounts
       srpInit: (req: SrpInitRequest) => post<SrpInitResponse>("/auth/srp/init", req),
       srpVerify: (req: SrpVerifyRequest) => post<SrpVerifyResponse>("/auth/srp/verify", req),
       logout: (token: string) => post<void>("/auth/logout", {}, token),
@@ -108,6 +149,8 @@ export function createApiClient(baseUrl: string) {
       set: (req: SetRecoveryRequest, token: string) => put<void>("/auth/recovery", req, token),
       disable: (token: string) => del<void>("/auth/recovery", token),
       init: (req: RecoveryInitRequest) => post<RecoveryInitResponse>("/auth/recovery/init", req),
+      opaqueStart: (req: RecoveryOpaqueStartRequest) =>
+        post<OpaqueRegisterStartResponse>("/auth/recovery/opaque/start", req),
       complete: (req: RecoveryCompleteRequest) => post<void>("/auth/recovery/complete", req),
     },
     activity: {
@@ -118,6 +161,8 @@ export function createApiClient(baseUrl: string) {
       register: (req: RegisterDeviceRequest, token: string) =>
         post<{ deviceId: string }>("/devices", req, token),
       remove: (deviceId: string, token: string) => del<void>(`/devices/${deviceId}`, token),
+      signOutOthers: (token: string) =>
+        post<{ signedOut: number }>("/devices/sign-out-others", {}, token),
     },
     vault: {
       list: (token: string) => get<VaultInfo[]>("/vaults", token),
@@ -158,15 +203,25 @@ export function createApiClient(baseUrl: string) {
     orgs: {
       list: (token: string) => get<OrgSummary[]>("/organizations", token),
       get: (orgId: string, token: string) => get<OrgDetails>(`/organizations/${orgId}`, token),
+      invites: (token: string) => get<PendingInvite[]>("/organizations/invites", token),
+      rewrap: (orgId: string, req: RewrapRequest, token: string) =>
+        put<void>(`/organizations/${orgId}/wraps`, req, token),
+      items: (orgId: string, token: string) => get<EncryptedVaultItem[]>(`/organizations/${orgId}/items`, token),
+      rotate: (orgId: string, req: RotateKeyRequest, token: string) =>
+        post<void>(`/organizations/${orgId}/rotate`, req, token),
       create: (req: CreateOrgRequest, token: string) => post<OrgSummary>("/organizations", req, token),
       invite: (orgId: string, req: InviteMemberRequest, token: string) =>
         post<void>(`/organizations/${orgId}/members`, req, token),
       accept: (orgId: string, token: string) =>
         post<void>(`/organizations/${orgId}/accept`, {}, token),
-      removeMember: (orgId: string, userId: string, token: string) =>
-        del<void>(`/organizations/${orgId}/members/${userId}`, token),
       getPublicKey: (emailHash: string, token: string) =>
         get<PublicKeyResponse>(`/organizations/public-key/${emailHash}`, token),
+    },
+    keys: {
+      me: (token: string) => get<PublicKeyResponse>("/keys/me", token),
+      setIdentity: (req: SetIdentityRequest, token: string) => put<void>("/keys/identity", req, token),
+      vaultFormat: (token: string) => get<VaultFormatMarker>("/keys/vault-format", token),
+      setVaultFormat: (req: { marker: string }, token: string) => put<void>("/keys/vault-format", req, token),
     },
     billing: {
       status: (token: string) => get<BillingStatus>("/billing/status", token),

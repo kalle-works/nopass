@@ -1,20 +1,10 @@
 import { Command } from "commander";
 import {
+  completeAccountRecovery,
   computeEmailHash,
-  decryptBytes,
-  decryptItem,
-  deriveMasterKey,
   deriveRecoveryKeys,
-  encryptBytes,
-  encryptItem,
-  generateRecoveryCode,
-  generateSrpRegistration,
-  stretchMasterKey,
-  stretchMasterKeyAllRaw,
   unwrapVaultSubkeys,
-  wrapVaultSubkeys,
 } from "@nopass/crypto";
-import { DEFAULT_KDF_PARAMS, type ReencryptedItem } from "@nopass/types";
 import { createApiClient } from "../api-client.js";
 import { prompt, closePrompt } from "../prompt.js";
 import { clearSession, getApiUrl } from "../session.js";
@@ -43,7 +33,7 @@ export const recoverCommand = new Command("recover")
         { blob: init.recoveryBlob, blobIv: init.recoveryBlobIv, blobMac: "" },
         wrapKey,
       );
-      process.stderr.write(`Vault keys recovered. ${init.items.length} item(s) to re-encrypt.\n`);
+      process.stderr.write("Vault keys recovered.\n");
 
       const newPassword = await prompt("New master password: ", true);
       const confirm = await prompt("Repeat it: ", true);
@@ -57,77 +47,16 @@ export const recoverCommand = new Command("recover")
         process.exit(1);
       }
 
-      const importAes = (bytes: Uint8Array<ArrayBuffer>, usages: KeyUsage[]) =>
-        crypto.subtle.importKey("raw", bytes, { name: "AES-GCM", length: 256 }, false, usages);
-      const oldEncKey = await importAes(old.encKeyBytes, ["decrypt"]);
-      const oldMacKey = await crypto.subtle.importKey(
-        "raw",
-        old.macKeyBytes,
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["verify"],
+      process.stderr.write("Deriving new keys (Argon2id)…\n");
+      // The kit holds the account key: re-wrap it under the new password;
+      // no item is re-encrypted.
+      const replacementCode = await completeAccountRecovery(
+        { opaqueStart: api.auth.recoveryOpaqueStart, complete: api.auth.recoveryComplete },
+        { email, newPassword, init, recovered: old },
       );
-      const oldSmkKey = await importAes(old.smkBytes, ["decrypt"]);
-
-      process.stderr.write("Deriving new keys…\n");
-      const newMasterKey = await deriveMasterKey(newPassword, email, DEFAULT_KDF_PARAMS);
-      const newKeys = await stretchMasterKey(newMasterKey, email);
-      const newRaw = await stretchMasterKeyAllRaw(newMasterKey, email);
-      const { srpSalt, srpVerifier } = generateSrpRegistration(email, newPassword);
-
-      process.stderr.write("Re-encrypting vault…\n");
-      const items: ReencryptedItem[] = [];
-      for (const item of init.items) {
-        const plain = await decryptItem(
-          { blob: item.blob, blobIv: item.blobIv, blobMac: item.blobMac },
-          oldEncKey,
-          oldMacKey,
-        );
-        const reencrypted = await encryptItem(plain, newKeys.vaultEncKey, newKeys.vaultMacKey);
-        items.push({ id: item.id, ...reencrypted });
-      }
-
-      const protectedKey = await encryptBytes(newRaw.encKeyBytes, newKeys.stretchedMasterKey);
-
-      let protectedPrivateKey: string | undefined;
-      let protectedPrivateKeyIv: string | undefined;
-      if (init.protectedPrivateKey && init.protectedPrivateKeyIv) {
-        const pkcs8 = await decryptBytes(
-          { blob: init.protectedPrivateKey, blobIv: init.protectedPrivateKeyIv, blobMac: "" },
-          oldSmkKey,
-        );
-        const rewrapped = await encryptBytes(pkcs8, newKeys.stretchedMasterKey);
-        pkcs8.fill(0);
-        protectedPrivateKey = rewrapped.blob;
-        protectedPrivateKeyIv = rewrapped.blobIv;
-      }
-
-      // The used code burns server-side — mint the replacement in the same pass
-      const replacementCode = generateRecoveryCode();
-      const replacementKeys = await deriveRecoveryKeys(replacementCode, email);
-      const replacementBlob = await wrapVaultSubkeys(newRaw, replacementKeys.wrapKey);
-
-      newRaw.smkBytes.fill(0);
-      newRaw.encKeyBytes.fill(0);
-      newRaw.macKeyBytes.fill(0);
       old.smkBytes.fill(0);
       old.encKeyBytes.fill(0);
       old.macKeyBytes.fill(0);
-
-      await api.auth.recoveryComplete({
-        recoveryToken: init.recoveryToken,
-        srpSalt,
-        srpVerifier,
-        protectedSymmetricKey: protectedKey.blob,
-        protectedSymmetricKeyIv: protectedKey.blobIv,
-        ...(protectedPrivateKey && protectedPrivateKeyIv
-          ? { protectedPrivateKey, protectedPrivateKeyIv }
-          : {}),
-        items,
-        recoveryAuthKey: replacementKeys.authKeyB64,
-        recoveryBlob: replacementBlob.blob,
-        recoveryBlobIv: replacementBlob.blobIv,
-      });
 
       clearSession();
 

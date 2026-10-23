@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:unit": "vitest run"
+    "test": "vitest run"
   },
   "dependencies": {
     "@nopass/crypto": "workspace:*",
@@ -18,7 +18,7 @@
     "@nopass/ui": "workspace:*",
     "fflate": "^0.8.3",
     "lucide-react": "1.58.0",
-    "next": "16.2.6",
+    "next": "16.4.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "zustand": "^5.0.6"
@@ -32,7 +32,7 @@
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^4.1.6",
     "eslint": "^9",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.4.2",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.6"

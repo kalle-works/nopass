@@ -11,6 +11,8 @@ import { DataTable, PageShell, RelativeTime, TBODY, TD, TH } from "@/components/
 const EVENT_LABELS: Record<string, { label: string; review?: boolean }> = {
   login_succeeded: { label: "Signed in" },
   login_failed: { label: "Failed sign-in attempt", review: true },
+  login_upgraded: { label: "Upgraded sign-in protection" },
+  password_changed: { label: "Changed master password", review: true },
   recovery_kit_created: { label: "Created recovery kit" },
   recovery_kit_disabled: { label: "Disabled recovery", review: true },
   recovery_initiated: { label: "Used recovery code", review: true },
@@ -20,6 +22,7 @@ const EVENT_LABELS: Record<string, { label: string; review?: boolean }> = {
   share_revoked: { label: "Revoked share link" },
   device_registered: { label: "Registered new device", review: true },
   device_revoked: { label: "Revoked device" },
+  sessions_revoked: { label: "Signed out all other devices" },
   vault_created: { label: "Created vault" },
   vault_deleted: { label: "Deleted vault" },
 };

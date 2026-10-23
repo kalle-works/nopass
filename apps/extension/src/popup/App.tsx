@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ExternalLink, Plus, Search } from "lucide-react";
-import { deriveMasterKey, stretchMasterKeyRaw, srpStep1, srpStep2, computeEmailHash } from "@nopass/crypto";
+import { loginWithPassword, unlockAccount, zeroAccount } from "@nopass/crypto";
 import { Banner, Button, EmptyState, Field, Kbd, Spinner, createApiClient } from "@nopass/ui";
-import { DEFAULT_KDF_PARAMS } from "@nopass/types";
+import { extensionAccountState } from "../lib/account-state";
 import { bytesToBase64 } from "../lib/base64";
 import { siteHostname, webVaultUrl } from "../lib/web-url";
+import { AUTO_LOCK_CHOICES, AUTO_LOCK_SETTING, parseAutoLockMinutes } from "../lib/auto-lock";
 import { EntryRow, type VaultEntry } from "./EntryRow";
 import { EntryDetail } from "./EntryDetail";
 import { UnlockForm } from "./UnlockForm";
@@ -31,6 +32,8 @@ interface State {
   fillError: string | null;
   unlocking: boolean;
   selected: VaultEntry | null;
+  /** A fill into a page the item is not saved for, waiting for the user's yes */
+  pendingFill: { entry: VaultEntry; origin: string } | null;
 }
 
 type Action =
@@ -41,7 +44,8 @@ type Action =
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_FILL_ERROR"; error: string | null }
   | { type: "SET_UNLOCKING"; value: boolean }
-  | { type: "SELECT"; entry: VaultEntry | null };
+  | { type: "SELECT"; entry: VaultEntry | null }
+  | { type: "SET_PENDING_FILL"; pending: State["pendingFill"] };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -52,7 +56,8 @@ function reducer(state: State, action: Action): State {
     case "SET_ERROR": return { ...state, error: action.error };
     case "SET_FILL_ERROR": return { ...state, fillError: action.error };
     case "SET_UNLOCKING": return { ...state, unlocking: action.value };
-    case "SELECT": return { ...state, selected: action.entry, fillError: null };
+    case "SELECT": return { ...state, selected: action.entry, fillError: null, pendingFill: null };
+    case "SET_PENDING_FILL": return { ...state, pendingFill: action.pending };
   }
 }
 
@@ -66,9 +71,14 @@ const initial: State = {
   fillError: null,
   unlocking: false,
   selected: null,
+  pendingFill: null,
 };
 
 const NO_FORM_MESSAGE = "Couldn't find a login form on this page.";
+
+function originMismatchMessage(origin: string): string {
+  return `This login isn't saved for ${origin}, and that form is embedded from another site. nopwd won't fill it.`;
+}
 
 // ─── Messaging helpers ────────────────────────────────────────────────────────
 
@@ -94,6 +104,7 @@ const SEARCH_SHORTCUT = isMac ? "⌘K" : "Ctrl K";
 export function App() {
   const [state, dispatch] = useReducer(reducer, initial);
   const [lastEmail, setLastEmail] = useState("");
+  const [autoLockMinutes, setAutoLockMinutes] = useState<number>(parseAutoLockMinutes(undefined));
   const searchRef = useRef<HTMLInputElement>(null);
   // Discards responses from searches that were superseded while in flight
   const searchSeq = useRef(0);
@@ -120,8 +131,9 @@ export function App() {
       // Resolve the remembered email before showing any screen so the unlock
       // form always mounts prefilled (also after an in-popup Lock) and focus
       // lands on the password field
-      const stored = await chrome.storage.local.get("lastEmail");
+      const stored = await chrome.storage.local.get(["lastEmail", AUTO_LOCK_SETTING]);
       setLastEmail(typeof stored["lastEmail"] === "string" ? stored["lastEmail"] : "");
+      setAutoLockMinutes(parseAutoLockMinutes(stored[AUTO_LOCK_SETTING]));
 
       const resp = await sendMessage<{ unlocked: boolean }>({ type: "IS_UNLOCKED" });
       if (resp.unlocked) {
@@ -180,21 +192,31 @@ export function App() {
     return { username: resp.username, password: resp.password };
   }, []);
 
-  async function handleFill(entry: VaultEntry) {
+  async function handleFill(entry: VaultEntry, confirmedOrigin?: string) {
     dispatch({ type: "SET_FILL_ERROR", error: null });
+    dispatch({ type: "SET_PENDING_FILL", pending: null });
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) {
       dispatch({ type: "SET_FILL_ERROR", error: NO_FORM_MESSAGE });
       return;
     }
     try {
-      const resp = await sendMessage<{ ok?: boolean; error?: string }>({
+      const resp = await sendMessage<{ ok?: boolean; error?: string; origin?: string; confirmable?: boolean }>({
         type: "AUTOFILL",
         itemId: entry.id,
         tabId: tab.id,
+        ...(confirmedOrigin ? { confirmedOrigin } : {}),
       });
       if (resp.ok) {
         window.close();
+        return;
+      }
+      if (resp.error === "origin_mismatch" && resp.origin) {
+        if (resp.confirmable) {
+          dispatch({ type: "SET_PENDING_FILL", pending: { entry, origin: resp.origin } });
+        } else {
+          dispatch({ type: "SET_FILL_ERROR", error: originMismatchMessage(resp.origin) });
+        }
         return;
       }
     } catch {
@@ -203,34 +225,31 @@ export function App() {
     dispatch({ type: "SET_FILL_ERROR", error: NO_FORM_MESSAGE });
   }
 
+  async function handleAutoLockChange(minutes: number) {
+    setAutoLockMinutes(minutes);
+    // The background re-arms its alarm on this storage change
+    await chrome.storage.local.set({ [AUTO_LOCK_SETTING]: minutes });
+  }
+
   async function handleUnlock(email: string, password: string) {
     dispatch({ type: "SET_ERROR", error: null });
     dispatch({ type: "SET_UNLOCKING", value: true });
     try {
-      const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
-      const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-
-      const emailHash = computeEmailHash(email);
-      const step1 = srpStep1();
-      const initResp = await api.auth.srpInit({ emailHash, clientPublicA: step1.clientPublicA });
-      const step2 = srpStep2(email, password, initResp.srpSalt, initResp.serverPublicB, step1.privateSession);
-      const verifyResp = await api.auth.srpVerify({
-        sessionId: initResp.sessionId,
-        clientProofM1: step2.clientProofM1,
-      });
-      step2.verifyServerProof(verifyResp.serverProofM2);
+      const accountState = extensionAccountState();
+      const auth = await loginWithPassword(api.auth, { email, password, accountState });
+      const account = await unlockAccount(api.auth, { email, password, session: auth, accountState });
+      const { encKeyBytes, macKeyBytes } = account;
 
       const resp = await sendMessage<{ ok?: boolean; error?: string }>({
         type: "UNLOCK",
-        sessionToken: verifyResp.sessionToken,
-        defaultVaultId: verifyResp.defaultVaultId,
+        sessionToken: auth.sessionToken,
+        defaultVaultId: auth.defaultVaultId,
         vaultEncKeyB64: bytesToBase64(encKeyBytes),
         vaultMacKeyB64: bytesToBase64(macKeyBytes),
       });
 
       // Zero key material
-      encKeyBytes.fill(0);
-      macKeyBytes.fill(0);
+      zeroAccount(account);
 
       if (resp.error) throw new Error(resp.error);
 
@@ -285,6 +304,31 @@ export function App() {
       {state.fillError && (
         <Banner tone="warning" className="m-3 mb-0 rounded">
           {state.fillError}
+        </Banner>
+      )}
+
+      {state.pendingFill && (
+        <Banner
+          tone="warning"
+          className="m-3 mb-0 rounded"
+          title={`${state.pendingFill.entry.name} isn't saved for this site`}
+          action={
+            <div className="flex shrink-0 flex-col gap-1">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => handleFill(state.pendingFill!.entry, state.pendingFill!.origin)}
+              >
+                Fill anyway
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => dispatch({ type: "SET_PENDING_FILL", pending: null })}>
+                Cancel
+              </Button>
+            </div>
+          }
+        >
+          The page is <span className="break-all font-mono text-mono-sm text-fg">{state.pendingFill.origin}</span>.
+          Only fill it if you trust this site with these credentials.
         </Banner>
       )}
 
@@ -377,6 +421,20 @@ export function App() {
         <Button size="sm" icon={<Plus aria-hidden className="size-4" />} onClick={() => openUrl(WEB_VAULT_URL)}>
           New
         </Button>
+        <label className="flex items-center gap-1 text-meta text-muted">
+          Auto-lock
+          <select
+            value={autoLockMinutes}
+            onChange={(e) => handleAutoLockChange(Number(e.target.value))}
+            className="rounded border border-divider bg-bg px-1 py-0.5 text-meta text-fg"
+          >
+            {AUTO_LOCK_CHOICES.map((m) => (
+              <option key={m} value={m}>
+                {m < 60 ? `${m} min` : `${m / 60} h`}
+              </option>
+            ))}
+          </select>
+        </label>
         <Button variant="ghost" size="sm" icon={<ExternalLink aria-hidden className="size-4" />} onClick={() => openUrl(WEB_VAULT_URL)}>
           Open vault
         </Button>

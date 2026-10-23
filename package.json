@@ -17,7 +17,11 @@
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild", "@tauri-apps/cli"],
     "overrides": {
-      "postcss@<8.5.10": ">=8.5.10"
+      "postcss@<8.5.10": ">=8.5.10",
+      "browserslist@<4.28.7": ">=4.28.7",
+      "@babel/core@<7.29.6": ">=7.29.6",
+      "baseline-browser-mapping@<2.11.0": ">=2.11.0",
+      "source-map-js@<1.2.2": ">=1.2.2"
     }
   },
   "engines": {

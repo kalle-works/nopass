@@ -9,7 +9,7 @@ use uuid::Uuid;
 use helpers::{build_test_server, login, register_user};
 
 fn fake_blob() -> (String, String, String) {
-    (B64.encode(&[0xde; 48]), B64.encode(&[0xad; 12]), B64.encode(&[0xbe; 32]))
+    (B64.encode([0xde; 48]), B64.encode([0xad; 12]), B64.encode([0xbe; 32]))
 }
 
 // ─── Create item ──────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ async fn create_item_returns_201(pool: PgPool) {
 
     let (blob, blob_iv, blob_mac) = fake_blob();
     let req = CreateVaultItemRequest {
+        id: None,
         item_type: VaultItemType::Login,
         blob,
         blob_iv,
@@ -49,7 +50,7 @@ async fn create_item_requires_auth(pool: PgPool) {
     let session = login(&server, "alice@example.com", "password").await;
 
     let (blob, blob_iv, blob_mac) = fake_blob();
-    let req = CreateVaultItemRequest { item_type: VaultItemType::Login, blob, blob_iv, blob_mac };
+    let req = CreateVaultItemRequest { id: None, item_type: VaultItemType::Login, blob, blob_iv, blob_mac };
 
     server
         .post(&format!("/v1/vaults/{}/items", session.default_vault_id))
@@ -76,6 +77,7 @@ async fn list_items_returns_created_items(pool: PgPool) {
             .post(&format!("/v1/vaults/{vault_id}/items"))
             .authorization_bearer(&session.session_token)
             .json(&CreateVaultItemRequest {
+                id: None,
                 item_type: VaultItemType::Login,
                 blob: blob.clone(),
                 blob_iv: blob_iv.clone(),
@@ -127,6 +129,7 @@ async fn update_item_increments_version(pool: PgPool) {
         .post(&format!("/v1/vaults/{vault_id}/items"))
         .authorization_bearer(&session.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Login,
             blob: blob.clone(),
             blob_iv: blob_iv.clone(),
@@ -165,6 +168,7 @@ async fn update_item_optimistic_locking_conflict_returns_409(pool: PgPool) {
         .post(&format!("/v1/vaults/{vault_id}/items"))
         .authorization_bearer(&session.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Login,
             blob: blob.clone(),
             blob_iv: blob_iv.clone(),
@@ -193,6 +197,60 @@ async fn update_item_optimistic_locking_conflict_returns_409(pool: PgPool) {
         .assert_status(StatusCode::CONFLICT);
 }
 
+// Two devices saving the same item from the same base version race in the
+// database, not in the handler: exactly one write may win, the rest must see
+// the conflict instead of silently overwriting.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn concurrent_updates_from_the_same_version_have_exactly_one_winner(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, "alice@example.com", "password").await;
+    let session = login(&server, "alice@example.com", "password").await;
+    let vault_id = session.default_vault_id;
+
+    let (blob, blob_iv, blob_mac) = fake_blob();
+    let create_resp: serde_json::Value = server
+        .post(&format!("/v1/vaults/{vault_id}/items"))
+        .authorization_bearer(&session.session_token)
+        .json(&CreateVaultItemRequest {
+            id: None,
+            item_type: VaultItemType::Login,
+            blob: blob.clone(),
+            blob_iv: blob_iv.clone(),
+            blob_mac: blob_mac.clone(),
+        })
+        .await
+        .json();
+    let item_id = create_resp["id"].as_str().unwrap().to_string();
+    let version = create_resp["version"].as_i64().unwrap();
+
+    let update = || async {
+        server
+            .put(&format!("/v1/vaults/{vault_id}/items/{item_id}"))
+            .authorization_bearer(&session.session_token)
+            .json(&UpdateVaultItemRequest {
+                blob: blob.clone(),
+                blob_iv: blob_iv.clone(),
+                blob_mac: blob_mac.clone(),
+                version,
+            })
+            .await
+            .status_code()
+    };
+    let statuses = tokio::join!(update(), update(), update(), update(), update(), update());
+    let statuses = [statuses.0, statuses.1, statuses.2, statuses.3, statuses.4, statuses.5];
+
+    assert_eq!(statuses.iter().filter(|s| **s == StatusCode::OK).count(), 1, "{statuses:?}");
+    assert_eq!(statuses.iter().filter(|s| **s == StatusCode::CONFLICT).count(), 5, "{statuses:?}");
+
+    let items: serde_json::Value = server
+        .get(&format!("/v1/vaults/{vault_id}/items"))
+        .authorization_bearer(&session.session_token)
+        .await
+        .json();
+    let stored = items.as_array().unwrap().iter().find(|i| i["id"] == item_id.as_str()).unwrap();
+    assert_eq!(stored["version"].as_i64(), Some(version + 1));
+}
+
 // ─── Delete item ──────────────────────────────────────────────────────────────
 
 #[sqlx::test(migrations = "src/db/migrations")]
@@ -206,7 +264,7 @@ async fn delete_item_soft_deletes_and_returns_no_content(pool: PgPool) {
     let create_resp: serde_json::Value = server
         .post(&format!("/v1/vaults/{vault_id}/items"))
         .authorization_bearer(&session.session_token)
-        .json(&CreateVaultItemRequest { item_type: VaultItemType::Login, blob, blob_iv, blob_mac })
+        .json(&CreateVaultItemRequest { id: None, item_type: VaultItemType::Login, blob, blob_iv, blob_mac })
         .await
         .json();
 
@@ -245,4 +303,45 @@ async fn delete_nonexistent_item_returns_404(pool: PgPool) {
         .authorization_bearer(&session.session_token)
         .await
         .assert_status(StatusCode::NOT_FOUND);
+}
+
+// ─── v2 envelope support ──────────────────────────────────────────────────────
+
+/// v2 item envelopes bind the item id into the ciphertext, so the server must
+/// store an item under the id the client encrypted it for, and accept the
+/// empty blob_mac that v2 items carry.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn create_item_keeps_client_chosen_id_and_accepts_v2_without_mac(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, "alice@example.com", "password").await;
+    let session = login(&server, "alice@example.com", "password").await;
+
+    let id = Uuid::new_v4();
+    let (blob, blob_iv, _) = fake_blob();
+    let req = CreateVaultItemRequest {
+        id: Some(id),
+        item_type: VaultItemType::Login,
+        blob,
+        blob_iv,
+        blob_mac: String::new(),
+    };
+    let url = format!("/v1/vaults/{}/items", session.default_vault_id);
+
+    let resp = server.post(&url).authorization_bearer(&session.session_token).json(&req).await;
+    resp.assert_status(StatusCode::CREATED);
+    let listed: serde_json::Value = server
+        .get(&url)
+        .authorization_bearer(&session.session_token)
+        .await
+        .json();
+    assert_eq!(listed[0]["id"].as_str(), Some(id.to_string().as_str()));
+    assert_eq!(listed[0]["blobMac"].as_str(), Some(""));
+
+    // Reusing an id must not overwrite or adopt the existing row
+    server
+        .post(&url)
+        .authorization_bearer(&session.session_token)
+        .json(&req)
+        .await
+        .assert_status(StatusCode::CONFLICT);
 }

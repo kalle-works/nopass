@@ -1,6 +1,8 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod healthcheck;
+pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod routes;
@@ -32,11 +34,23 @@ pub async fn run() -> Result<()> {
         .await?;
 
     sqlx::migrate!("src/db/migrations").run(&pool).await?;
+    db::schema::ensure_indexes_valid(&pool).await?;
+
+    metrics::spawn_server();
+    // Key legacy email hashes before serving: until a row is keyed, its
+    // account can't be found by login.
+    // A failure here must not stop the API: lookups also match unkeyed rows,
+    // and the housekeeping task retries every minute.
+    match db::auth::key_email_hashes(&pool, |h| state::account_key(&config.email_lookup_key.0, h)).await {
+        Ok(keyed) if keyed > 0 => info!("keyed {keyed} legacy email hashes"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("email hash keying failed, retrying in the background: {e:#}"),
+    }
 
     let state = Arc::new(AppState::new(pool, config.clone()));
 
-    // Evict expired SRP sessions every 60s to prevent memory exhaustion.
-    state.spawn_srp_cleanup();
+    // Prune expired login handshakes and other housekeeping every 60s.
+    state.spawn_housekeeping();
 
     let app = build_router((*state).clone());
 
@@ -135,6 +149,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .nest("/v1", routes::router(state.clone()))
+        .layer(axum::middleware::from_fn(metrics::track_http))
         // 2 MiB max body — AES-GCM vault blobs are small; this limits abuse.
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
         .layer(security_headers)

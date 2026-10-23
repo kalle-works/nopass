@@ -18,10 +18,10 @@ async fn create_org_returns_201(pool: PgPool) {
         .authorization_bearer(&session.session_token)
         .json(&serde_json::json!({
             "name": "Acme Corp",
-            "publicKey": B64.encode(&[0u8; 256]),
-            "protectedPrivateKey": B64.encode(&[0u8; 64]),
-            "protectedPrivateKeyIv": B64.encode(&[0u8; 12]),
-            "encryptedOrgKey": B64.encode(&[0u8; 64]),
+            "publicKey": B64.encode([0u8; 256]),
+            "protectedPrivateKey": B64.encode([0u8; 64]),
+            "protectedPrivateKeyIv": B64.encode([0u8; 12]),
+            "encryptedOrgKey": B64.encode([0u8; 64]),
         }))
         .await;
 
@@ -54,10 +54,10 @@ async fn create_org_rejects_empty_name(pool: PgPool) {
         .authorization_bearer(&session.session_token)
         .json(&serde_json::json!({
             "name": "   ",
-            "publicKey": B64.encode(&[0u8; 256]),
-            "protectedPrivateKey": B64.encode(&[0u8; 64]),
-            "protectedPrivateKeyIv": B64.encode(&[0u8; 12]),
-            "encryptedOrgKey": B64.encode(&[0u8; 64]),
+            "publicKey": B64.encode([0u8; 256]),
+            "protectedPrivateKey": B64.encode([0u8; 64]),
+            "protectedPrivateKeyIv": B64.encode([0u8; 12]),
+            "encryptedOrgKey": B64.encode([0u8; 64]),
         }))
         .await
         .assert_status(StatusCode::BAD_REQUEST);
@@ -77,10 +77,10 @@ async fn list_orgs_returns_created_org(pool: PgPool) {
         .authorization_bearer(&session.session_token)
         .json(&serde_json::json!({
             "name": "My Team",
-            "publicKey": B64.encode(&[0u8; 256]),
-            "protectedPrivateKey": B64.encode(&[0u8; 64]),
-            "protectedPrivateKeyIv": B64.encode(&[0u8; 12]),
-            "encryptedOrgKey": B64.encode(&[0u8; 64]),
+            "publicKey": B64.encode([0u8; 256]),
+            "protectedPrivateKey": B64.encode([0u8; 64]),
+            "protectedPrivateKeyIv": B64.encode([0u8; 12]),
+            "encryptedOrgKey": B64.encode([0u8; 64]),
         }))
         .await
         .assert_status(StatusCode::CREATED);
@@ -124,10 +124,10 @@ async fn get_org_returns_details_for_owner(pool: PgPool) {
         .authorization_bearer(&session.session_token)
         .json(&serde_json::json!({
             "name": "Acme",
-            "publicKey": B64.encode(&[0u8; 256]),
-            "protectedPrivateKey": B64.encode(&[0u8; 64]),
-            "protectedPrivateKeyIv": B64.encode(&[0u8; 12]),
-            "encryptedOrgKey": B64.encode(&[0u8; 64]),
+            "publicKey": B64.encode([0u8; 256]),
+            "protectedPrivateKey": B64.encode([0u8; 64]),
+            "protectedPrivateKeyIv": B64.encode([0u8; 12]),
+            "encryptedOrgKey": B64.encode([0u8; 64]),
         }))
         .await
         .json();
@@ -160,10 +160,10 @@ async fn get_org_returns_404_for_non_member(pool: PgPool) {
         .authorization_bearer(&alice.session_token)
         .json(&serde_json::json!({
             "name": "Alice's Org",
-            "publicKey": B64.encode(&[0u8; 256]),
-            "protectedPrivateKey": B64.encode(&[0u8; 64]),
-            "protectedPrivateKeyIv": B64.encode(&[0u8; 12]),
-            "encryptedOrgKey": B64.encode(&[0u8; 64]),
+            "publicKey": B64.encode([0u8; 256]),
+            "protectedPrivateKey": B64.encode([0u8; 64]),
+            "protectedPrivateKeyIv": B64.encode([0u8; 12]),
+            "encryptedOrgKey": B64.encode([0u8; 64]),
         }))
         .await
         .json();
@@ -191,10 +191,10 @@ async fn get_public_key_returns_key_after_org_creation(pool: PgPool) {
         .authorization_bearer(&alice.session_token)
         .json(&serde_json::json!({
             "name": "Acme",
-            "publicKey": B64.encode(&[0xaa; 256]),
-            "protectedPrivateKey": B64.encode(&[0u8; 64]),
-            "protectedPrivateKeyIv": B64.encode(&[0u8; 12]),
-            "encryptedOrgKey": B64.encode(&[0u8; 64]),
+            "publicKey": B64.encode([0xaa; 256]),
+            "protectedPrivateKey": B64.encode([0u8; 64]),
+            "protectedPrivateKeyIv": B64.encode([0u8; 12]),
+            "encryptedOrgKey": B64.encode([0u8; 64]),
         }))
         .await
         .assert_status(StatusCode::CREATED);

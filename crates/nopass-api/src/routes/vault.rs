@@ -185,12 +185,13 @@ async fn create_item(
     let blob_mac = B64.decode(&req.blob_mac)
         .map_err(|_| ApiError::BadRequest("invalid blob_mac".into()))?;
 
-    // AES-256-GCM requires exactly 12-byte IV; HMAC-SHA256 output is 32 bytes.
+    // AES-256-GCM requires exactly 12-byte IV. blob_mac is HMAC-SHA256 (32 bytes)
+    // for v1 items and empty for v2 items, whose AAD-bound GCM tag replaces it.
     if blob_iv.len() != 12 {
         return Err(ApiError::BadRequest("blob_iv must be 12 bytes".into()));
     }
-    if blob_mac.len() != 32 {
-        return Err(ApiError::BadRequest("blob_mac must be 32 bytes".into()));
+    if !valid_blob_mac_len(blob_mac.len()) {
+        return Err(ApiError::BadRequest("blob_mac must be 32 bytes or empty".into()));
     }
     if blob.is_empty() {
         return Err(ApiError::BadRequest("blob must not be empty".into()));
@@ -200,9 +201,21 @@ async fn create_item(
     }
 
     let item_type_str = item_type_to_str(&req.item_type);
-    let item =
-        db_vaults::create_item(&state.db, vault_id, auth.user_id, item_type_str, &blob, &blob_iv, &blob_mac)
-            .await?;
+    let new_item = db_vaults::NewItem {
+        id: req.id,
+        item_type: item_type_str,
+        blob: &blob,
+        blob_iv: &blob_iv,
+        blob_mac: &blob_mac,
+    };
+    let item = db_vaults::create_item(&state.db, vault_id, auth.user_id, new_item)
+        .await
+        .map_err(|e| match e.downcast_ref::<sqlx::Error>() {
+            Some(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+                ApiError::Conflict("item id already exists".into())
+            }
+            _ => e.into(),
+        })?;
 
     Ok((
         StatusCode::CREATED,
@@ -240,8 +253,8 @@ async fn update_item(
     if blob_iv.len() != 12 {
         return Err(ApiError::BadRequest("blob_iv must be 12 bytes".into()));
     }
-    if blob_mac.len() != 32 {
-        return Err(ApiError::BadRequest("blob_mac must be 32 bytes".into()));
+    if !valid_blob_mac_len(blob_mac.len()) {
+        return Err(ApiError::BadRequest("blob_mac must be 32 bytes or empty".into()));
     }
     if blob.is_empty() {
         return Err(ApiError::BadRequest("blob must not be empty".into()));
@@ -287,6 +300,10 @@ async fn delete_item(
     } else {
         Err(ApiError::NotFound("item not found".into()))
     }
+}
+
+fn valid_blob_mac_len(len: usize) -> bool {
+    len == 32 || len == 0
 }
 
 pub(crate) fn parse_item_type(s: &str) -> ApiResult<VaultItemType> {
