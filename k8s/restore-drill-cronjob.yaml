@@ -41,17 +41,22 @@ spec:
               imagePullPolicy: IfNotPresent
               command: ["restore-drill.sh"]
               env:
+                # Only for restoring dumps in the older openssl format
                 - name: BACKUP_PASSPHRASE
                   valueFrom:
                     secretKeyRef:
                       name: nopwd-backup-secrets
                       key: passphrase
+                      optional: true
               volumeMounts:
                 - name: backups
                   mountPath: /backups
                   readOnly: true
                 - name: tmp
                   mountPath: /tmp
+                - name: age-identity
+                  mountPath: /age
+                  readOnly: true
                 # initdb and the postmaster write their runtime files here
                 - name: pg-run
                   mountPath: /var/run/postgresql
@@ -73,6 +78,16 @@ spec:
               persistentVolumeClaim:
                 claimName: nopwd-backups
                 readOnly: true
+            # optional so the pod starts without it; the drill then fails with a
+            # message that names the missing identity
+            - name: age-identity
+              secret:
+                secretName: nopwd-backup-secrets
+                defaultMode: 0400
+                optional: true
+                items:
+                  - key: age-identity
+                    path: identity
             - name: tmp
               emptyDir: {}
             - name: pg-run

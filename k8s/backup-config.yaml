@@ -1,0 +1,22 @@
+# Public half of the backup encryption key. The nightly job encrypts to it and
+# cannot decrypt; the private half (age identity) is the `age-identity` key of
+# the nopwd-backup-secrets SealedSecret, read only by the restore drill, and
+# lives in the password manager.
+#
+# Until a recipient is set the backup job refuses to run and
+# NopwdBackupFailed fires. To set it up:
+#   age-keygen -o nopwd-backup.key          # prints the public key
+#   store nopwd-backup.key in the password manager
+#   put the public key below ("age1...")
+#   seal the private key into nopwd-backup-secrets under the key `age-identity`
+#     (kubeseal --merge-into k8s/backup-sealed-secret.yaml, or re-seal the
+#     whole secret with passphrase, deploy-key and age-identity)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nopwd-backup-config
+  namespace: nopwd
+  labels:
+    app.kubernetes.io/name: nopwd-backup
+data:
+  age-recipient: ""

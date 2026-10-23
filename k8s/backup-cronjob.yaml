@@ -1,6 +1,7 @@
 # Nightly encrypted dump (scripts: ops/backup.sh). The Job fails, and
-# NopwdBackupFailed fires, when the dump, its decrypt check, the offsite push
-# or the offsite verification fails. kube_cronjob_status_last_successful_time
+# NopwdBackupFailed fires, when pg_dump, the encryption, the offsite push or the
+# offsite verification fails. It holds only the age public key, so it cannot
+# read its own dumps; the monthly restore drill proves they decrypt. kube_cronjob_status_last_successful_time
 # is the last-success metric: it only advances when every step passed.
 apiVersion: batch/v1
 kind: CronJob
@@ -46,11 +47,11 @@ spec:
                     secretKeyRef:
                       name: nopwd-secrets
                       key: database-url
-                - name: BACKUP_PASSPHRASE
+                - name: AGE_RECIPIENT
                   valueFrom:
-                    secretKeyRef:
-                      name: nopwd-backup-secrets
-                      key: passphrase
+                    configMapKeyRef:
+                      name: nopwd-backup-config
+                      key: age-recipient
                 - name: OFFSITE_REPO
                   value: git@github.com:kalle-works/nopwd-backups.git
               volumeMounts:
@@ -81,10 +82,15 @@ spec:
             - name: backups
               persistentVolumeClaim:
                 claimName: nopwd-backups
+            # Only the deploy key: this pod must not be able to read the age
+            # identity that decrypts the dumps it writes
             - name: secrets
               secret:
                 secretName: nopwd-backup-secrets
                 defaultMode: 0400
+                items:
+                  - key: deploy-key
+                    path: deploy-key
             - name: known-hosts
               configMap:
                 name: nopwd-backup-known-hosts
