@@ -2,6 +2,7 @@
 name = "nopass-crypto"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [dependencies]
 nopass-models = { path = "../nopass-models" }
