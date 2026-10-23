@@ -12,6 +12,7 @@ import type {
   PasswordChangeFinishRequest,
   PasswordChangeStartRequest,
   PasswordChangeStartResponse,
+  SetAccountKeyRequest,
   RecoveryCompleteRequest,
   RecoveryInitRequest,
   RecoveryInitResponse,
@@ -73,6 +74,8 @@ export function createApiClient(baseUrl: string) {
         post<OpaqueRegisterStartResponse>("/auth/opaque/reregister/start", req, token),
       opaqueReregisterFinish: (req: OpaqueReregisterFinishRequest, token: string) =>
         post<void>("/auth/opaque/reregister/finish", req, token),
+      setAccountKey: (req: SetAccountKeyRequest, token: string) =>
+        request<void>(baseUrl, "/auth/account-key", { method: "PUT", body: JSON.stringify(req), token }),
       passwordChangeStart: (req: PasswordChangeStartRequest, token: string) =>
         post<PasswordChangeStartResponse>("/auth/password/start", req, token),
       passwordChangeFinish: (req: PasswordChangeFinishRequest, token: string) =>

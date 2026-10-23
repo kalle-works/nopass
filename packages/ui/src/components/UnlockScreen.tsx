@@ -8,8 +8,11 @@ import {
   generateRecoveryCode,
   loginWithPassword,
   stretchMasterKey,
-  stretchMasterKeyAllRaw,
+  importAccountKeys,
+  unlockAccount,
   wrapVaultSubkeys,
+  zeroAccount,
+  type UnlockedAccount,
 } from "@nopass/crypto";
 import { ApiError, type ApiClient } from "../lib/api-client";
 import { useNopassStore } from "../store/vault-store";
@@ -145,7 +148,7 @@ export function UnlockScreen({
   const [kitPending, setKitPending] = useState(false);
   // Held only between account creation and kit creation so a failed kit upload
   // can be retried without asking for the password again. Zeroed afterwards.
-  const pendingKit = useRef<{ masterKey: Uint8Array; sessionToken: string } | null>(null);
+  const pendingKit = useRef<{ account: UnlockedAccount; sessionToken: string } | null>(null);
   const passwordInput = useRef<HTMLInputElement>(null);
 
   const { setSession } = useNopassStore();
@@ -169,7 +172,7 @@ export function UnlockScreen({
   useEffect(() => () => clearPendingKit(), []);
 
   function clearPendingKit() {
-    pendingKit.current?.masterKey.fill(0);
+    if (pendingKit.current) zeroAccount(pendingKit.current.account);
     pendingKit.current = null;
   }
 
@@ -243,45 +246,51 @@ export function UnlockScreen({
       protectedPrivateKeyIv: keyPair.protectedPrivateKeyIv,
     });
 
-    let sessionToken: string;
+    masterKey.fill(0);
+
+    let unlocked: Awaited<ReturnType<typeof performLogin>>;
     try {
-      sessionToken = await performLogin(keys);
+      // The first unlock moves the new account onto the wrapped account key.
+      unlocked = await performLogin();
     } catch {
-      masterKey.fill(0);
       // The account exists now; a retry of register would only hit "already exists"
       throw new Error("Your account was created, but signing in failed. Sign in to finish setting up your recovery kit.");
     }
     if (onDownloadRecoveryKit) {
-      pendingKit.current = { masterKey, sessionToken };
+      pendingKit.current = unlocked;
     } else {
-      masterKey.fill(0);
+      zeroAccount(unlocked.account);
     }
   }
 
   async function handleLogin() {
-    const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
-    const keys = await stretchMasterKey(masterKey, email);
-    await performLogin(keys);
+    const { account } = await performLogin();
+    zeroAccount(account);
   }
 
-  async function performLogin(keys: Awaited<ReturnType<typeof stretchMasterKey>>): Promise<string> {
+  /** Logs in, opens the account key (migrating a legacy account) and loads the session. */
+  async function performLogin(): Promise<{ account: UnlockedAccount; sessionToken: string }> {
     const auth = await loginWithPassword(apiClient.auth, { email, password });
-    setSession(auth, email, keys);
-    return auth.sessionToken;
+    const account = await unlockAccount(apiClient.auth, { email, password, session: auth });
+    const keys = await importAccountKeys(account);
+    setSession(
+      { ...auth, protectedPrivateKey: account.protectedPrivateKey, protectedPrivateKeyIv: account.protectedPrivateKeyIv },
+      email,
+      keys,
+    );
+    return { account, sessionToken: auth.sessionToken };
   }
 
-  /** Wraps the vault keys under a fresh recovery code and uploads the blob. */
+  /** Wraps the account key under a fresh recovery code and uploads the blob. */
   async function createKit() {
     const pending = pendingKit.current;
     if (!pending) return;
     setKitError(null);
     setKitPending(true);
-    let subkeys: Awaited<ReturnType<typeof stretchMasterKeyAllRaw>> | null = null;
     try {
-      subkeys = await stretchMasterKeyAllRaw(pending.masterKey, email);
       const code = generateRecoveryCode();
       const { authKeyB64, wrapKey } = await deriveRecoveryKeys(code, email);
-      const blob = await wrapVaultSubkeys(subkeys, wrapKey);
+      const blob = await wrapVaultSubkeys(pending.account, wrapKey);
       await apiClient.recovery.set(
         { recoveryAuthKey: authKeyB64, recoveryBlob: blob.blob, recoveryBlobIv: blob.blobIv },
         pending.sessionToken,
@@ -291,9 +300,6 @@ export function UnlockScreen({
     } catch (err) {
       setKitError(humanizeError(err));
     } finally {
-      subkeys?.smkBytes.fill(0);
-      subkeys?.encKeyBytes.fill(0);
-      subkeys?.macKeyBytes.fill(0);
       setKitPending(false);
     }
   }

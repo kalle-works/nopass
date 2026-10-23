@@ -81,6 +81,18 @@ export interface LoginResponse {
   protectedSymmetricKeyIv: string;
   protectedPrivateKey?: string | null;
   protectedPrivateKeyIv?: string | null;
+  /** Account key wrapped under the password KEK; absent until the account has migrated */
+  wrappedAccountKey?: string | null;
+  wrappedAccountKeyIv?: string | null;
+}
+
+/** One-time migration to the password-independent account key (fresh session only). */
+export interface SetAccountKeyRequest {
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
+  /** RSA private key moved from the password-derived wrap to the account-key-derived one */
+  protectedPrivateKey?: string;
+  protectedPrivateKeyIv?: string;
 }
 
 // Legacy SRP login — only for accounts that haven't logged in since OPAQUE
@@ -128,10 +140,9 @@ export interface PasswordChangeStartResponse {
   loginResponse: string;
   kdfParams: KdfParams;
   registrationResponse: string;
-  /** every item, tombstones included — all must come back re-encrypted */
-  items: EncryptedVaultItem[];
-  protectedPrivateKey?: string | null;
-  protectedPrivateKeyIv?: string | null;
+  /** current account-key wrap, to open with the current password and re-wrap */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
 }
 
 export interface PasswordChangeFinishRequest {
@@ -139,11 +150,9 @@ export interface PasswordChangeFinishRequest {
   /** proof of the current password */
   finishLoginRequest: string;
   registrationRecord: string;
-  protectedSymmetricKey: string;
-  protectedSymmetricKeyIv: string;
-  protectedPrivateKey?: string;
-  protectedPrivateKeyIv?: string;
-  items: ReencryptedItem[];
+  /** the same account key, wrapped under the new password's KEK */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
 }
 
 // ─── Recovery ────────────────────────────────────────────────────────────────
@@ -171,6 +180,8 @@ export interface RecoveryInitRequest {
 export interface RecoveryInitResponse {
   /** short-lived token authorizing the recovery completion */
   recoveryToken: string;
+  /** binds the re-wrapped account key to this account */
+  userId: string;
   recoveryBlob: string;
   recoveryBlobIv: string;
   protectedPrivateKey?: string | null;
@@ -202,7 +213,9 @@ export interface RecoveryCompleteRequest {
   /** RSA private key re-wrapped under the new stretched master key (when the user has one) */
   protectedPrivateKey?: string;
   protectedPrivateKeyIv?: string;
-  items: ReencryptedItem[];
+  /** the account key from the kit, wrapped under the new password's KEK */
+  wrappedAccountKey: string;
+  wrappedAccountKeyIv: string;
   /** replacement recovery kit — the used code is burned */
   recoveryAuthKey: string;
   recoveryBlob: string;

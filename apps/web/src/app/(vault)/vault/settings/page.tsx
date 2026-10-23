@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { Kbd, useNopassStore } from "@nopass/ui";
+import { ChangePasswordForm, Kbd, useNopassStore } from "@nopass/ui";
 import { PageShell, DataTable, TBODY, TD, TH } from "@/components/vault/PageShell";
-import { ChangePasswordForm } from "@/components/vault/ChangePasswordForm";
+import { api } from "@/lib/api";
 
 const SHORTCUTS: Array<{ keys: string[]; action: string }> = [
   { keys: ["⌘", "K"], action: "Open the command palette" },
@@ -57,7 +57,7 @@ export default function SettingsPage() {
       </Section>
 
       <Section title="Master password">
-        <ChangePasswordForm />
+        <ChangePasswordForm apiClient={api} />
       </Section>
 
       <Section title="Keyboard shortcuts">

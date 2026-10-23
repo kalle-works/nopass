@@ -16,19 +16,42 @@ password or anything that lets it test password guesses offline on its own.
   login response made by the wasm client against the Rust suite. If the
   suite, the KSF or the serialization drifts, it fails.
 
-### Vault keys stay on the existing Argon2id derivation
+### The account key
 
-Vault items are encrypted directly under keys derived from
-`Argon2id(password, SHA-256("nopass-v1-kdf:" + email))`. Deriving them from
-the OPAQUE `export_key` would mean re-encrypting every item of every account
-during migration. So the vault derivation is unchanged and `export_key` goes
-unused. The two derivations are still domain-separated: the OPAQUE KSF
-stretches the OPRF output, a value only the server's OPRF key can produce,
-while the vault KDF stretches the password with an email salt. Learning one
-says nothing about the other.
+Items are encrypted under an **account key** (the vault enc + mac keys) that
+doesn't depend on the password. For accounts created before the account key
+existed, it is exactly the pair the password used to derive:
 
-What this costs: a login runs Argon2id twice on the client, once inside
-OPAQUE and once for the vault keys.
+    masterKey = Argon2id(password, SHA-256("nopass-v1-kdf:" + email))   (unchanged)
+    enc, mac  = HKDF(masterKey, "nopass-v1-enc" / "nopass-v1-mac")     (legacy derivation)
+
+So migration re-encrypts nothing. The server stores the account key wrapped
+under a key-encryption key derived from the password:
+
+    KEK     = HKDF-SHA256(masterKey, salt = email, info = "nopass-v2-account-kek")
+    wrapped = AES-256-GCM(KEK, enc || mac, AAD = "nopass-v2-account-key:" + userId)
+    smk     = HKDF-SHA256(enc || mac, info = "nopass-v2-smk")
+
+The AAD binds the blob to the account, so the server can't hand one user
+another user's wrap. The smk (wraps the RSA private key and the protected
+symmetric key) is now derived from the account key too, so nothing depends on
+the password except the KEK. Code: `packages/crypto/src/account-key.ts`.
+
+- **Unlock:** log in with OPAQUE, derive the KEK, unwrap. A legacy account
+  (no `wrappedAccountKey` in the login response) derives the old way, wraps
+  those keys and uploads them with `PUT /auth/account-key`. The same request
+  moves the private key from the password-derived smk to the account-key smk.
+  The server accepts this once per account, and only from a session less
+  than 10 minutes old. If the upload fails, the session runs on legacy keys
+  and the migration is retried on the next unlock.
+- **Recovery kit:** the kit wraps smk ‖ enc ‖ mac. enc ‖ mac is the account
+  key, so every kit, including kits made before migration, stays valid across
+  password changes. Recovery ignores the kit's smk except to open a private
+  key that is still under the legacy wrap. Nothing needs regenerating.
+- **Domain separation from OPAQUE:** the OPAQUE KSF stretches the OPRF output
+  and `export_key` goes unused, while the KEK comes from the password with an
+  email salt and its own HKDF label. A login therefore runs Argon2id twice on
+  the client, once inside OPAQUE and once for the KEK.
 
 ### What a database thief gets
 
@@ -42,9 +65,10 @@ secret as well, each guess costs one Argon2id run at the vault KDF's
 parameters.
 
 That leaves the attack OPAQUE can't remove. Anyone holding the database who
-also knows a user's email can test guesses against that user's wrapped vault
-key (`protected_symmetric_key`, AES-GCM under a key derived with Argon2id
-from the password and email). Each guess costs a full Argon2id run. The
+also knows a user's email can test guesses against that user's wrapped
+account key (`wrapped_account_key`, AES-GCM under a KEK derived with Argon2id
+from the password and email). For legacy accounts the same holds for
+`protected_symmetric_key`. Each guess costs a full Argon2id run. The
 marketing copy says exactly this.
 
 ## Endpoints
@@ -67,24 +91,23 @@ token could be used to replace the login credential.
 
 A session token alone can't change the password. `password/start` runs a
 full OPAQUE login for the current password next to a registration for the new
-one, and `password/finish` only goes ahead if that login proof checks out.
-Starts count against the per-account throttle like any login.
+one, and returns the current account-key wrap. `password/finish` only goes
+ahead if the login proof checks out. Starts count against the login throttle.
 
-Vault items are encrypted directly under keys derived from the master
-password, so the keys can't simply be re-wrapped: the client decrypts and
-re-encrypts every item (tombstones included) and re-wraps the vault key and
-the org private key. In one transaction, `finish` then:
+The client opens the account key with the current password and wraps it under
+the new one. In one transaction, `finish` then stores the new OPAQUE record and
+the new wrap, and revokes every session except the one making the change. No
+item is touched, the vault keys in memory stay valid, and the recovery kit keeps
+working. A legacy account must unlock once (which migrates it) before it can
+change its password; until then the server answers 409.
 
-- stores the new OPAQUE record,
-- swaps in the re-encrypted items, after checking that no item was left
-  under the old keys,
-- clears the recovery kit, which wrapped the old keys,
-- revokes every session except the one making the change.
+Web: Settings → Master password. Desktop: the Account tab (same shared
+component). CLI: `nopwd passwd`.
 
-Web: Settings → Master password. CLI: `nopwd passwd`, which also writes the
-new vault keys into the local session file. The desktop app has no settings
-screen, so it has no password change; its users can change the password on
-the web.
+Recovery works the same way. The client takes the account key from the kit,
+wraps it under the new password, and sends it with the new OPAQUE record and a
+replacement kit; items stay as they are. Clients released before this
+change re-encrypt every item instead, and the server still accepts that.
 
 ## Migrating SRP accounts
 
@@ -177,19 +200,25 @@ marks which rows are done. The old, unused `NOPASS_SESSION_SECRET` is gone.
   the SRP fallback), and guessing is bounded per account below.
 - Per account, keyed by the keyed email hash whether the account exists or
   not, so the throttle reveals nothing. It counts every login start
-  (OPAQUE or SRP) and every registration start that isn't followed by a
-  successful finish. A wrong OPAQUE password is detected on the client, which
-  then never calls finish, so the start is all the server ever sees. A
-  registration start is an OPRF evaluation under the account's key, and
-  together with one login response that is enough to test a guess, so it
-  counts too.
-- The first 10 attempts are free. After that the account waits 30 s, doubling
-  with each further attempt, capped at 15 minutes, with a 429 and
-  `Retry-After`. The counter resets on success and decays after 24 h without
-  attempts. The SRP fallback means a wrong password costs two attempts while
-  SRP exists.
-- Remaining risk: anyone who knows an address can keep that account in backoff
-  for up to 15 minutes at a time. The cap keeps this a nuisance, not a lockout.
+  (OPAQUE or SRP), every registration start and every password-change start
+  that isn't followed by a successful finish. A wrong OPAQUE password is
+  detected on the client, which then never calls finish, so the start is all
+  the server ever sees. A registration start is an OPRF evaluation under the
+  account's key, and together with one login response that is enough to test
+  a guess, so it counts too.
+- Two counters per account, with 429 and `Retry-After`:
+  - **Per (account, client network)**, where the network is the client's /24
+    for IPv4 or /64 for IPv6. 10 free attempts, then 30 s, doubling, capped at
+    15 minutes.
+  - **Account-wide**, across all networks: 100 free attempts, then 60 s,
+    doubling, capped at 1 hour.
+- Both counters reset when the password is proven from that network, and
+  decay after 24 h without attempts. The SRP fallback means a wrong password
+  costs two attempts while SRP exists.
+- A stranger on one network only locks that network out; the owner elsewhere
+  is unaffected. To reach the account-wide ceiling they need ten or more /24s.
+  That is the remaining risk: an attacker with that much address space can
+  keep the account in backoff for up to an hour at a time.
 
 ### Alerting
 
@@ -200,9 +229,10 @@ secret) and `ip`.
 | `event` | Meaning |
 |---|---|
 | `login_failed` | Server rejected a login proof (OPAQUE finish or SRP verify) |
-| `login_backoff` | An account crossed the free-attempt threshold |
+| `login_backoff` | A counter crossed its free-attempt threshold (`scope` = `network` or `account`) |
 | `login_throttled` | A start was refused by the per-account backoff |
 | `srp_migrated` | An account moved from SRP to OPAQUE |
+| `account_key_migrated` | An account moved to the wrapped account key |
 
 Alert on the rate of `login_backoff` and `login_throttled` across accounts. A
 spike over many accounts points to credential stuffing; a steady stream on one

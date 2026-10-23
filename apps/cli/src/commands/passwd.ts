@@ -1,21 +1,15 @@
 import { Command } from "commander";
-import {
-  changeMasterPassword,
-  deriveMasterKey,
-  IncorrectPasswordError,
-  stretchMasterKeyRaw,
-} from "@nopass/crypto";
-import { DEFAULT_KDF_PARAMS } from "@nopass/types";
+import { changeMasterPassword, IncorrectPasswordError } from "@nopass/crypto";
 import { ApiError, createApiClient } from "../api-client.js";
 import { prompt, closePrompt } from "../prompt.js";
-import { loadSession, saveSession } from "../session.js";
+import { loadSession } from "../session.js";
 
 export const passwdCommand = new Command("passwd")
-  .description("change your master password (re-encrypts the vault, signs out other devices)")
+  .description("change your master password (signs out your other devices)")
   .action(async () => {
     const session = loadSession();
-    if (!session) {
-      process.stderr.write("Not logged in. Run `nopwd login` first.\n");
+    if (!session?.userId) {
+      process.stderr.write("Log in first (`nopwd login`), then run this again.\n");
       process.exit(1);
     }
 
@@ -33,33 +27,21 @@ export const passwdCommand = new Command("passwd")
     }
 
     try {
+      process.stderr.write("Deriving keys (Argon2id)…\n");
+      // Only the wrap of the account key changes, so this session's vault keys stay valid.
       await changeMasterPassword(createApiClient(session.apiUrl).auth, {
         email: session.email,
+        userId: session.userId,
         sessionToken: session.sessionToken,
         currentPassword,
         newPassword,
-        onProgress: (step) => process.stderr.write(`${step}\n`),
       });
-
-      // This session survives the change; it just needs the new vault keys.
-      const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(
-        await deriveMasterKey(newPassword, session.email, DEFAULT_KDF_PARAMS),
-        session.email,
-      );
-      saveSession({
-        ...session,
-        vaultEncKeyB64: Buffer.from(encKeyBytes).toString("base64"),
-        vaultMacKeyB64: Buffer.from(macKeyBytes).toString("base64"),
-      });
-      encKeyBytes.fill(0);
-      macKeyBytes.fill(0);
-
-      process.stdout.write(
-        "Master password changed. Other devices are signed out. Your recovery kit no longer works: create a new one in the web app.\n",
-      );
+      process.stdout.write("Master password changed. Your other devices are signed out; your recovery kit still works.\n");
     } catch (err) {
       if (err instanceof IncorrectPasswordError || (err instanceof ApiError && err.status === 401)) {
         process.stderr.write("Current master password is incorrect.\n");
+      } else if (err instanceof ApiError && err.status === 409) {
+        process.stderr.write("Log in again first so your account can be upgraded, then retry.\n");
       } else {
         process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
       }

@@ -1,3 +1,5 @@
+export * from "./account-key";
+export * from "./account-recovery";
 export * from "./aes-gcm";
 export * from "./kdf";
 export * from "./org-crypto";

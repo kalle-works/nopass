@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "crypto";
 import { hostname, platform } from "os";
-import { deriveMasterKey, loginWithPassword, stretchMasterKeyRaw } from "@nopass/crypto";
-import { DEFAULT_KDF_PARAMS, type DeviceType } from "@nopass/types";
+import { loginWithPassword, unlockAccount, zeroAccount } from "@nopass/crypto";
+import type { DeviceType } from "@nopass/types";
 import { createApiClient } from "./api-client.js";
 import { saveSession, loadDeviceId, saveDeviceId, type Session } from "./session.js";
 
@@ -26,9 +26,6 @@ export async function loginWithCredentials(
   password: string,
   apiUrl: string,
 ): Promise<void> {
-  const masterKey = await deriveMasterKey(password, email, DEFAULT_KDF_PARAMS);
-  const { encKeyBytes, macKeyBytes } = await stretchMasterKeyRaw(masterKey, email);
-
   const api = createApiClient(apiUrl);
 
   // Include previously-registered device_id so server links the session
@@ -38,6 +35,9 @@ export async function loginWithCredentials(
     password,
     ...(existingDeviceId ? { deviceId: existingDeviceId } : {}),
   });
+  // Opens the account key; a legacy account is migrated to it here.
+  const account = await unlockAccount(api.auth, { email, password, session: auth });
+  const { encKeyBytes, macKeyBytes } = account;
 
   // Register this machine as a trusted device on first login
   let deviceId = existingDeviceId;
@@ -61,6 +61,7 @@ export async function loginWithCredentials(
   const session: Session = {
     sessionToken: auth.sessionToken,
     email,
+    userId: auth.userId,
     vaultEncKeyB64: Buffer.from(encKeyBytes).toString("base64"),
     vaultMacKeyB64: Buffer.from(macKeyBytes).toString("base64"),
     defaultVaultId: auth.defaultVaultId,
@@ -68,8 +69,7 @@ export async function loginWithCredentials(
     ...(deviceId ? { deviceId } : {}),
   };
 
-  encKeyBytes.fill(0);
-  macKeyBytes.fill(0);
+  zeroAccount(account);
 
   saveSession(session);
 }

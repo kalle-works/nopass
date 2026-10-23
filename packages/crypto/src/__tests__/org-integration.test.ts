@@ -17,7 +17,9 @@ import {
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 import { liveAuthApi } from "./support/live-api";
 
-const BASE = "http://127.0.0.1:3001/v1";
+// (this package has no Node types, so read process.env through globalThis)
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env;
+const BASE = env?.["NOPASS_TEST_API_URL"] ?? "http://127.0.0.1:3001/v1";
 
 async function apiPost(path: string, body: unknown, token?: string) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };

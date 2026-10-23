@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel } from "@nopass/ui";
+import { ChangePasswordForm, UnlockScreen, useNopassStore, DecryptedVaultItemCard, ItemEditor, OrgPanel } from "@nopass/ui";
 import { decryptItem, encryptItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, VaultItemPlaintext, VaultItemType } from "@nopass/types";
 import { createApiClient } from "@nopass/ui";
@@ -15,7 +15,7 @@ const API_BASE = import.meta.env["VITE_API_URL"] ?? "http://localhost:3001";
 const api = createApiClient(API_BASE);
 
 type Screen = "unlock-mode-select" | "unlock-password" | "unlock-register" | "vault";
-type SidebarTab = "vault" | "orgs";
+type SidebarTab = "vault" | "orgs" | "account";
 type Filter = "all" | VaultItemType;
 
 const TYPE_LABELS: Record<VaultItemType, string> = {
@@ -372,7 +372,7 @@ function VaultScreen({
         </div>
         {/* Sidebar tab switcher */}
         <div className="flex border-b border-gray-200 dark:border-gray-700">
-          {(["vault", "orgs"] as SidebarTab[]).map((t) => (
+          {(["vault", "orgs", "account"] as SidebarTab[]).map((t) => (
             <button key={t} onClick={() => setSidebarTab(t)}
               className={`flex-1 py-2 text-xs font-medium transition-colors ${
                 sidebarTab === t
@@ -380,7 +380,7 @@ function VaultScreen({
                   : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
               }`}
             >
-              {t === "vault" ? "Vault" : "Teams"}
+              {t === "vault" ? "Vault" : t === "orgs" ? "Teams" : "Account"}
             </button>
           ))}
         </div>
@@ -399,6 +399,11 @@ function VaultScreen({
               </span>
             </button>
           ))}
+          {sidebarTab === "account" && (
+            <div className="px-3 py-2">
+              <ChangePasswordForm apiClient={api} />
+            </div>
+          )}
           {sidebarTab === "orgs" && (
             <OrgPanel
               apiClient={api}

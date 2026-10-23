@@ -2,26 +2,20 @@
 
 import { useState } from "react";
 import { changeMasterPassword, IncorrectPasswordError } from "@nopass/crypto";
-import {
-  ApiError,
-  Banner,
-  Button,
-  estimateStrength,
-  Field,
-  MASTER_PASSWORD_MIN_LEVEL,
-  StrengthMeter,
-  useNopassStore,
-} from "@nopass/ui";
-import { api } from "@/lib/api";
+import { ApiError, type ApiClient } from "../lib/api-client";
+import { useNopassStore } from "../store/vault-store";
+import { Banner } from "../primitives/Feedback";
+import { Button } from "../primitives/Button";
+import { Field } from "../primitives/Field";
+import { StrengthMeter } from "../primitives/StrengthMeter";
+import { estimateStrength, MASTER_PASSWORD_MIN_LEVEL } from "../primitives/strength";
 
 /**
- * Changes the master password. Every item is re-encrypted in this browser,
- * so it takes a few seconds per hundred items. Afterwards the vault locks:
- * items in memory are still the old ciphertext, and signing in again loads
- * them under the new keys.
+ * Changes the master password. Only the wrap of the account key changes, so
+ * the vault stays unlocked with the same keys; other devices are signed out.
  */
-export function ChangePasswordForm() {
-  const { email, sessionToken, lock } = useNopassStore();
+export function ChangePasswordForm({ apiClient }: { apiClient: ApiClient }) {
+  const { email, userId, sessionToken } = useNopassStore();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -31,7 +25,7 @@ export function ChangePasswordForm() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!email || !sessionToken) return;
+    if (!email || !userId || !sessionToken) return;
     setError(null);
     if (estimateStrength(next, [email]).level < MASTER_PASSWORD_MIN_LEVEL) {
       setError("Choose a stronger master password. It has to reach Strong.");
@@ -41,19 +35,23 @@ export function ChangePasswordForm() {
       setError("The new passwords don't match.");
       return;
     }
-    setProgress("Checking your current password…");
+    setProgress("Changing password…");
     try {
-      await changeMasterPassword(api.auth, {
+      await changeMasterPassword(apiClient.auth, {
         email,
+        userId,
         sessionToken,
         currentPassword: current,
         newPassword: next,
-        onProgress: setProgress,
       });
+      setNext("");
+      setConfirm("");
       setDone(true);
     } catch (err) {
       if (err instanceof IncorrectPasswordError || (err instanceof ApiError && err.status === 401)) {
         setError("Your current master password is incorrect.");
+      } else if (err instanceof ApiError && err.status === 409) {
+        setError("Sign out and back in once so your account can be upgraded, then try again.");
       } else if (err instanceof ApiError && err.status === 429) {
         setError("Too many attempts. Wait a moment and try again.");
       } else {
@@ -67,17 +65,8 @@ export function ChangePasswordForm() {
 
   if (done) {
     return (
-      <Banner
-        tone="success"
-        title="Master password changed."
-        action={
-          <Button size="sm" onClick={lock}>
-            Sign in again
-          </Button>
-        }
-      >
-        Your other devices are signed out. Your old recovery kit no longer works, so create a new one under Recovery
-        after you sign in.
+      <Banner tone="success" title="Master password changed.">
+        Your other devices are signed out. Your recovery kit still works.
       </Banner>
     );
   }
@@ -85,8 +74,7 @@ export function ChangePasswordForm() {
   return (
     <form onSubmit={handleSubmit} className="flex max-w-md flex-col gap-4">
       <p className="text-ui text-muted">
-        Changing it re-encrypts every item on this device, signs out your other devices and turns off your current
-        recovery kit.
+        Changing it signs out your other devices. Your items and your recovery kit stay as they are.
       </p>
       {error && <Banner tone="danger" title={error} />}
       <Field

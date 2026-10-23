@@ -202,6 +202,9 @@ pub struct PasswordChangeStartResponse {
     pub login_response: String,
     pub kdf_params: KdfParams,
     pub registration_response: String,
+    /// The current wrap, for the client to open with the current password and re-wrap
+    pub wrapped_account_key: String,
+    pub wrapped_account_key_iv: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -61,7 +61,11 @@ async fn start(
     }
     // Every unlock upgrades SRP and legacy-key accounts first, so these only
     // fail if that upgrade did.
-    let (Some(record), Some(_)) = (user.opaque_record.as_deref(), user.wrapped_account_key.as_ref()) else {
+    let (Some(record), Some(wrapped), Some(wrapped_iv)) = (
+        user.opaque_record.as_deref(),
+        user.wrapped_account_key.as_ref(),
+        user.wrapped_account_key_iv.as_ref(),
+    ) else {
         return Err(ApiError::Conflict("sign in again before changing your password".into()));
     };
     // A login response is a password-guessing oracle; it counts like any login.
@@ -81,6 +85,8 @@ async fn start(
         login_response: B64URL.encode(started.response),
         kdf_params: user_kdf_params(&user)?,
         registration_response: B64URL.encode(registration_response),
+        wrapped_account_key: B64.encode(wrapped),
+        wrapped_account_key_iv: B64.encode(wrapped_iv),
     }))
 }
 
