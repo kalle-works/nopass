@@ -72,17 +72,28 @@ Non-secret settings are in `k8s/configmap.yaml`:
   reach the API pods. Rate limiting and the activity log read the client IP
   from `X-Forwarded-For` only when the peer is in this list.
 
+### Metrics
+
+The API serves Prometheus metrics on port 9100 (`NOPASS_METRICS_PORT`, `0`
+disables), a listener separate from the public one. Only the
+`nopwd-api-metrics` Service and the ServiceMonitor point at it, and the network
+policy lets only Prometheus in. Exposed: `nopass_http_requests_total`,
+`nopass_http_request_duration_seconds` (labelled by route template, not raw
+path) and `nopass_login_failures_total`.
+
 ### Network policies
 
 `k8s/network-policies.yaml` denies all ingress and egress in the namespace and
-allows: Traefik to api (3001) and web (3000), api to Postgres (5432) and
+allows: Traefik to api (3001) and web (3000), Prometheus to the api metrics
+port (9100), api to Postgres (5432) and
 Stripe (443), backup to Postgres and GitHub SSH (22), and DNS for everyone.
 The restore drill gets no network at all.
 
 Policies add up, so the namespace-wide `default-deny-ingress` for `nopwd` in
-`hetzner-k3s-flux-mail` (`network-policies/default-deny.yaml`) must not keep
-its `ipBlock: 10.42.0.0/16` rule. While it does, any pod in the cluster can
-still reach the API and the policies here do nothing for ingress. After a
+`hetzner-k3s-flux-mail` (`network-policies/default-deny.yaml`) allows only
+Traefik and Prometheus and carries no pod-CIDR `ipBlock`. If a pod-CIDR or
+same-namespace rule comes back, any pod in the cluster can reach the API again
+and the policies here do nothing for ingress. After a
 policy change, check that the pods stay Ready and that `curl
 https://api.nopwd.dev/v1/health` answers.
 

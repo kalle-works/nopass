@@ -46,6 +46,10 @@ spec:
           ports:
             - containerPort: 3001
               name: http
+            # Internal metrics listener; no Service port or Ingress points at it
+            # except the nopwd-api-metrics Service that Prometheus scrapes
+            - containerPort: 9100
+              name: metrics
           envFrom:
             - configMapRef:
                 name: nopwd-api-config

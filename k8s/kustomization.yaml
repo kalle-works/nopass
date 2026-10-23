@@ -9,6 +9,7 @@ resources:
   - api-deployment.yaml
   - web-deployment.yaml
   - services.yaml
+  - servicemonitor.yaml
   - ingress.yaml
   - poddisruptionbudget.yaml
   - backup-storage.yaml

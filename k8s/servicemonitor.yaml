@@ -1,0 +1,17 @@
+# Prometheus scrapes the API's internal metrics listener (nopwd-api-metrics
+# Service). The release label is what kube-prometheus-stack selects on.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nopwd-api
+  namespace: nopwd
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-api-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

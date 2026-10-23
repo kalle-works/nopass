@@ -7,6 +7,7 @@
 #
 # Flows:
 #   traefik namespace -> api :3001, web :3000
+#   prometheus (monitoring namespace) -> api metrics :9100
 #   api               -> postgresql namespace :5432, public internet :443 (Stripe)
 #   backup            -> postgresql namespace :5432, public internet :22 (offsite git push)
 #   restore drill     -> nothing (restores into a Postgres inside its own pod)
@@ -63,6 +64,29 @@ spec:
       ports:
         - protocol: TCP
           port: 3001
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-metrics-from-prometheus
+  namespace: nopwd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9100
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
