@@ -96,11 +96,16 @@ export const POPUP_SENDER: chrome.runtime.MessageSender = {
 };
 
 /** Content script running in the given frame of tab 1. */
-export function contentSender(url: string, frameId = 0, documentId = `doc-${frameId}`): chrome.runtime.MessageSender {
+export function contentSender(
+  url: string,
+  frameId = 0,
+  documentId = `doc-${frameId}`,
+  origin = new URL(url).origin,
+): chrome.runtime.MessageSender {
   return {
     id: EXTENSION_ID,
     url,
-    origin: new URL(url).origin,
+    origin,
     frameId,
     documentId,
     tab: { id: 1 } as chrome.tabs.Tab,

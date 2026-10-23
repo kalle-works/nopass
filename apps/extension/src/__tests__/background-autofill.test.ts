@@ -27,6 +27,23 @@ async function unlockWith(logins: Parameters<typeof serveLogins>[0]) {
 }
 
 describe("AUTOFILL frame targeting", () => {
+  it("trusts the frame's origin, not its URL, when they differ", async () => {
+    // An about:srcdoc / blob: style frame: the URL names the item's site
+    // while the document actually runs with the origin of whoever created it.
+    // tabs.get also reports the item's site, so reading either URL would fill.
+    chromeMock().tabs.get.mockResolvedValue({ id: 1, url: "https://bank.example/login" });
+    await unlockWith([{ id: "bank", urls: ["https://bank.example"] }]);
+    await send(
+      { type: "FILL_TARGET" },
+      contentSender("https://bank.example/login", 0, "doc-0", "https://evil.example"),
+    );
+
+    const resp = await send({ type: "AUTOFILL", itemId: "bank", tabId: 1 });
+
+    expect(resp).toMatchObject({ error: "origin_mismatch", origin: "https://evil.example" });
+    expect(chromeMock().tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("refuses a recorded cross-origin frame that does not match the item, even when confirmed", async () => {
     await unlockWith([{ id: "bank", urls: ["https://bank.example"] }]);
     await send({ type: "FILL_TARGET" }, contentSender("https://ads.example/frame", 4));
