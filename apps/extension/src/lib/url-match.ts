@@ -90,3 +90,10 @@ export function nameMatches(name: string, query: string): boolean {
   if (!query) return true;
   return name.toLowerCase().includes(query.toLowerCase());
 }
+
+/** True for origins a fill may ever go to: https, or http on a loopback host. */
+export function isFillableOrigin(origin: string): boolean {
+  const url = parseUrl(origin);
+  if (!url) return false;
+  return url.protocol === "https:" || (url.protocol === "http:" && isLoopback(url.hostname));
+}

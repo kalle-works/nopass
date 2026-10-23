@@ -3,7 +3,10 @@
  *
  * Responsibilities:
  * 1. Detect username/password input pairs and inject an autofill button
- * 2. Receive FILL_CREDENTIALS from the background SW and fill the fields
+ * 2. Tell the background which frame the user is interacting with, so a fill
+ *    goes to that frame only
+ * 3. Receive FILL_CREDENTIALS from the background SW and fill the fields,
+ *    never into a field the user cannot see
  */
 
 import { initWebauthnRelay } from "../webauthn/relay";
@@ -12,6 +15,8 @@ interface FillMessage {
   type: "FILL_CREDENTIALS";
   username: string;
   password: string;
+  /** Origin the background matched the item against */
+  origin: string;
 }
 
 // Passkey relay must be listening before the page calls navigator.credentials
@@ -21,6 +26,30 @@ initWebauthnRelay();
 
 function findPasswordFields(): HTMLInputElement[] {
   return Array.from(document.querySelectorAll<HTMLInputElement>("input[type='password']"));
+}
+
+/**
+ * True if the user can see the field. Pages (or ads framed into them) plant
+ * invisible login fields to harvest autofilled credentials, so a fill skips
+ * anything hidden, transparent, zero-size, off-screen, or aria-hidden.
+ */
+function isFillable(el: HTMLInputElement): boolean {
+  if (!el.isConnected || el.disabled || el.readOnly || el.hidden) return false;
+  if (el.closest("[aria-hidden='true'], [inert]")) return false;
+  if (
+    typeof el.checkVisibility === "function" &&
+    !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+  ) {
+    return false;
+  }
+  const style = getComputedStyle(el);
+  if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+  if (style.opacity !== "" && Number(style.opacity) === 0) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return false;
+  // Positioned out of the document (left: -9999px and friends)
+  if (rect.right + window.scrollX <= 0 || rect.bottom + window.scrollY <= 0) return false;
+  return true;
 }
 
 function findUsernameField(passwordField: HTMLInputElement): HTMLInputElement | null {
@@ -35,7 +64,7 @@ function findUsernameField(passwordField: HTMLInputElement): HTMLInputElement | 
     const el = inputs[i];
     if (!el) continue;
     const t = el.type;
-    if (t === "text" || t === "email" || t === "tel" || t === "") return el;
+    if ((t === "text" || t === "email" || t === "tel" || t === "") && isFillable(el)) return el;
   }
   return null;
 }
@@ -197,10 +226,35 @@ let activePasswordField: HTMLInputElement | null = null;
 
 function openPopupForField(field: HTMLInputElement): void {
   activePasswordField = field;
-  // The background SW will handle matching by URL; we just signal readiness.
+  reportFillTarget();
   // The actual credential selection happens in the popup; autofill is triggered
-  // via AUTOFILL message → background → FILL_CREDENTIALS back to this script.
+  // via AUTOFILL message → background → FILL_CREDENTIALS back to this frame.
 }
+
+/**
+ * Marks this frame as the autofill target for its tab. The background reads
+ * frame and origin from the browser-set sender, so the message carries nothing.
+ */
+function reportFillTarget(): void {
+  chrome.runtime.sendMessage({ type: "FILL_TARGET" }).catch(() => {
+    // Extension reloaded or SW unavailable — the background falls back to the top frame
+  });
+}
+
+document.addEventListener(
+  "focusin",
+  (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement)) return;
+    if (el.type === "password") {
+      activePasswordField = el;
+      reportFillTarget();
+    } else if (el.form?.querySelector("input[type='password']")) {
+      reportFillTarget();
+    }
+  },
+  true,
+);
 
 // ─── Incoming messages from background ───────────────────────────────────────
 
@@ -210,7 +264,14 @@ chrome.runtime.onMessage.addListener((message: FillMessage, _sender, sendRespons
   // Frames without a password field stay silent: the first response wins, so
   // answering { filled: false } would mask a fill that succeeded in another
   // frame. No answer from any frame reads as "nothing filled" to the caller.
-  const pwField = activePasswordField ?? findPasswordFields()[0] ?? null;
+  // The background targeted this frame for this origin; if the frame has
+  // navigated since, the credentials are not for us
+  if (message.origin !== window.location.origin) return;
+
+  const pwField =
+    (activePasswordField && isFillable(activePasswordField) ? activePasswordField : null) ??
+    findPasswordFields().find(isFillable) ??
+    null;
   if (!pwField) return;
 
   const userField = findUsernameField(pwField);
