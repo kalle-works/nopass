@@ -2,6 +2,7 @@ pub mod activity;
 pub mod auth;
 pub mod billing;
 pub mod devices;
+pub mod keys;
 pub mod orgs;
 pub mod recovery;
 pub mod shares;
@@ -64,6 +65,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .nest("/billing", billing::router())
         .nest("/activity", activity::router())
         .nest("/devices", devices::router())
+        .nest("/keys", keys::router())
         .nest("/organizations", orgs::router())
         .nest("/vaults", vault::router())
         .nest("/sync", sync::router())

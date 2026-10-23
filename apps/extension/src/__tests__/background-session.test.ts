@@ -19,6 +19,7 @@ type Listener = (
 
 let listeners: Listener[];
 let sessionStore: Record<string, unknown>;
+let localStore: Record<string, unknown> = {};
 
 function makeChromeMock() {
   return {
@@ -33,6 +34,10 @@ function makeChromeMock() {
         remove: async (key: string) => {
           delete sessionStore[key];
         },
+      },
+      local: {
+        get: async (key: string) => (key in localStore ? { [key]: localStore[key] } : {}),
+        set: async (items: Record<string, unknown>) => Object.assign(localStore, items),
       },
     },
     tabs: { sendMessage: vi.fn() },

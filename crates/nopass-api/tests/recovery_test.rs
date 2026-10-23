@@ -112,6 +112,7 @@ async fn recovery_full_flow_rotates_credentials(pool: PgPool) {
         .post(&format!("/v1/vaults/{}/items", session.default_vault_id))
         .authorization_bearer(&session.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Login,
             blob: random_b64(64),
             blob_iv: random_b64(12),
@@ -220,6 +221,7 @@ async fn recovery_complete_rejects_partial_item_set(pool: PgPool) {
             .post(&format!("/v1/vaults/{}/items", session.default_vault_id))
             .authorization_bearer(&session.session_token)
             .json(&CreateVaultItemRequest {
+                id: None,
                 item_type: VaultItemType::Note,
                 blob: random_b64(64),
                 blob_iv: random_b64(12),

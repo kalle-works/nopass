@@ -2,6 +2,7 @@
 pub mod activity;
 pub mod auth;
 pub mod devices;
+pub mod keys;
 pub mod orgs;
 pub mod pending;
 pub mod recovery;

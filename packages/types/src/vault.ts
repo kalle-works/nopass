@@ -100,7 +100,7 @@ export interface EncryptedVaultItem {
   blob: string;
   /** base64(12-byte IV) */
   blobIv: string;
-  /** base64(HMAC-SHA256(iv || ciphertext)) */
+  /** base64(HMAC-SHA256(iv || ciphertext)) for v1 items; "" for v2 envelopes */
   blobMac: string;
   version: number;
   deletedAt: string | null;
@@ -109,6 +109,8 @@ export interface EncryptedVaultItem {
 }
 
 export interface CreateVaultItemRequest {
+  /** Client-chosen UUID; required for v2 envelopes, which bind the id into the ciphertext */
+  id?: string;
   itemType: VaultItemType;
   blob: string;
   blobIv: string;

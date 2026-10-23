@@ -63,28 +63,31 @@ pub async fn list_items(
     Ok(items)
 }
 
-pub async fn create_item(
-    pool: &PgPool,
-    vault_id: Uuid,
-    user_id: Uuid,
-    item_type: &str,
-    blob: &[u8],
-    blob_iv: &[u8],
-    blob_mac: &[u8],
-) -> Result<VaultItem> {
+/// Encrypted fields of an item being created. `id` is the client-chosen id
+/// that v2 envelopes bind into their ciphertext; None lets the database pick.
+pub struct NewItem<'a> {
+    pub id: Option<Uuid>,
+    pub item_type: &'a str,
+    pub blob: &'a [u8],
+    pub blob_iv: &'a [u8],
+    pub blob_mac: &'a [u8],
+}
+
+pub async fn create_item(pool: &PgPool, vault_id: Uuid, user_id: Uuid, item: NewItem<'_>) -> Result<VaultItem> {
     let item = sqlx::query_as::<_, VaultItem>(
         r#"
-        INSERT INTO vault_items (vault_id, user_id, item_type, blob, blob_iv, blob_mac)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO vault_items (id, vault_id, user_id, item_type, blob, blob_iv, blob_mac)
+        VALUES (COALESCE($1, gen_random_uuid()), $2, $3, $4, $5, $6, $7)
         RETURNING *
         "#,
     )
+    .bind(item.id)
     .bind(vault_id)
     .bind(user_id)
-    .bind(item_type)
-    .bind(blob)
-    .bind(blob_iv)
-    .bind(blob_mac)
+    .bind(item.item_type)
+    .bind(item.blob)
+    .bind(item.blob_iv)
+    .bind(item.blob_mac)
     .fetch_one(pool)
     .await?;
     Ok(item)

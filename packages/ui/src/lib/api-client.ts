@@ -22,6 +22,7 @@ import type {
   MoveItemRequest,
   OrgDetails,
   OrgSummary,
+  PendingInvite,
   PortalSessionResponse,
   PublicKeyResponse,
   RecoveryCompleteRequest,
@@ -31,6 +32,7 @@ import type {
   RegisterDeviceRequest,
   RegisterRequest,
   RegisterResponse,
+  SetIdentityRequest,
   SetRecoveryRequest,
   ShareInfo,
   SrpInitRequest,
@@ -160,6 +162,7 @@ export function createApiClient(baseUrl: string) {
     orgs: {
       list: (token: string) => get<OrgSummary[]>("/organizations", token),
       get: (orgId: string, token: string) => get<OrgDetails>(`/organizations/${orgId}`, token),
+      invites: (token: string) => get<PendingInvite[]>("/organizations/invites", token),
       create: (req: CreateOrgRequest, token: string) => post<OrgSummary>("/organizations", req, token),
       invite: (orgId: string, req: InviteMemberRequest, token: string) =>
         post<void>(`/organizations/${orgId}/members`, req, token),
@@ -169,6 +172,10 @@ export function createApiClient(baseUrl: string) {
         del<void>(`/organizations/${orgId}/members/${userId}`, token),
       getPublicKey: (emailHash: string, token: string) =>
         get<PublicKeyResponse>(`/organizations/public-key/${emailHash}`, token),
+    },
+    keys: {
+      me: (token: string) => get<PublicKeyResponse>("/keys/me", token),
+      setIdentity: (req: SetIdentityRequest, token: string) => put<void>("/keys/identity", req, token),
     },
     billing: {
       status: (token: string) => get<BillingStatus>("/billing/status", token),

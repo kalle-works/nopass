@@ -22,6 +22,7 @@ async fn create_item_returns_201(pool: PgPool) {
 
     let (blob, blob_iv, blob_mac) = fake_blob();
     let req = CreateVaultItemRequest {
+        id: None,
         item_type: VaultItemType::Login,
         blob,
         blob_iv,
@@ -49,7 +50,7 @@ async fn create_item_requires_auth(pool: PgPool) {
     let session = login(&server, "alice@example.com", "password").await;
 
     let (blob, blob_iv, blob_mac) = fake_blob();
-    let req = CreateVaultItemRequest { item_type: VaultItemType::Login, blob, blob_iv, blob_mac };
+    let req = CreateVaultItemRequest { id: None, item_type: VaultItemType::Login, blob, blob_iv, blob_mac };
 
     server
         .post(&format!("/v1/vaults/{}/items", session.default_vault_id))
@@ -76,6 +77,7 @@ async fn list_items_returns_created_items(pool: PgPool) {
             .post(&format!("/v1/vaults/{vault_id}/items"))
             .authorization_bearer(&session.session_token)
             .json(&CreateVaultItemRequest {
+                id: None,
                 item_type: VaultItemType::Login,
                 blob: blob.clone(),
                 blob_iv: blob_iv.clone(),
@@ -127,6 +129,7 @@ async fn update_item_increments_version(pool: PgPool) {
         .post(&format!("/v1/vaults/{vault_id}/items"))
         .authorization_bearer(&session.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Login,
             blob: blob.clone(),
             blob_iv: blob_iv.clone(),
@@ -165,6 +168,7 @@ async fn update_item_optimistic_locking_conflict_returns_409(pool: PgPool) {
         .post(&format!("/v1/vaults/{vault_id}/items"))
         .authorization_bearer(&session.session_token)
         .json(&CreateVaultItemRequest {
+            id: None,
             item_type: VaultItemType::Login,
             blob: blob.clone(),
             blob_iv: blob_iv.clone(),
@@ -259,7 +263,7 @@ async fn delete_item_soft_deletes_and_returns_no_content(pool: PgPool) {
     let create_resp: serde_json::Value = server
         .post(&format!("/v1/vaults/{vault_id}/items"))
         .authorization_bearer(&session.session_token)
-        .json(&CreateVaultItemRequest { item_type: VaultItemType::Login, blob, blob_iv, blob_mac })
+        .json(&CreateVaultItemRequest { id: None, item_type: VaultItemType::Login, blob, blob_iv, blob_mac })
         .await
         .json();
 
@@ -298,4 +302,45 @@ async fn delete_nonexistent_item_returns_404(pool: PgPool) {
         .authorization_bearer(&session.session_token)
         .await
         .assert_status(StatusCode::NOT_FOUND);
+}
+
+// ─── v2 envelope support ──────────────────────────────────────────────────────
+
+/// v2 item envelopes bind the item id into the ciphertext, so the server must
+/// store an item under the id the client encrypted it for, and accept the
+/// empty blob_mac that v2 items carry.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn create_item_keeps_client_chosen_id_and_accepts_v2_without_mac(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, "alice@example.com", "password").await;
+    let session = login(&server, "alice@example.com", "password").await;
+
+    let id = Uuid::new_v4();
+    let (blob, blob_iv, _) = fake_blob();
+    let req = CreateVaultItemRequest {
+        id: Some(id),
+        item_type: VaultItemType::Login,
+        blob,
+        blob_iv,
+        blob_mac: String::new(),
+    };
+    let url = format!("/v1/vaults/{}/items", session.default_vault_id);
+
+    let resp = server.post(&url).authorization_bearer(&session.session_token).json(&req).await;
+    resp.assert_status(StatusCode::CREATED);
+    let listed: serde_json::Value = server
+        .get(&url)
+        .authorization_bearer(&session.session_token)
+        .await
+        .json();
+    assert_eq!(listed[0]["id"].as_str(), Some(id.to_string().as_str()));
+    assert_eq!(listed[0]["blobMac"].as_str(), Some(""));
+
+    // Reusing an id must not overwrite or adopt the existing row
+    server
+        .post(&url)
+        .authorization_bearer(&session.session_token)
+        .json(&req)
+        .await
+        .assert_status(StatusCode::CONFLICT);
 }

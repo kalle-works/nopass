@@ -14,10 +14,15 @@ import {
   generateSrpRegistration,
   stretchMasterKeyRaw,
   encryptBytes,
+  deriveIdentityKey,
+  signOrgKeyWrap,
 } from "../index.js";
 import { DEFAULT_KDF_PARAMS } from "@nopass/types";
 
-const BASE = "http://127.0.0.1:3001/v1";
+// Point at another API instance with NOPASS_TEST_API_URL (e.g. http://127.0.0.1:3021/v1)
+// (this package has no Node types, so read process.env through globalThis)
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env;
+const BASE = env?.["NOPASS_TEST_API_URL"] ?? "http://127.0.0.1:3001/v1";
 
 async function apiPost(path: string, body: unknown, token?: string) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -194,11 +199,31 @@ describe.skipIf(!apiAvailable)("Organization API — end-to-end", () => {
     const orgKey = await decryptOrgKey(orgEncryptedKey, alicePrivateKey);
     const encKeyForBob = await encryptOrgKeyForMember(orgKey, pkResp.publicKey as string);
 
+    // Alice signs the wrap so Bob can tell it came from her
+    const aliceUserId = (await apiGet(`/organizations/public-key/${computeEmailHash(ALICE_EMAIL)}`, aliceToken))
+      .userId as string;
+    const aliceIdentity = await deriveIdentityKey(
+      aliceKeyPair.protectedPrivateKey,
+      aliceKeyPair.protectedPrivateKeyIv,
+      aliceKeys.stretchedMasterKey,
+    );
+    const wrapSignature = signOrgKeyWrap(
+      {
+        orgId,
+        recipientUserId: pkResp.userId as string,
+        signerUserId: aliceUserId,
+        role: "member",
+        encryptedOrgKey: encKeyForBob,
+      },
+      aliceIdentity.secretKey,
+    );
+
     // Invite Bob
     await apiPost(`/organizations/${orgId}/members`, {
       emailHash: bobEmailHash,
       role: "member",
       encryptedOrgKey: encKeyForBob,
+      wrapSignature,
     }, aliceToken);
 
     // Bob accepts

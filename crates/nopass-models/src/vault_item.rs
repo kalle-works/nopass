@@ -36,6 +36,10 @@ pub struct EncryptedVaultItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateVaultItemRequest {
+    /// Client-chosen id. v2 item envelopes bind the item id into the
+    /// ciphertext, so the client must know it before encrypting.
+    #[serde(default)]
+    pub id: Option<Uuid>,
     pub item_type: VaultItemType,
     pub blob: String,
     pub blob_iv: String,

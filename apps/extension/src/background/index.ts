@@ -14,8 +14,10 @@
  */
 
 import {
-  decryptItem,
-  encryptItem,
+  MemoryRevisionStore,
+  bindingForItem,
+  decryptVaultItem,
+  encryptVaultItem,
   generateCredential,
   buildAuthenticatorData,
   buildAttestationObject,
@@ -47,6 +49,7 @@ let vaultState: {
   vaultEncKey: CryptoKey;
   vaultMacKey: CryptoKey;
   items: EncryptedVaultItem[];
+  revisions: MemoryRevisionStore;
 } | null = null;
 
 const SESSION_KEY = "vaultSession";
@@ -71,6 +74,26 @@ async function importVaultKeys(encKeyB64: string, macKeyB64: string) {
   return { vaultEncKey, vaultMacKey };
 }
 
+/**
+ * Highest revision seen per item, kept in storage.local so it survives
+ * restarts: a server serving an older blob than this is refused.
+ */
+async function loadRevisions(defaultVaultId: string): Promise<MemoryRevisionStore> {
+  const key = `itemRevisions:${defaultVaultId}`;
+  const stored = (await chrome.storage.local.get(key))[key] as Record<string, number> | undefined;
+  return new MemoryRevisionStore(stored ?? {}, (snapshot) => {
+    void chrome.storage.local.set({ [key]: snapshot });
+  });
+}
+
+async function decryptStored(
+  item: EncryptedVaultItem,
+  state: { vaultEncKey: CryptoKey; vaultMacKey: CryptoKey; revisions: MemoryRevisionStore },
+) {
+  const { plaintext } = await decryptVaultItem(item, bindingForItem(item), state, state.revisions);
+  return plaintext;
+}
+
 // Single in-flight restore so concurrent messages after an SW restart don't
 // each refetch the vault. (vaultState is assigned before the promise resolves
 // and `restoring` is cleared, so a later caller that misses the in-flight
@@ -93,6 +116,7 @@ function restoreVaultState(): Promise<void> {
     try {
       const { vaultEncKey, vaultMacKey } = await importVaultKeys(stored.encKeyB64, stored.macKeyB64);
       const items = await api.vault.items(stored.defaultVaultId, stored.sessionToken);
+      const revisions = await loadRevisions(stored.defaultVaultId);
       // A LOCK (or a fresh UNLOCK) that happened while we awaited wins
       if (lockGeneration !== generation || vaultState) return;
       vaultState = {
@@ -101,6 +125,7 @@ function restoreVaultState(): Promise<void> {
         vaultEncKey,
         vaultMacKey,
         items,
+        revisions,
       };
       log.info("session restored after SW restart", { items: items.length });
     } catch (err) {
@@ -201,7 +226,15 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
 
       const items = await api.vault.items(message.defaultVaultId, message.sessionToken);
       lockGeneration++; // invalidate any restore still in flight
-      vaultState = { sessionToken: message.sessionToken, defaultVaultId: message.defaultVaultId, vaultEncKey, vaultMacKey, items };
+      const revisions = await loadRevisions(message.defaultVaultId);
+      vaultState = {
+        sessionToken: message.sessionToken,
+        defaultVaultId: message.defaultVaultId,
+        vaultEncKey,
+        vaultMacKey,
+        items,
+        revisions,
+      };
       log.info("vault unlocked", { items: items.length });
 
       const persisted: PersistedSession = {
@@ -239,14 +272,14 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       if (!isExtensionContext(sender)) return { error: "unauthorized" };
       if (!vaultState) return { error: "locked" };
       const { query, url } = message;
-      const { vaultEncKey, vaultMacKey, items } = vaultState;
+      const state = vaultState;
 
       const results = await Promise.all(
-        items
+        state.items
           .filter((i) => i.deletedAt === null && i.itemType === "login")
           .map(async (item) => {
             try {
-              const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
+              const plain = await decryptStored(item, state);
               if (plain.type !== "login") return null;
               if (nameMatches(plain.name, query) || (url ? urlMatches(plain.urls, url) : !query)) {
                 return {
@@ -275,7 +308,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
 
-      const plain = await decryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const plain = await decryptStored(item, vaultState);
       if (plain.type !== "login") return { error: "not a login item" };
 
       return { username: plain.username, password: plain.password };
@@ -290,7 +323,7 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       const item = vaultState.items.find((i) => i.id === message.itemId);
       if (!item) return { error: "item not found" };
 
-      const plain = await decryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const plain = await decryptStored(item, vaultState);
       if (plain.type !== "login") return { error: "not a login item" };
 
       // The content script answers { filled: true } once it found a password
@@ -363,12 +396,19 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       };
       cred.privateKeyPkcs8.fill(0);
 
-      const blob = await encryptItem(item, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const itemId = crypto.randomUUID();
+      const { encrypted, revision } = await encryptVaultItem(
+        item,
+        { scope: { kind: "personal" }, itemId, itemType: "login" },
+        vaultState.vaultEncKey,
+        vaultState.revisions,
+      );
       const created = await api.vault.create(
         vaultState.defaultVaultId,
-        { itemType: "login", blob: blob.blob, blobIv: blob.blobIv, blobMac: blob.blobMac },
+        { id: itemId, itemType: "login", ...encrypted },
         vaultState.sessionToken,
       );
+      vaultState.revisions.record(itemId, revision);
       vaultState.items.push(created);
 
       return {
@@ -419,14 +459,20 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
         ...plain,
         passkey: { ...passkey, signCount: newCount },
       };
-      const blob = await encryptItem(updatedPlain, vaultState.vaultEncKey, vaultState.vaultMacKey);
+      const { encrypted, revision } = await encryptVaultItem(
+        updatedPlain,
+        bindingForItem(item),
+        vaultState.vaultEncKey,
+        vaultState.revisions,
+      );
       const updated = await api.vault.update(
         item.vaultId,
         item.id,
-        { blob: blob.blob, blobIv: blob.blobIv, blobMac: blob.blobMac, version: item.version },
+        { ...encrypted, version: item.version },
         vaultState.sessionToken,
       );
-      Object.assign(item, blob, { version: updated.version, updatedAt: updated.updatedAt });
+      vaultState.revisions.record(item.id, revision);
+      Object.assign(item, encrypted, { version: updated.version, updatedAt: updated.updatedAt });
 
       return {
         data: {
@@ -468,14 +514,14 @@ async function findPasskeyLogins(
   allowCredentialIdsB64u: string[],
 ): Promise<Array<{ item: EncryptedVaultItem; plain: LoginItem }>> {
   if (!vaultState) return [];
-  const { vaultEncKey, vaultMacKey, items } = vaultState;
+  const state = vaultState;
 
   const results = await Promise.all(
-    items
+    state.items
       .filter((i) => i.deletedAt === null && i.itemType === "login")
       .map(async (item) => {
         try {
-          const plain = await decryptItem(item, vaultEncKey, vaultMacKey);
+          const plain = await decryptStored(item, state);
           if (plain.type !== "login" || !plain.passkey) return null;
           if (plain.passkey.rpId !== rpId) return null;
           if (

@@ -15,3 +15,7 @@ export * from "./lib/api-client";
 
 // TOTP
 export * from "./lib/totp";
+
+// Local trust state (item revisions, pinned member keys)
+export * from "./lib/local-trust-state";
+export * from "./lib/identity-migration";
