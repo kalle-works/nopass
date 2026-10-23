@@ -207,3 +207,30 @@ async fn old_epochs_and_bare_removals_are_refused(pool: PgPool) {
         .await
         .assert_status(StatusCode::CONFLICT);
 }
+
+/// An item the owner could not decrypt can be deleted as part of the
+/// rotation instead of blocking it, but every item is still covered exactly
+/// once: re-encrypted or deleted.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn rotation_can_delete_undecryptable_items_but_never_skip_them(pool: PgPool) {
+    let org = setup(pool).await;
+    let everyone = [org.owner.user_id, org.bob.user_id, org.carol.user_id];
+    let (i1, i2) = (org.items[0], org.items[1]);
+    let with_deletes = |items: &[Uuid], deletes: &[Uuid]| {
+        let mut body = rotation(2, &everyone, items, None);
+        body["deleteItemIds"] = serde_json::json!(deletes);
+        body
+    };
+    let rotate = |body: serde_json::Value| {
+        org.server
+            .post(&format!("/v1/organizations/{}/rotate", org.id))
+            .authorization_bearer(&org.owner.session_token)
+            .json(&body)
+    };
+
+    rotate(with_deletes(&[i1, i2], &[i2])).await.assert_status(StatusCode::BAD_REQUEST);
+    assert_eq!(item_blobs(&org).await.len(), 2);
+
+    rotate(with_deletes(&[i1], &[i2])).await.assert_status(StatusCode::NO_CONTENT);
+    assert_eq!(item_blobs(&org).await, vec![vec![0xbb_u8; 32]]);
+}

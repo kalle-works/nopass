@@ -443,6 +443,8 @@ export interface RotateKeyRequest {
   removeUserId?: string;
   wraps: RewrapRequest["wraps"];
   items: Array<{ id: string; blob: string; blobIv: string; blobMac: string }>;
+  /** Items the owner chose to delete because they could not be decrypted */
+  deleteItemIds?: string[];
 }
 
 export interface RewrapRequest {
