@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   UNLOCK_MSG,
+  chromeMock,
   contentSender,
   env,
   resetEnvironment,
@@ -22,7 +23,7 @@ beforeEach(resetEnvironment);
 async function unlockWith(logins: Parameters<typeof serveLogins>[0]) {
   await serveLogins(logins);
   expect(await send(UNLOCK_MSG)).toEqual({ ok: true });
-  env.chrome.tabs.sendMessage.mockResolvedValue({ filled: true });
+  chromeMock().tabs.sendMessage.mockResolvedValue({ filled: true });
 }
 
 describe("AUTOFILL frame targeting", () => {
@@ -33,7 +34,7 @@ describe("AUTOFILL frame targeting", () => {
     const resp = await send({ type: "AUTOFILL", itemId: "bank", tabId: 1, confirmedOrigin: "https://ads.example" });
 
     expect(resp).toEqual({ error: "origin_mismatch", origin: "https://ads.example", confirmable: false });
-    expect(env.chrome.tabs.sendMessage).not.toHaveBeenCalled();
+    expect(chromeMock().tabs.sendMessage).not.toHaveBeenCalled();
   });
 
   it("sends credentials only to the recorded frame when its origin matches", async () => {
@@ -42,8 +43,8 @@ describe("AUTOFILL frame targeting", () => {
 
     expect(await send({ type: "AUTOFILL", itemId: "bank", tabId: 1 })).toEqual({ ok: true });
 
-    expect(env.chrome.tabs.sendMessage).toHaveBeenCalledTimes(1);
-    expect(env.chrome.tabs.sendMessage).toHaveBeenCalledWith(
+    expect(chromeMock().tabs.sendMessage).toHaveBeenCalledTimes(1);
+    expect(chromeMock().tabs.sendMessage).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ type: "FILL_CREDENTIALS", origin: "https://login.bank.example" }),
       { frameId: 3, documentId: "doc-sso" },
@@ -62,12 +63,12 @@ describe("AUTOFILL frame targeting", () => {
     expect(
       await send({ type: "AUTOFILL", itemId: "bank", tabId: 1, confirmedOrigin: "https://other.example" }),
     ).toMatchObject({ error: "origin_mismatch" });
-    expect(env.chrome.tabs.sendMessage).not.toHaveBeenCalled();
+    expect(chromeMock().tabs.sendMessage).not.toHaveBeenCalled();
 
     expect(
       await send({ type: "AUTOFILL", itemId: "bank", tabId: 1, confirmedOrigin: "https://top.example" }),
     ).toEqual({ ok: true });
-    expect(env.chrome.tabs.sendMessage).toHaveBeenCalledWith(1, expect.anything(), { frameId: 0 });
+    expect(chromeMock().tabs.sendMessage).toHaveBeenCalledWith(1, expect.anything(), { frameId: 0 });
   });
 });
 
@@ -98,7 +99,7 @@ describe("WEBAUTHN_HAS_CREDENTIAL", () => {
 describe("auto-lock", () => {
   it("wipes keys and session token when the inactivity alarm fires", async () => {
     await unlockWith([]);
-    expect(env.chrome.alarms.create).toHaveBeenCalledWith("autoLock", { delayInMinutes: 15 });
+    expect(chromeMock().alarms.create).toHaveBeenCalledWith("autoLock", { delayInMinutes: 15 });
 
     for (const fn of env.alarmListeners) fn({ name: "autoLock" });
     await new Promise((r) => setTimeout(r, 0));
@@ -121,6 +122,6 @@ describe("auto-lock", () => {
   it("uses the configured timeout", async () => {
     env.localStore["autoLockMinutes"] = 5;
     await unlockWith([]);
-    expect(env.chrome.alarms.create).toHaveBeenCalledWith("autoLock", { delayInMinutes: 5 });
+    expect(chromeMock().alarms.create).toHaveBeenCalledWith("autoLock", { delayInMinutes: 5 });
   });
 });

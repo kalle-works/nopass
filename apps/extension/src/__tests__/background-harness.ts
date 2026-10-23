@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { vi, type Mock } from "vitest";
 import { encryptItem } from "@nopass/crypto";
 import type { EncryptedVaultItem, LoginItem } from "@nopass/types";
 
@@ -23,8 +23,20 @@ export const env = {
   alarmListeners: [] as Array<(alarm: { name: string }) => void>,
   idleListeners: [] as Array<(state: string) => void>,
   itemsResponse: async (): Promise<Response> => new Response(JSON.stringify([]), { status: 200 }),
-  chrome: undefined as unknown as ReturnType<typeof makeChromeMock>,
 };
+
+let currentChrome: ChromeMock;
+
+/** The chrome mock installed for the current test. */
+interface ChromeMock {
+  alarms: { create: Mock; clear: Mock; [key: string]: unknown };
+  tabs: { sendMessage: Mock; get: Mock };
+  [key: string]: unknown;
+}
+
+export function chromeMock(): ChromeMock {
+  return currentChrome;
+}
 
 function makeStorageArea(store: () => Record<string, unknown>) {
   return {
@@ -36,7 +48,7 @@ function makeStorageArea(store: () => Record<string, unknown>) {
   };
 }
 
-function makeChromeMock() {
+function makeChromeMock(): ChromeMock {
   return {
     runtime: {
       id: EXTENSION_ID,
@@ -100,8 +112,8 @@ export async function resetEnvironment() {
   env.sessionStore = {};
   env.localStore = {};
   env.itemsResponse = async () => new Response(JSON.stringify([]), { status: 200 });
-  env.chrome = makeChromeMock();
-  vi.stubGlobal("chrome", env.chrome);
+  currentChrome = makeChromeMock();
+  vi.stubGlobal("chrome", currentChrome);
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (String(url).includes("/items")) return env.itemsResponse();
     throw new Error(`unexpected fetch: ${url}`);
