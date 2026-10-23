@@ -26,3 +26,12 @@ test("fails when the CSP allows an origin the app does not use", () => {
 test("fails when the CSP is missing", () => {
   assert.equal(checkCsp({ conf: { app: { security: { csp: null } } }, origins }).length, 2);
 });
+
+test("fails when the production CSP allows inline styles, but devCsp may", () => {
+  const inline = conf(
+    "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://api.nopwd.dev",
+    "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:3001",
+  );
+  const problems = checkCsp({ conf: inline, origins });
+  assert.deepEqual(problems, ["csp allows 'unsafe-inline' for scripts or styles"]);
+});
