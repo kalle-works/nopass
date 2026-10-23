@@ -13,7 +13,8 @@ use nopass_crypto::{
 use nopass_models::{
     KdfParams, LoginResponse, OpaqueLoginFinishRequest, OpaqueLoginStartRequest,
     OpaqueLoginStartResponse, OpaqueRegisterFinishRequest, OpaqueRegisterStartRequest,
-    OpaqueRegisterStartResponse, OpaqueReregisterFinishRequest, RegisterResponse, SrpInitRequest,
+    OpaqueRegisterStartResponse, OpaqueReregisterFinishRequest, RegisterResponse, SetAccountKeyRequest,
+    SrpInitRequest,
     SrpInitResponse, SrpVerifyRequest, SrpVerifyResponse,
 };
 use rand::RngCore;
@@ -53,6 +54,7 @@ pub fn protected_router() -> Router<AppState> {
         .route("/logout", post(logout))
         .route("/opaque/reregister/start", post(reregister_start))
         .route("/opaque/reregister/finish", post(reregister_finish))
+        .route("/account-key", axum::routing::put(set_account_key))
 }
 
 /// Same message for every credential failure so responses don't tell an
@@ -87,32 +89,69 @@ fn log_handle(account_key: &str) -> &str {
     &account_key[..12.min(account_key.len())]
 }
 
-/// Count this start against the account and refuse it while backed off.
-pub(crate) async fn throttle_account(state: &AppState, account_key: &str, client_ip: IpAddr) -> ApiResult<()> {
-    match throttle::record_attempt(&state.db, account_key).await? {
-        throttle::Attempt::Allowed { failures } => {
-            if failures >= throttle::FREE_ATTEMPTS {
-                tracing::warn!(
-                    event = "login_backoff",
-                    account = log_handle(account_key),
-                    failures,
-                    ip = %client_ip,
-                    "account entered login backoff"
-                );
-            }
-            Ok(())
+/// The client's network: /24 for IPv4, /64 for IPv6 — what one attacker
+/// location typically controls.
+fn network_of(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, c, _] = v4.octets();
+            format!("{a}.{b}.{c}.0/24")
         }
-        throttle::Attempt::Locked { retry_after_secs } => {
-            tracing::warn!(
-                event = "login_throttled",
-                account = log_handle(account_key),
-                retry_after_secs,
-                ip = %client_ip,
-                "login attempt rejected by per-account backoff"
-            );
-            Err(ApiError::Throttled { retry_after_secs })
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
         }
     }
+}
+
+fn throttle_keys(account_key: &str, client_ip: IpAddr) -> (String, &str) {
+    (format!("{account_key}|{}", network_of(client_ip)), account_key)
+}
+
+/// Count this start against the account — once for the client's network and
+/// once account-wide — and refuse it while either is backed off. A stranger
+/// on another network only ever moves the account-wide counter, whose
+/// ceiling is ten times higher.
+pub(crate) async fn throttle_account(state: &AppState, account_key: &str, client_ip: IpAddr) -> ApiResult<()> {
+    let (network_key, account_wide) = throttle_keys(account_key, client_ip);
+    for (key, policy, scope) in [
+        (network_key.as_str(), throttle::PER_NETWORK, "network"),
+        (account_wide, throttle::PER_ACCOUNT, "account"),
+    ] {
+        match throttle::record_attempt(&state.db, key, policy).await? {
+            throttle::Attempt::Allowed { failures } => {
+                if failures >= policy.free {
+                    tracing::warn!(
+                        event = "login_backoff",
+                        scope,
+                        account = log_handle(account_key),
+                        failures,
+                        ip = %client_ip,
+                        "account entered login backoff"
+                    );
+                }
+            }
+            throttle::Attempt::Locked { retry_after_secs } => {
+                tracing::warn!(
+                    event = "login_throttled",
+                    scope,
+                    account = log_handle(account_key),
+                    retry_after_secs,
+                    ip = %client_ip,
+                    "login attempt rejected by per-account backoff"
+                );
+                return Err(ApiError::Throttled { retry_after_secs });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A successful proof clears the backoff for this network and account-wide.
+pub(crate) async fn reset_throttle(state: &AppState, account_key: &str, client_ip: IpAddr) -> ApiResult<()> {
+    let (network_key, account_wide) = throttle_keys(account_key, client_ip);
+    throttle::reset(&state.db, &[network_key.as_str(), account_wide]).await?;
+    Ok(())
 }
 
 pub(crate) async fn record_login_failure(state: &AppState, user_id: Option<Uuid>, account_key: &str, method: &str, client_ip: IpAddr) {
@@ -176,6 +215,7 @@ async fn register_start(
 
 async fn register_finish(
     State(state): State<AppState>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
     Json(req): Json<OpaqueRegisterFinishRequest>,
 ) -> ApiResult<(StatusCode, Json<RegisterResponse>)> {
     let email_hash = parse_email_hash(&req.email_hash)?;
@@ -207,7 +247,7 @@ async fn register_finish(
     .await?
     .ok_or_else(|| ApiError::Conflict("email already registered".into()))?;
 
-    throttle::reset(&state.db, &account_key).await?;
+    reset_throttle(&state, &account_key, client_ip).await?;
     Ok((StatusCode::CREATED, Json(RegisterResponse { user_id: user.id })))
 }
 
@@ -273,7 +313,7 @@ async fn login_finish(
     let user = db_auth::get_user_by_id(&state.db, user_id)
         .await?
         .ok_or_else(auth_failed)?;
-    throttle::reset(&state.db, &pending.account_key).await?;
+    reset_throttle(&state, &pending.account_key, client_ip).await?;
     Ok(Json(issue_session(&state, &user, req.device_id, client_ip).await?))
 }
 
@@ -384,7 +424,7 @@ async fn srp_verify(
         }
     };
 
-    throttle::reset(&state.db, &user.email_hash).await?;
+    reset_throttle(&state, &user.email_hash, client_ip).await?;
     let session = issue_session(&state, &user, req.device_id, client_ip).await?;
 
     Ok(Json(SrpVerifyResponse {
@@ -433,13 +473,15 @@ async fn issue_session(
         protected_symmetric_key_iv: B64.encode(&user.protected_symmetric_key_iv),
         protected_private_key: user.protected_private_key.clone(),
         protected_private_key_iv: user.protected_private_key_iv.clone(),
+        wrapped_account_key: user.wrapped_account_key.as_ref().map(|k| B64.encode(k)),
+        wrapped_account_key_iv: user.wrapped_account_key_iv.as_ref().map(|k| B64.encode(k)),
     })
 }
 
-/// The account behind a fresh session that is still on SRP — the only case
-/// where re-registration is allowed today (there is no password change; a new
-/// password goes through recovery, which re-encrypts the vault).
-async fn migrating_user(state: &AppState, auth: &AuthUser) -> ApiResult<User> {
+/// The account behind a session created moments ago. One-time upgrades that
+/// replace key material (SRP → OPAQUE, legacy keys → account key) run right
+/// after login and require this, so a stolen older token can't do them.
+async fn fresh_session_user(state: &AppState, auth: &AuthUser) -> ApiResult<User> {
     let session = sessions::find_session_by_token(&state.db, &auth.raw_token)
         .await?
         .ok_or_else(|| ApiError::Unauthorized("invalid or expired session".into()))?;
@@ -449,6 +491,13 @@ async fn migrating_user(state: &AppState, auth: &AuthUser) -> ApiResult<User> {
     let user = db_auth::get_user_by_id(&state.db, auth.user_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("user not found".into()))?;
+    Ok(user)
+}
+
+/// A fresh session on an account still on SRP — the only case where OPAQUE
+/// re-registration is allowed (a password change proves the old password instead).
+async fn migrating_user(state: &AppState, auth: &AuthUser) -> ApiResult<User> {
+    let user = fresh_session_user(state, auth).await?;
     if user.srp_verifier.is_none() {
         return Err(ApiError::Conflict("account already uses OPAQUE".into()));
     }
@@ -490,6 +539,31 @@ async fn reregister_finish(
     db_auth::set_opaque_record(&state.db, user.id, &record).await?;
     tracing::info!(event = "srp_migrated", account = log_handle(&user.email_hash), "account moved from SRP to OPAQUE");
     activity::record(&state.db, user.id, "login_upgraded", Some(&client_ip.to_string()), auth.device_id).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// One-time move of a legacy account to the wrapped account key, sent by the
+/// client right after it unlocks with the password-derived keys.
+async fn set_account_key(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthUser>,
+    Extension(ClientIp(client_ip)): Extension<ClientIp>,
+    Json(req): Json<SetAccountKeyRequest>,
+) -> ApiResult<StatusCode> {
+    let wrapped = decode_b64(&req.wrapped_account_key, "wrappedAccountKey")?;
+    let wrapped_iv = decode_b64(&req.wrapped_account_key_iv, "wrappedAccountKeyIv")?;
+    let private_key = match (&req.protected_private_key, &req.protected_private_key_iv) {
+        (Some(k), Some(iv)) => Some((k.as_str(), iv.as_str())),
+        (None, None) => None,
+        _ => return Err(ApiError::BadRequest("send both protectedPrivateKey and its IV, or neither".into())),
+    };
+    let user = fresh_session_user(&state, &auth).await?;
+
+    if !db_auth::set_account_key(&state.db, user.id, (&wrapped, &wrapped_iv), private_key).await? {
+        return Err(ApiError::Conflict("account key already set".into()));
+    }
+    tracing::info!(event = "account_key_migrated", account = log_handle(&user.email_hash), "account moved to wrapped account key");
+    activity::record(&state.db, user.id, "account_key_upgraded", Some(&client_ip.to_string()), auth.device_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

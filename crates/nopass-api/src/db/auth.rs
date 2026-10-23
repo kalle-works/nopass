@@ -90,6 +90,35 @@ pub async fn set_opaque_record(pool: &PgPool, user_id: Uuid, record: &[u8]) -> R
     Ok(())
 }
 
+/// One-time migration to the wrapped account key; also moves the private key
+/// to its account-key-derived wrap. Returns false if the account already has
+/// one, so a later (possibly stolen-session) call can't replace it.
+pub async fn set_account_key(
+    pool: &PgPool,
+    user_id: Uuid,
+    wrapped: (&[u8], &[u8]),
+    protected_private_key: Option<(&str, &str)>,
+) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE users
+        SET wrapped_account_key = $2, wrapped_account_key_iv = $3,
+            protected_private_key = COALESCE($4, protected_private_key),
+            protected_private_key_iv = COALESCE($5, protected_private_key_iv),
+            updated_at = NOW()
+        WHERE id = $1 AND wrapped_account_key IS NULL
+        "#,
+    )
+    .bind(user_id)
+    .bind(wrapped.0)
+    .bind(wrapped.1)
+    .bind(protected_private_key.map(|k| k.0))
+    .bind(protected_private_key.map(|k| k.1))
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 /// Rewrite raw client email hashes (pre-OPAQUE rows, or rows written by an
 /// older replica during a rolling deploy) into keyed account keys. Idempotent
 /// and safe to race: each row is only rewritten while still unkeyed.

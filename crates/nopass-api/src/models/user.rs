@@ -28,4 +28,7 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
     pub opaque_record: Option<Vec<u8>>,
     pub email_hash_keyed: bool,
+    /// Account key (vault enc + mac keys) wrapped under the password KEK; NULL before migration
+    pub wrapped_account_key: Option<Vec<u8>>,
+    pub wrapped_account_key_iv: Option<Vec<u8>>,
 }

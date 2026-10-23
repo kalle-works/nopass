@@ -10,12 +10,15 @@ use nopass_models::{
 use uuid::Uuid;
 
 use crate::{
-    db::{activity, auth as db_auth, pending, recovery as db_recovery, sessions, throttle},
+    db::{activity, auth as db_auth, pending, recovery as db_recovery, sessions},
     error::{ApiError, ApiResult},
     middleware::auth::AuthUser,
     routes::{
-        auth::{decode_opaque, parse_email_hash, record_login_failure, throttle_account, user_kdf_params},
-        recovery::{decode_reencrypted_items, encode_all_items, rotation_error},
+        auth::{
+            decode_opaque, parse_email_hash, record_login_failure, reset_throttle, throttle_account,
+            user_kdf_params,
+        },
+        recovery::rotation_error,
         ClientIp,
     },
     state::{AppState, OPAQUE_LOGIN_TTL_SECS},
@@ -23,10 +26,12 @@ use crate::{
 
 /// Changing the master password. A session alone is not enough: the client
 /// must prove the current password with a fresh OPAQUE login inside the
-/// change, so a stolen session token can't lock the owner out. Vault items are
-/// encrypted under keys derived from the password, so the client re-encrypts
-/// all of them; the swap, the new OPAQUE record and the revocation of every
-/// other session happen in one transaction.
+/// change, so a stolen session token can't lock the owner out. Items are
+/// encrypted under the password-independent account key, so nothing is
+/// re-encrypted: the new OPAQUE record and the account key re-wrapped under
+/// the new password's KEK replace the old ones, and every other session is
+/// revoked, in one transaction. The recovery kit wraps the account key and
+/// stays valid.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/start", post(start))
@@ -54,8 +59,9 @@ async fn start(
     if state.account_key(&email_hash) != user.email_hash {
         return Err(ApiError::BadRequest("emailHash does not match this account".into()));
     }
-    let Some(record) = user.opaque_record.as_deref() else {
-        // Every login upgrades SRP accounts first, so this only happens if that upgrade failed.
+    // Every unlock upgrades SRP and legacy-key accounts first, so these only
+    // fail if that upgrade did.
+    let (Some(record), Some(_)) = (user.opaque_record.as_deref(), user.wrapped_account_key.as_ref()) else {
         return Err(ApiError::Conflict("sign in again before changing your password".into()));
     };
     // A login response is a password-guessing oracle; it counts like any login.
@@ -75,9 +81,6 @@ async fn start(
         login_response: B64URL.encode(started.response),
         kdf_params: user_kdf_params(&user)?,
         registration_response: B64URL.encode(registration_response),
-        items: encode_all_items(&state, user.id).await?,
-        protected_private_key: user.protected_private_key.clone(),
-        protected_private_key_iv: user.protected_private_key_iv.clone(),
     }))
 }
 
@@ -91,9 +94,8 @@ async fn finish(
     let upload = decode_opaque(&req.registration_record, "registrationRecord")?;
     let record = opaque::registration_finish(&upload)
         .map_err(|_| ApiError::BadRequest("invalid registrationRecord".into()))?;
-    let protected_key = decode_b64(&req.protected_symmetric_key, "protected_symmetric_key")?;
-    let protected_key_iv = decode_b64(&req.protected_symmetric_key_iv, "protected_symmetric_key_iv")?;
-    let items = decode_reencrypted_items(&req.items)?;
+    let wrapped = decode_b64(&req.wrapped_account_key, "wrappedAccountKey")?;
+    let wrapped_iv = decode_b64(&req.wrapped_account_key_iv, "wrappedAccountKeyIv")?;
 
     let wrong_password = || ApiError::Unauthorized("current password is incorrect".into());
     let pending = pending::take_opaque_login(&state.db, req.change_id)
@@ -107,7 +109,7 @@ async fn finish(
         record_login_failure(&state, Some(auth.user_id), &pending.account_key, "password_change", client_ip).await;
         return Err(wrong_password());
     }
-    throttle::reset(&state.db, &pending.account_key).await?;
+    reset_throttle(&state, &pending.account_key, client_ip).await?;
 
     let session = sessions::find_session_by_token(&state.db, &auth.raw_token)
         .await?
@@ -117,15 +119,14 @@ async fn finish(
         &state.db,
         db_recovery::RotationAuthority::Session(session.id),
         auth.user_id,
-        db_recovery::RecoveryCompletion {
+        db_recovery::PasswordRotation {
             credential: &db_recovery::NewCredential::Opaque(record),
-            protected_symmetric_key: &protected_key,
-            protected_symmetric_key_iv: &protected_key_iv,
-            protected_private_key: req.protected_private_key.as_deref(),
-            protected_private_key_iv: req.protected_private_key_iv.as_deref(),
+            protected_symmetric_key: None,
+            protected_private_key: None,
+            wrapped_account_key: Some((&wrapped, &wrapped_iv)),
             recovery_kit: None,
+            reencrypted_items: None,
         },
-        &items,
     )
     .await
     .map_err(rotation_error)?;

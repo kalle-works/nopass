@@ -77,26 +77,45 @@ async fn start_change(server: &TestServer, token: &str, current: &str) -> Starte
     Started { resp, finish_login_request, registration_record }
 }
 
-fn finish_body(s: &Started, proof: &str, items: Value) -> Value {
+fn finish_body(s: &Started, proof: &str) -> Value {
     json!({
         "changeId": s.resp.change_id,
         "finishLoginRequest": proof,
         "registrationRecord": s.registration_record,
-        "protectedSymmetricKey": B64.encode([1u8; 32]),
-        "protectedSymmetricKeyIv": B64.encode([1u8; 12]),
-        "items": items,
+        "wrappedAccountKey": B64.encode([7u8; 80]),
+        "wrappedAccountKeyIv": B64.encode([7u8; 12]),
     })
 }
 
-fn reencrypt_all(s: &Started) -> Value {
-    s.resp
-        .items
-        .iter()
-        .map(|i| json!({ "id": i.id, "blob": B64.encode([9u8; 48]), "blobIv": B64.encode([9u8; 12]), "blobMac": B64.encode([9u8; 32]) }))
-        .collect()
+async fn set_account_key(server: &TestServer, token: &str) -> axum_test::TestResponse {
+    server
+        .put("/v1/auth/account-key")
+        .authorization_bearer(token)
+        .json(&json!({ "wrappedAccountKey": B64.encode([5u8; 80]), "wrappedAccountKeyIv": B64.encode([5u8; 12]) }))
+        .await
 }
 
-/// An account with two items, a recovery kit, and two sessions; returns (current, other) tokens.
+async fn items(server: &TestServer, token: &str) -> Value {
+    let vaults: Vec<Value> = server.get("/v1/vaults").authorization_bearer(token).await.json();
+    let id = vaults[0]["id"].as_str().unwrap().to_string();
+    server.get(&format!("/v1/vaults/{id}/items")).authorization_bearer(token).await.json()
+}
+
+async fn start_change_raw(server: &TestServer, token: &str) -> axum_test::TestResponse {
+    let login = ClientLogin::<Suite>::start(&mut OsRng, OLD.as_bytes()).unwrap();
+    let reg = ClientRegistration::<Suite>::start(&mut OsRng, NEW.as_bytes()).unwrap();
+    server
+        .post("/v1/auth/password/start")
+        .authorization_bearer(token)
+        .json(&json!({
+            "emailHash": compute_email_hash(EMAIL),
+            "startLoginRequest": B64URL.encode(login.message.serialize()),
+            "registrationRequest": B64URL.encode(reg.message.serialize()),
+        }))
+        .await
+}
+
+/// A migrated account with two items, a recovery kit, and two sessions; returns (current, other) tokens.
 async fn setup(server: &TestServer) -> (String, String) {
     register_user(server, EMAIL, OLD).await;
     let current = login(server, EMAIL, OLD).await;
@@ -120,43 +139,40 @@ async fn setup(server: &TestServer) -> (String, String) {
         .json(&json!({ "recoveryAuthKey": B64.encode([3u8; 32]), "recoveryBlob": B64.encode([3u8; 112]), "recoveryBlobIv": B64.encode([3u8; 12]) }))
         .await
         .assert_status(StatusCode::NO_CONTENT);
+    set_account_key(server, &current.session_token).await.assert_status(StatusCode::NO_CONTENT);
     (current.session_token, other.session_token)
 }
 
 #[sqlx::test(migrations = "src/db/migrations")]
-async fn password_change_rotates_credential_items_and_sessions(pool: PgPool) {
+async fn password_change_rewraps_the_account_key_and_leaves_items_and_kit_alone(pool: PgPool) {
     let server = build_test_server(pool);
     let (current, other) = setup(&server).await;
+    let before = items(&server, &current).await;
 
     let started = start_change(&server, &current, OLD).await;
-    assert_eq!(started.resp.items.len(), 2);
     let proof = started.finish_login_request.clone().unwrap();
     server
         .post("/v1/auth/password/finish")
         .authorization_bearer(&current)
-        .json(&finish_body(&started, &proof, reencrypt_all(&started)))
+        .json(&finish_body(&started, &proof))
         .await
         .assert_status(StatusCode::NO_CONTENT);
 
-    // New password works, old one doesn't.
+    // New password works and hands out the re-wrapped account key; the old one doesn't.
     let fresh = login(&server, EMAIL, NEW).await;
+    assert_eq!(fresh.wrapped_account_key, Some(B64.encode([7u8; 80])));
     assert!(opaque_login_start(&server, EMAIL, OLD).await.finish_request.is_none());
 
-    // Items carry the re-encrypted blobs.
-    let items: Vec<nopass_models::EncryptedVaultItem> = server
-        .get(&format!("/v1/vaults/{}/items", fresh.default_vault_id))
-        .authorization_bearer(&fresh.session_token)
-        .await
-        .json();
-    assert!(items.iter().all(|i| i.blob == B64.encode([9u8; 48])));
+    // No item was touched.
+    assert_eq!(items(&server, &current).await, before);
 
     // This session survives, the other is revoked.
     server.get("/v1/vaults").authorization_bearer(&current).await.assert_status_ok();
     server.get("/v1/vaults").authorization_bearer(&other).await.assert_status(StatusCode::UNAUTHORIZED);
 
-    // The old kit wrapped the old keys, so it is gone.
+    // The kit wraps the account key, so it stays.
     let status: Value = server.get("/v1/auth/recovery").authorization_bearer(&current).await.json();
-    assert_eq!(status["enabled"], false);
+    assert_eq!(status["enabled"], true);
 }
 
 #[sqlx::test(migrations = "src/db/migrations")]
@@ -172,7 +188,7 @@ async fn password_change_without_current_password_proof_changes_nothing(pool: Pg
     server
         .post("/v1/auth/password/finish")
         .authorization_bearer(&current)
-        .json(&finish_body(&started, &unrelated, reencrypt_all(&started)))
+        .json(&finish_body(&started, &unrelated))
         .await
         .assert_status(StatusCode::UNAUTHORIZED);
 
@@ -181,20 +197,19 @@ async fn password_change_without_current_password_proof_changes_nothing(pool: Pg
 }
 
 #[sqlx::test(migrations = "src/db/migrations")]
-async fn password_change_with_an_item_left_out_changes_nothing(pool: PgPool) {
-    let server = build_test_server(pool);
-    let (current, _) = setup(&server).await;
+async fn account_key_is_set_once_and_only_from_a_fresh_session(pool: PgPool) {
+    let server = build_test_server(pool.clone());
+    register_user(&server, EMAIL, OLD).await;
+    let token = login(&server, EMAIL, OLD).await.session_token;
 
-    let started = start_change(&server, &current, OLD).await;
-    let mut items = reencrypt_all(&started);
-    items.as_array_mut().unwrap().pop();
-    let proof = started.finish_login_request.clone().unwrap();
-    server
-        .post("/v1/auth/password/finish")
-        .authorization_bearer(&current)
-        .json(&finish_body(&started, &proof, items))
-        .await
-        .assert_status(StatusCode::BAD_REQUEST);
+    // A legacy-key account can't change its password until it has migrated.
+    start_change_raw(&server, &token).await.assert_status(StatusCode::CONFLICT);
 
-    login(&server, EMAIL, OLD).await;
+    sqlx::query("UPDATE sessions SET created_at = NOW() - INTERVAL '1 hour'").execute(&pool).await.unwrap();
+    set_account_key(&server, &token).await.assert_status(StatusCode::FORBIDDEN);
+
+    let fresh = login(&server, EMAIL, OLD).await.session_token;
+    set_account_key(&server, &fresh).await.assert_status(StatusCode::NO_CONTENT);
+    // A second write would let a session holder swap in a key of their choosing.
+    set_account_key(&server, &fresh).await.assert_status(StatusCode::CONFLICT);
 }

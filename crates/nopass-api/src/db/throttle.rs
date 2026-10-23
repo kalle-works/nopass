@@ -2,15 +2,24 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-/// Login starts allowed per account before backoff kicks in. Clients fall back
-/// from OPAQUE to SRP on failure while SRP accounts remain, so one wrong
-/// password can cost two attempts.
-pub const FREE_ATTEMPTS: i32 = 10;
-/// First lockout; doubles with every further unsuccessful start.
-const BASE_LOCK_SECS: i64 = 30;
-/// Cap, so someone who only knows the address can delay but not shut out the
-/// owner for long.
-const MAX_LOCK_SECS: i64 = 15 * 60;
+/// Backoff schedule for one throttle key: `free` unsuccessful starts, then a
+/// lock of `base_secs` doubling per further start, capped at `max_secs`.
+#[derive(Debug, Clone, Copy)]
+pub struct Policy {
+    pub free: i32,
+    pub base_secs: i64,
+    pub max_secs: i64,
+}
+
+/// Per (account, client network): what one attacker location gets. Clients
+/// fall back from OPAQUE to SRP on failure while SRP accounts remain, so one
+/// wrong password can cost two attempts.
+pub const PER_NETWORK: Policy = Policy { free: 10, base_secs: 30, max_secs: 15 * 60 };
+/// Per account across all networks: a much higher ceiling, so a stranger on
+/// one network can't lock the owner out, while a distributed guesser still
+/// hits a wall.
+pub const PER_ACCOUNT: Policy = Policy { free: 100, base_secs: 60, max_secs: 60 * 60 };
+
 /// An account with no attempts for this long starts from zero again.
 const DECAY_SECS: i64 = 24 * 60 * 60;
 
@@ -21,23 +30,23 @@ pub enum Attempt {
     Locked { retry_after_secs: i64 },
 }
 
-fn lock_secs(failures: i32) -> Option<i64> {
-    let over = failures - FREE_ATTEMPTS;
+fn lock_secs(policy: Policy, failures: i32) -> Option<i64> {
+    let over = failures - policy.free;
     if over < 0 {
         return None;
     }
-    Some(BASE_LOCK_SECS.saturating_mul(1i64 << over.min(30)).min(MAX_LOCK_SECS))
+    Some(policy.base_secs.saturating_mul(1i64 << over.min(30)).min(policy.max_secs))
 }
 
 /// Count a login (or registration) start against the account. Every start is
 /// presumed failed until `reset` is called on success.
-pub async fn record_attempt(pool: &PgPool, account_key: &str) -> Result<Attempt> {
+pub async fn record_attempt(pool: &PgPool, key: &str, policy: Policy) -> Result<Attempt> {
     let mut tx = pool.begin().await?;
 
     sqlx::query(
         "INSERT INTO login_throttle (account_key, failures) VALUES ($1, 0) ON CONFLICT DO NOTHING",
     )
-    .bind(account_key)
+    .bind(key)
     .execute(&mut *tx)
     .await?;
 
@@ -45,7 +54,7 @@ pub async fn record_attempt(pool: &PgPool, account_key: &str) -> Result<Attempt>
         sqlx::query_as::<_, (i32, Option<DateTime<Utc>>, DateTime<Utc>)>(
             "SELECT failures, locked_until, updated_at FROM login_throttle WHERE account_key = $1 FOR UPDATE",
         )
-        .bind(account_key)
+        .bind(key)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -58,12 +67,12 @@ pub async fn record_attempt(pool: &PgPool, account_key: &str) -> Result<Attempt>
     }
 
     let failures = if (now - updated_at).num_seconds() > DECAY_SECS { 1 } else { failures + 1 };
-    let locked_until = lock_secs(failures).map(|secs| now + chrono::Duration::seconds(secs));
+    let locked_until = lock_secs(policy, failures).map(|secs| now + chrono::Duration::seconds(secs));
 
     sqlx::query(
         "UPDATE login_throttle SET failures = $2, locked_until = $3, updated_at = NOW() WHERE account_key = $1",
     )
-    .bind(account_key)
+    .bind(key)
     .bind(failures)
     .bind(locked_until)
     .execute(&mut *tx)
@@ -74,9 +83,9 @@ pub async fn record_attempt(pool: &PgPool, account_key: &str) -> Result<Attempt>
     Ok(Attempt::Allowed { failures })
 }
 
-pub async fn reset(pool: &PgPool, account_key: &str) -> Result<()> {
-    sqlx::query("DELETE FROM login_throttle WHERE account_key = $1")
-        .bind(account_key)
+pub async fn reset(pool: &PgPool, keys: &[&str]) -> Result<()> {
+    sqlx::query("DELETE FROM login_throttle WHERE account_key = ANY($1)")
+        .bind(keys)
         .execute(pool)
         .await?;
     Ok(())
@@ -102,9 +111,10 @@ mod tests {
 
     #[test]
     fn backoff_starts_at_threshold_doubles_and_caps() {
-        assert_eq!(lock_secs(FREE_ATTEMPTS - 1), None);
-        assert_eq!(lock_secs(FREE_ATTEMPTS), Some(BASE_LOCK_SECS));
-        assert_eq!(lock_secs(FREE_ATTEMPTS + 1), Some(2 * BASE_LOCK_SECS));
-        assert_eq!(lock_secs(FREE_ATTEMPTS + 100), Some(MAX_LOCK_SECS));
+        let p = PER_NETWORK;
+        assert_eq!(lock_secs(p, p.free - 1), None);
+        assert_eq!(lock_secs(p, p.free), Some(p.base_secs));
+        assert_eq!(lock_secs(p, p.free + 1), Some(2 * p.base_secs));
+        assert_eq!(lock_secs(p, p.free + 100), Some(p.max_secs));
     }
 }

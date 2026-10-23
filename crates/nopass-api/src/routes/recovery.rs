@@ -133,6 +133,7 @@ async fn recovery_init(
 
     Ok(Json(RecoveryInitResponse {
         recovery_token: recovery_token.to_string(),
+        user_id: user.id,
         recovery_blob: B64.encode(blob),
         recovery_blob_iv: B64.encode(blob_iv),
         protected_private_key: user.protected_private_key.clone(),
@@ -219,37 +220,52 @@ async fn recovery_complete(
         return Err(ApiError::BadRequest("recovery_auth_key must be 32 bytes".into()));
     }
 
-    // The client must re-encrypt every single item — a partial set would leave
-    // the rest of the vault undecryptable under the new keys.
-    let expected = db_recovery::list_all_items_for_user(&state.db, pending_session.user_id).await?;
-    if expected.len() != req.items.len() {
-        return Err(ApiError::BadRequest(format!(
-            "expected {} re-encrypted items, got {}",
-            expected.len(),
-            req.items.len()
-        )));
-    }
+    let wrapped_account_key = match (&req.wrapped_account_key, &req.wrapped_account_key_iv) {
+        (Some(k), Some(iv)) => Some((decode_b64(k, "wrappedAccountKey")?, decode_b64(iv, "wrappedAccountKeyIv")?)),
+        (None, None) => None,
+        _ => return Err(ApiError::BadRequest("send both wrappedAccountKey and its IV, or neither".into())),
+    };
 
-    let items = decode_reencrypted_items(&req.items)?;
+    // Current clients re-wrap the account key recovered from the kit and leave
+    // items alone. Clients predating the account key re-encrypt every item
+    // instead — a partial set would leave the rest undecryptable.
+    let items = if wrapped_account_key.is_some() {
+        if !req.items.is_empty() {
+            return Err(ApiError::BadRequest("items are not re-encrypted when the account key is re-wrapped".into()));
+        }
+        None
+    } else {
+        let expected = db_recovery::list_all_items_for_user(&state.db, pending_session.user_id).await?;
+        if expected.len() != req.items.len() {
+            return Err(ApiError::BadRequest(format!(
+                "expected {} re-encrypted items, got {}",
+                expected.len(),
+                req.items.len()
+            )));
+        }
+        Some(decode_reencrypted_items(&req.items)?)
+    };
 
     let new_auth_hash = hash_auth_key(&new_auth_key);
     db_recovery::rotate_master_password(
         &state.db,
         db_recovery::RotationAuthority::RecoveryToken(token),
         pending_session.user_id,
-        db_recovery::RecoveryCompletion {
+        db_recovery::PasswordRotation {
             credential: &credential,
-            protected_symmetric_key: &protected_key,
-            protected_symmetric_key_iv: &protected_key_iv,
-            protected_private_key: req.protected_private_key.as_deref(),
-            protected_private_key_iv: req.protected_private_key_iv.as_deref(),
+            protected_symmetric_key: Some((&protected_key, &protected_key_iv)),
+            protected_private_key: req
+                .protected_private_key
+                .as_deref()
+                .zip(req.protected_private_key_iv.as_deref()),
+            wrapped_account_key: wrapped_account_key.as_ref().map(|(k, iv)| (k.as_slice(), iv.as_slice())),
             recovery_kit: Some(db_recovery::NewRecoveryKit {
                 auth_hash: &new_auth_hash,
                 blob: &new_blob,
                 blob_iv: &new_blob_iv,
             }),
+            reencrypted_items: items.as_deref(),
         },
-        &items,
     )
     .await
     .map_err(rotation_error)?;

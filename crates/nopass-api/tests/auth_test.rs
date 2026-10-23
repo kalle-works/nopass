@@ -8,7 +8,10 @@ use helpers::{
     opaque_login_finish, opaque_login_start, opaque_registration, register_user, srp_login,
     srp_login_ok, stored_account_key, test_kdf,
 };
-use nopass_api::db::{pending::MAX_PENDING_LOGINS_PER_ACCOUNT, throttle::FREE_ATTEMPTS};
+use nopass_api::db::{
+    pending::MAX_PENDING_LOGINS_PER_ACCOUNT,
+    throttle::{PER_ACCOUNT, PER_NETWORK},
+};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -175,40 +178,57 @@ async fn reregister_needs_a_fresh_session(pool: PgPool) {
 
 // ─── Throttling and pending-login bounds ─────────────────────────────────────
 
+async fn start_from(server: &axum_test::TestServer, path: &str, ip: &str) -> axum_test::TestResponse {
+    server
+        .post(path)
+        .add_header("x-forwarded-for", ip.to_string())
+        .json(&json!({
+            "emailHash": compute_email_hash(EMAIL),
+            "startLoginRequest": "AAAA",
+            "clientPublicA": "AAAA",
+        }))
+        .await
+}
+
 #[sqlx::test(migrations = "src/db/migrations")]
-async fn per_account_throttle_trips_across_ips_and_spares_other_accounts(pool: PgPool) {
+async fn a_stranger_trips_only_their_own_network_and_the_owner_still_logs_in(pool: PgPool) {
     let server = build_test_server(pool);
     register_user(&server, EMAIL, PASSWORD).await;
 
-    // Every request comes from a different IP, so only the account key ties them together.
-    for _ in 0..FREE_ATTEMPTS {
-        opaque_login_start(&server, EMAIL, "guess").await;
+    // Same /24, different hosts: one location.
+    for host in 0..PER_NETWORK.free {
+        start_from(&server, "/v1/auth/opaque/login/start", &format!("203.0.113.{host}")).await;
     }
-    let blocked = from_random_ip(server.post("/v1/auth/opaque/login/start").json(&json!({
-        "emailHash": compute_email_hash(EMAIL),
-        "startLoginRequest": "AAAA",
-    })))
-    .await;
+    let blocked = start_from(&server, "/v1/auth/opaque/login/start", "203.0.113.200").await;
     blocked.assert_status(StatusCode::TOO_MANY_REQUESTS);
     assert!(blocked.headers().contains_key("retry-after"));
-
     // The SRP path shares the same counter.
-    from_random_ip(server.post("/v1/auth/srp/init").json(&json!({
-        "emailHash": compute_email_hash(EMAIL),
-        "clientPublicA": "AAAA",
-    })))
-    .await
-    .assert_status(StatusCode::TOO_MANY_REQUESTS);
+    start_from(&server, "/v1/auth/srp/init", "203.0.113.201")
+        .await
+        .assert_status(StatusCode::TOO_MANY_REQUESTS);
 
-    register_user(&server, "bob@example.com", PASSWORD).await;
-    login(&server, "bob@example.com", PASSWORD).await;
+    // The owner, elsewhere, is unaffected.
+    login(&server, EMAIL, PASSWORD).await;
+}
+
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn guesses_spread_over_networks_hit_the_account_wide_ceiling(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, EMAIL, PASSWORD).await;
+
+    for n in 0..PER_ACCOUNT.free {
+        start_from(&server, "/v1/auth/opaque/login/start", &format!("198.{}.{}.1", n / 256, n % 256)).await;
+    }
+    start_from(&server, "/v1/auth/opaque/login/start", "192.0.2.1")
+        .await
+        .assert_status(StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[sqlx::test(migrations = "src/db/migrations")]
 async fn successful_logins_do_not_accumulate_toward_the_throttle(pool: PgPool) {
     let server = build_test_server(pool);
     register_user(&server, EMAIL, PASSWORD).await;
-    for _ in 0..=FREE_ATTEMPTS {
+    for _ in 0..=PER_NETWORK.free {
         login(&server, EMAIL, PASSWORD).await;
     }
 }
