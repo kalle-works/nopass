@@ -117,7 +117,9 @@ password again:
 
 ## Changing the master password
 
-A session token alone can't change the password. `password/start` runs a
+A session token alone can't change the password, and neither can an old
+one: the session must be less than 15 minutes old (else 403, sign in again).
+`password/start` runs a
 full OPAQUE login for the current password next to a registration for the new
 one, and returns the current account-key wrap. `password/finish` only goes
 ahead if the login proof checks out. Starts count against the login throttle.
@@ -202,7 +204,7 @@ login. Steps:
 | `opaque/login/finish` | Same 401 `authentication failed` for a wrong password, an unknown account, and an expired or unknown `loginId`. |
 | `srp/init`, `srp/verify` | Same shape for all accounts. Same 401 on verify. |
 | `opaque/register/start` | Same response for every email. For an existing account the OPRF evaluation uses a decoy key derived from the lookup key, so it is no guessing oracle against the real one, and nothing is charged to the account. |
-| `recovery/init` | Same 401 for an unknown account, no kit, or a wrong code (unchanged). |
+| `recovery/init` | Same 401 for an unknown account, no kit, or a wrong code (unchanged). A recovery token dies when the kit is replaced or disabled, or when the password changes. |
 
 What still leaks:
 
@@ -224,6 +226,16 @@ address, so a dump confirmed membership for any address list. Existing rows
 are rewritten at API startup. The housekeeping task also rewrites any row an
 older replica writes during a rolling deploy. The `email_hash_keyed` column
 marks which rows are done. The old, unused `NOPASS_SESSION_SECRET` is gone.
+
+
+The rekey can't break a rolling deploy. Replicas take turns through an
+advisory lock, and each row is rekeyed in its own savepoint. A row whose keyed
+form already exists (an older replica registered the same address again
+mid-rollout) is logged as `email_rekey_conflict` for a manual merge and
+skipped, and the rest are still keyed. A failure at startup is logged and
+retried by the housekeeping task; it never stops the API. Until a row is
+keyed, register and login also match the raw hash, so old and new replicas
+can't each see a different set of accounts.
 
 ## Throttling
 

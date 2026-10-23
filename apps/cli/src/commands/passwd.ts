@@ -39,6 +39,8 @@ export const passwdCommand = new Command("passwd")
     } catch (err) {
       if (err instanceof IncorrectPasswordError || (err instanceof ApiError && err.status === 401)) {
         process.stderr.write("Current master password is incorrect.\n");
+      } else if (err instanceof ApiError && err.status === 403) {
+        process.stderr.write("Your session is too old to change the password. Run `nopwd login`, then retry within 15 minutes.\n");
       } else if (err instanceof ApiError && err.status === 409) {
         process.stderr.write("Log in again first so your account can be upgraded, then retry.\n");
       } else {

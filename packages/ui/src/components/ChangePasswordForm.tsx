@@ -49,6 +49,8 @@ export function ChangePasswordForm({ apiClient }: { apiClient: ApiClient }) {
     } catch (err) {
       if (err instanceof IncorrectPasswordError || (err instanceof ApiError && err.status === 401)) {
         setError("Your current master password is incorrect.");
+      } else if (err instanceof ApiError && err.status === 403) {
+        setError("For your safety, sign out and back in, then change your password within 15 minutes.");
       } else if (err instanceof ApiError && err.status === 409) {
         setError("Sign out and back in once so your account can be upgraded, then try again.");
       } else if (err instanceof ApiError && err.status === 429) {

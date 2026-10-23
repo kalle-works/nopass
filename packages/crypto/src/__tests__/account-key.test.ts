@@ -5,7 +5,7 @@
  * changes its password, and recovers with a kit made before all of it. Items
  * written at the start must decrypt at every step.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_KDF_PARAMS, type LoginItem, type RecoveryCompleteRequest, type RecoveryInitResponse } from "@nopass/types";
 
 import { AccountKeyError, importAccountKeys, unlockAccount, unwrapAccountKey, wrapAccountKey } from "../account-key";
@@ -108,10 +108,12 @@ describe("unlockAccount after migration", () => {
     await unlock(server, P1, accountState);
 
     // The server now pretends the account was never migrated.
+    vi.mocked(server.api.srpInit).mockClear();
     server.account.wrappedAccountKey = undefined;
     server.account.wrappedAccountKeyIv = undefined;
     await expect(unlock(server, P1, accountState)).rejects.toBeInstanceOf(AccountKeyError);
     expect(server.api.setAccountKey).not.toHaveBeenCalled();
+    expect(server.api.srpInit).not.toHaveBeenCalled();
   }, 300_000);
 
   it("fails the unlock when the migration upload fails", async () => {
