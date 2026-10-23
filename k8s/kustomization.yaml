@@ -18,14 +18,16 @@ resources:
   - backup-cronjob.yaml
   - restore-drill-cronjob.yaml
   - backup-sealed-secret.yaml
-
 # Release pins. The Publish images workflow opens a PR that rewrites this
 # block (scripts/bump-images.sh) with the released tag and the digest of the
 # image it pushed; the digest is what the cluster pulls, the tag is for humans.
 images:
   - name: ghcr.io/kalle-works/nopwd-api
-    newTag: v0.2.0
+    newTag: v0.2.1
+    digest: sha256:689a7027be653bbe59e77358056b45fa7eb5b6a24452a623e5b54bd6b91af803
   - name: ghcr.io/kalle-works/nopwd-web
-    newTag: v0.2.0
+    newTag: v0.2.1
+    digest: sha256:188b8be83be793d35b356d7650fb42fc4338eb57c34e31b27dba65fb6752d0e3
   - name: ghcr.io/kalle-works/nopwd-ops
     newTag: v0.2.1
+    digest: sha256:6ce99fbefed4658f228867b3c1f4963c2af41e0eec07298ff86dbb35e65012dd
