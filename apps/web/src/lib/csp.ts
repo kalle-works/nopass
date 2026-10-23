@@ -33,6 +33,9 @@ export function buildCsp({ nonce, isDev, apiOrigin }: { nonce: string; isDev: bo
     "frame-src 'none'",
     "object-src 'none'",
     "form-action 'self'",
+    // Trusted Types: see trusted-types.ts. Dev keeps them off because the
+    // dev server's HMR and overlay write plain strings into DOM sinks.
+    ...(isDev ? [] : ["require-trusted-types-for 'script'", "trusted-types default"]),
     "upgrade-insecure-requests",
   ].join("; ");
 }

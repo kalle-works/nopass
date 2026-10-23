@@ -41,3 +41,11 @@ describe("proxy", () => {
     expect(directive(cspA, "script-src")).not.toContain("'unsafe-inline'");
   });
 });
+
+describe("buildCsp trusted types", () => {
+  it("enforces Trusted Types in production with only the default policy name", () => {
+    const prod = buildCsp({ nonce: "abc", isDev: false, apiOrigin: "https://api.nopwd.dev" });
+    expect(directive(prod, "require-trusted-types-for")).toEqual(["'script'"]);
+    expect(directive(prod, "trusted-types")).toEqual(["default"]);
+  });
+});
