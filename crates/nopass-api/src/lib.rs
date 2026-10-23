@@ -1,6 +1,8 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod healthcheck;
+pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod routes;
@@ -32,6 +34,8 @@ pub async fn run() -> Result<()> {
         .await?;
 
     sqlx::migrate!("src/db/migrations").run(&pool).await?;
+
+    metrics::spawn_server();
 
     let state = Arc::new(AppState::new(pool, config.clone()));
 
@@ -135,6 +139,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .nest("/v1", routes::router(state.clone()))
+        .layer(axum::middleware::from_fn(metrics::track_http))
         // 2 MiB max body — AES-GCM vault blobs are small; this limits abuse.
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024))
         .layer(security_headers)

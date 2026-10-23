@@ -2,14 +2,29 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
+  - network-policies.yaml
   - configmap.yaml
   - sealed-secret.yaml
   - ghcr-pull-secret.yaml
   - api-deployment.yaml
   - web-deployment.yaml
   - services.yaml
+  - servicemonitor.yaml
   - ingress.yaml
   - poddisruptionbudget.yaml
   - backup-storage.yaml
+  - backup-known-hosts.yaml
   - backup-cronjob.yaml
+  - restore-drill-cronjob.yaml
   - backup-sealed-secret.yaml
+
+# Release pins. The Publish images workflow opens a PR that rewrites this
+# block (scripts/bump-images.sh) with the released tag and the digest of the
+# image it pushed; the digest is what the cluster pulls, the tag is for humans.
+images:
+  - name: ghcr.io/kalle-works/nopwd-api
+    newTag: v0.2.0
+  - name: ghcr.io/kalle-works/nopwd-web
+    newTag: v0.2.0
+  - name: ghcr.io/kalle-works/nopwd-ops
+    newTag: v0.2.1

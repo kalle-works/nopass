@@ -9,7 +9,7 @@ use uuid::Uuid;
 use helpers::{build_test_server, login, register_user};
 
 fn fake_blob() -> (String, String, String) {
-    (B64.encode(&[0xde; 48]), B64.encode(&[0xad; 12]), B64.encode(&[0xbe; 32]))
+    (B64.encode([0xde; 48]), B64.encode([0xad; 12]), B64.encode([0xbe; 32]))
 }
 
 // ─── Create item ──────────────────────────────────────────────────────────────
@@ -191,6 +191,59 @@ async fn update_item_optimistic_locking_conflict_returns_409(pool: PgPool) {
         .json(&UpdateVaultItemRequest { blob, blob_iv, blob_mac, version }) // stale version
         .await
         .assert_status(StatusCode::CONFLICT);
+}
+
+// Two devices saving the same item from the same base version race in the
+// database, not in the handler: exactly one write may win, the rest must see
+// the conflict instead of silently overwriting.
+#[sqlx::test(migrations = "src/db/migrations")]
+async fn concurrent_updates_from_the_same_version_have_exactly_one_winner(pool: PgPool) {
+    let server = build_test_server(pool);
+    register_user(&server, "alice@example.com", "password").await;
+    let session = login(&server, "alice@example.com", "password").await;
+    let vault_id = session.default_vault_id;
+
+    let (blob, blob_iv, blob_mac) = fake_blob();
+    let create_resp: serde_json::Value = server
+        .post(&format!("/v1/vaults/{vault_id}/items"))
+        .authorization_bearer(&session.session_token)
+        .json(&CreateVaultItemRequest {
+            item_type: VaultItemType::Login,
+            blob: blob.clone(),
+            blob_iv: blob_iv.clone(),
+            blob_mac: blob_mac.clone(),
+        })
+        .await
+        .json();
+    let item_id = create_resp["id"].as_str().unwrap().to_string();
+    let version = create_resp["version"].as_i64().unwrap();
+
+    let update = || async {
+        server
+            .put(&format!("/v1/vaults/{vault_id}/items/{item_id}"))
+            .authorization_bearer(&session.session_token)
+            .json(&UpdateVaultItemRequest {
+                blob: blob.clone(),
+                blob_iv: blob_iv.clone(),
+                blob_mac: blob_mac.clone(),
+                version,
+            })
+            .await
+            .status_code()
+    };
+    let statuses = tokio::join!(update(), update(), update(), update(), update(), update());
+    let statuses = [statuses.0, statuses.1, statuses.2, statuses.3, statuses.4, statuses.5];
+
+    assert_eq!(statuses.iter().filter(|s| **s == StatusCode::OK).count(), 1, "{statuses:?}");
+    assert_eq!(statuses.iter().filter(|s| **s == StatusCode::CONFLICT).count(), 5, "{statuses:?}");
+
+    let items: serde_json::Value = server
+        .get(&format!("/v1/vaults/{vault_id}/items"))
+        .authorization_bearer(&session.session_token)
+        .await
+        .json();
+    let stored = items.as_array().unwrap().iter().find(|i| i["id"] == item_id.as_str()).unwrap();
+    assert_eq!(stored["version"].as_i64(), Some(version + 1));
 }
 
 // ─── Delete item ──────────────────────────────────────────────────────────────

@@ -1,0 +1,174 @@
+# Default-deny for ingress and egress in the nopwd namespace, with explicit
+# allows. NetworkPolicies are additive across objects, so the namespace-wide
+# default-deny-ingress that hetzner-k3s-flux-mail applies to nopwd
+# (network-policies/default-deny.yaml) must not carry the pod-CIDR ipBlock, or
+# it re-opens the api and web pods to every pod in the cluster and makes the
+# rules below advisory.
+#
+# Flows:
+#   traefik namespace -> api :3001, web :3000
+#   prometheus (monitoring namespace) -> api metrics :9100
+#   api               -> postgresql namespace :5432, public internet :443 (Stripe)
+#   backup            -> postgresql namespace :5432, public internet :22 (offsite git push)
+#   restore drill     -> nothing (restores into a Postgres inside its own pod)
+#   every pod         -> cluster DNS
+# Liveness and readiness are exec probes, so the kubelet needs no network path
+# into the pods and nothing here has to admit node traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: nopwd
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: nopwd
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress-from-traefik
+  namespace: nopwd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: 3001
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-metrics-from-prometheus
+  namespace: nopwd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9100
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-ingress-from-traefik
+  namespace: nopwd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# The shared Postgres lives in the postgresql namespace; its own ingress
+# policy decides who may connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-egress
+  namespace: nopwd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Stripe API; the private ranges are excluded so this cannot reach
+    # other workloads or nodes
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backup-egress
+  namespace: nopwd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nopwd-backup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # git push to github.com over SSH
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 22

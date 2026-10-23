@@ -25,15 +25,21 @@ spec:
       nodeSelector:
         role: apps
         kubernetes.io/arch: amd64
+      # Neither workload talks to the Kubernetes API
+      automountServiceAccountToken: false
       imagePullSecrets:
         - name: ghcr-pull-secret
       securityContext:
         runAsUser: 10001
+        runAsGroup: 10001
         runAsNonRoot: true
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: web
-          image: ghcr.io/kalle-works/nopwd-web:v0.2.0
+          image: ghcr.io/kalle-works/nopwd-web
+          # The tag and digest are set by the images block in kustomization.yaml
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -50,18 +56,23 @@ spec:
             limits:
               memory: "384Mi"
               cpu: "500m"
+          # Exec probes, see api-deployment.yaml
           livenessProbe:
-            httpGet:
-              path: /login
-              port: 3000
+            exec:
+              command:
+                - node
+                - -e
+                - "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /login
-              port: 3000
+            exec:
+              command:
+                - node
+                - -e
+                - "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3

@@ -2,6 +2,7 @@
 name = "nopass-api"
 version.workspace = true
 edition.workspace = true
+publish = false
 
 [[bin]]
 name = "nopass-api"
@@ -20,6 +21,8 @@ governor = { workspace = true }
 sqlx = { workspace = true }
 
 reqwest = { workspace = true }
+
+prometheus = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -5,5 +5,5 @@ metadata:
   labels:
     name: nopwd
     app.kubernetes.io/name: nopwd
-    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/warn: restricted
