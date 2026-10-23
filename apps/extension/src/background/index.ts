@@ -170,6 +170,7 @@ type Message =
   | { type: "GET_CREDENTIALS"; itemId: string }
   | { type: "AUTOFILL"; itemId: string; tabId: number; confirmedOrigin?: string }
   | { type: "FILL_TARGET" }
+  | { type: "WEBAUTHN_AVAILABLE"; rpId: string }
   | { type: "WEBAUTHN_HAS_CREDENTIAL"; rpId: string; allowCredentialIdsB64u: string[] }
   | {
       type: "WEBAUTHN_CREATE";
@@ -388,6 +389,16 @@ async function handleMessage(message: Message, sender: chrome.runtime.MessageSen
       // on the next attempt
       if (!filled) await chrome.storage.session.remove(fillTargetKey(message.tabId));
       return filled ? { ok: true } : { error: "no_login_form" };
+    }
+
+    case "WEBAUTHN_AVAILABLE": {
+      // The relay's pre-check before offering to save a passkey. IS_UNLOCKED
+      // answers "locked" to every web page by design, so the relay asks this
+      // instead: only for an rpId the asking page owns, and it reveals no
+      // more than whether a CREATE for that rpId would proceed.
+      const origin = senderOrigin(sender);
+      if (!origin || !vaultState) return { available: false };
+      return { available: rpIdMatchesOrigin(message.rpId, origin) && isRegistrableRpId(message.rpId) };
     }
 
     case "WEBAUTHN_HAS_CREDENTIAL": {

@@ -29,6 +29,7 @@ let currentChrome: ChromeMock;
 
 /** The chrome mock installed for the current test. */
 interface ChromeMock {
+  runtime: Record<string, unknown>;
   alarms: { create: Mock; clear: Mock; [key: string]: unknown };
   tabs: { sendMessage: Mock; get: Mock };
   [key: string]: unknown;
