@@ -270,6 +270,20 @@ can't each see a different set of accounts.
   their per-network budget and never touch the account-wide counter. Counters
   decay after 24 h without attempts. The SRP fallback means a wrong password
   costs two attempts while SRP exists.
+- Trust covers the whole network, not one address: a /24 or /64. Behind
+  carrier-grade NAT, on a shared office or campus network, or on a large
+  ISP's /24, everyone else on that network gets the owner's budget too:
+  10 free guesses, then 30 s doubling to 15 minutes, never the account-wide
+  ceiling. That is acceptable for three reasons:
+  - The budget is small and still per-network, so a neighbour gets no more
+    guesses than anyone else gets per network, and cannot lock the owner out
+    for longer than 15 minutes either.
+  - Guessing stays online through OPAQUE, every attempt is logged
+    (`login_failed`, `login_backoff`), and a strong master password is
+    required at registration.
+  - The alternative, trusting single addresses, breaks on every reconnect
+    for mobile, IPv6 privacy addresses and CGNAT, and the owner would fall
+    back under the account-wide ceiling a stranger can exhaust.
 - So a stranger can lock out only their own networks. With ten or more /24s
   they can also lock out networks the owner hasn't used in 90 days, for up to
   an hour at a time. They can never lock out the owner on a network the owner
