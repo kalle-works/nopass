@@ -166,11 +166,7 @@ async fn invite_member(
         return Err(ApiError::BadRequest("wrapSignature must be 64 bytes of base64".into()));
     }
     // A wrap for an older epoch carries a key that a rotation already retired
-    if Some(body.key_epoch) != db_orgs::current_key_epoch(&state.db, org_id).await? {
-        return Err(ApiError::Conflict("keyEpoch is not the org's current key epoch".into()));
-    }
-
-    db_orgs::invite_member(
+    let invited = db_orgs::invite_member(
         &state.db,
         org_id,
         invitee_id,
@@ -183,6 +179,9 @@ async fn invite_member(
         auth.user_id,
     )
     .await?;
+    if !invited {
+        return Err(ApiError::Conflict("keyEpoch is not the org's current key epoch".into()));
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -319,6 +318,7 @@ async fn rotate_key(
         remove_user_id: body.remove_user_id,
         wraps: &body.wraps,
         items,
+        delete_item_ids: &body.delete_item_ids,
     };
     match db_orgs::rotate_key(&state.db, org_id, auth.user_id, rotation).await? {
         db_orgs::RotationOutcome::Rotated => Ok(StatusCode::NO_CONTENT),

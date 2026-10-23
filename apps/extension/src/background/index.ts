@@ -95,6 +95,18 @@ async function loadRevisions(vaultMacKey: CryptoKey, sessionToken: string): Prom
   const store = new MemoryRevisionStore(stored ?? {}, (snapshot) => {
     void chrome.storage.local.set({ [key]: snapshot });
   });
+  // Before the upgrade the store was named by the server-supplied default
+  // vault id. Exactly one such record means it belongs to the account that
+  // used this browser; fold it in (max per item) and drop it. With several,
+  // nothing local says which is ours, so they are left alone.
+  const all = await chrome.storage.local.get(null);
+  const legacy = Object.keys(all).filter((k) => k.startsWith("itemRevisions:") && !k.startsWith("itemRevisions:v2:"));
+  if (legacy.length === 1) {
+    for (const [itemId, revision] of Object.entries(all[legacy[0]!] as Record<string, number>)) {
+      store.record(itemId, revision);
+    }
+    await chrome.storage.local.remove(legacy[0]!);
+  }
   try {
     const { marker } = await api.keys.vaultFormat(sessionToken);
     await applyV2OnlyMarker(marker, vaultMacKey, store);

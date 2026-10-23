@@ -19,6 +19,7 @@ import {
   v2OnlyMarker,
 } from "@nopass/crypto";
 import type { ApiClient } from "./api-client";
+import type { OrgLedgerEntry } from "./org-trust";
 
 function readJson<T>(key: string, fallback: T): T {
   if (typeof localStorage === "undefined") return fallback;
@@ -40,6 +41,31 @@ function writeJson(key: string, value: unknown): void {
 }
 
 /**
+ * Before trust state was keyed by the account key it lived under ids the
+ * server supplied: `nopass:item-revisions:<defaultVaultId>` and
+ * `nopass:key-pins:<userId>`. Their key names are the only local record of
+ * which account they belonged to. If this browser holds exactly one such
+ * record, it belongs to the account that used this device before the
+ * upgrade, and is folded into the new store and removed. With several (more
+ * than one account on this browser) there is no local way to tell which is
+ * ours, so they are left alone rather than guessed from server data.
+ */
+function takeLegacyRecord<T>(prefix: string, current: string): T | null {
+  if (typeof localStorage === "undefined") return null;
+  const legacy: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(prefix) && !key.startsWith(current) && !key.slice(prefix.length).includes(":")) {
+      legacy.push(key);
+    }
+  }
+  if (legacy.length !== 1) return null;
+  const value = readJson<T | null>(legacy[0]!, null);
+  localStorage.removeItem(legacy[0]!);
+  return value;
+}
+
+/**
  * Revision store for the account that owns `vaultMacKey`, with the server's
  * v2-only marker applied if it verifies. A failed marker fetch (offline) only
  * means v1 items stay readable for this session.
@@ -53,6 +79,9 @@ export async function openRevisionStore(
   const store = new MemoryRevisionStore(readJson<Partial<RevisionSnapshot>>(key, {}), (snapshot) =>
     writeJson(key, snapshot),
   );
+  // record() keeps the higher of the two, so merging is a max per item
+  const legacy = takeLegacyRecord<Record<string, number>>("nopass:item-revisions:", "nopass:item-revisions:v2:");
+  for (const [itemId, revision] of Object.entries(legacy ?? {})) store.record(itemId, revision);
   if (api && token) {
     try {
       const { marker } = await api.keys.vaultFormat(token);
@@ -79,6 +108,12 @@ export async function publishV2Only(
 export async function openKeyPinStore(vaultMacKey: CryptoKey): Promise<KeyPinStore> {
   const key = `nopass:key-pins:v2:${await trustStateId(vaultMacKey)}`;
   const pins = readJson<Record<string, string>>(key, {});
+  // Union; a pin already in the new store wins over an older one
+  const legacy = takeLegacyRecord<Record<string, string>>("nopass:key-pins:", "nopass:key-pins:v2:");
+  if (legacy) {
+    for (const [userId, identityKey] of Object.entries(legacy)) pins[userId] ??= identityKey;
+    writeJson(key, pins);
+  }
   return {
     get: (userId) => pins[userId],
     set: (userId, identityPublicKeyB64) => {
@@ -98,6 +133,38 @@ export async function openOrgEpochStore(vaultMacKey: CryptoKey): Promise<OrgEpoc
       if (epoch <= (epochs[orgId] ?? 0)) return;
       epochs[orgId] = epoch;
       writeJson(key, epochs);
+    },
+  };
+}
+
+/**
+ * What this device has seen of each org (item ids, member ids). A rotation
+ * refuses to proceed if the server's lists lack any of them, so a server
+ * cannot quietly leave an item un-rekeyed or a member out.
+ */
+export interface OrgLedger {
+  get(orgId: string): OrgLedgerEntry;
+  remember(orgId: string, seen: Partial<OrgLedgerEntry>): void;
+  forget(orgId: string, gone: Partial<OrgLedgerEntry>): void;
+}
+
+export async function openOrgLedger(vaultMacKey: CryptoKey): Promise<OrgLedger> {
+  const key = `nopass:org-ledger:v1:${await trustStateId(vaultMacKey)}`;
+  const ledger = readJson<Record<string, OrgLedgerEntry>>(key, {});
+  const entry = (orgId: string) => (ledger[orgId] ??= { items: [], members: [] });
+  return {
+    get: (orgId) => ({ items: [...entry(orgId).items], members: [...entry(orgId).members] }),
+    remember: (orgId, seen) => {
+      const e = entry(orgId);
+      e.items = [...new Set([...e.items, ...(seen.items ?? [])])];
+      e.members = [...new Set([...e.members, ...(seen.members ?? [])])];
+      writeJson(key, ledger);
+    },
+    forget: (orgId, gone) => {
+      const e = entry(orgId);
+      e.items = e.items.filter((id) => !gone.items?.includes(id));
+      e.members = e.members.filter((id) => !gone.members?.includes(id));
+      writeJson(key, ledger);
     },
   };
 }

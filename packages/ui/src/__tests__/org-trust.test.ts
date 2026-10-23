@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type KeyPinStore,
   type OrgEpochStore,
+  MemoryRevisionStore,
   UntrustedOrgKeyError,
   chainFromServer,
   confirmKey,
@@ -17,6 +18,8 @@ import {
 } from "@nopass/crypto";
 import type { EncryptedVaultItem, KeyBundle, LoginItem, OrgMember, WrapLink } from "@nopass/types";
 import {
+  RotationSetIncompleteError,
+  UndecryptableItemsError,
   UnconfirmedMembersError,
   buildResignedWraps,
   buildRotation,
@@ -62,7 +65,7 @@ async function makeUser(seed: number, userId: string) {
 }
 
 describe("checkOrgKey", () => {
-  it("never lets an unsigned wrap through, and offers re-signing only to the owner of their own wrap", async () => {
+  it("never lets an unsigned wrap through, and offers re-signing to the owner and nobody else", async () => {
     const owner = await makeUser(1, OWNER);
     const unsigned = (recipient: string, role: WrapLink["role"], signer: string): WrapLink => ({
       recipientUserId: recipient,
@@ -81,6 +84,10 @@ describe("checkOrgKey", () => {
     expect(
       checkOrgKey(ORG, [unsigned(BOB, "member", OWNER)], { userId: BOB, role: "member" }, pins, memoryEpochs()),
     ).toEqual({ status: "unsigned", canResign: false });
+    // An owner whose copy the server claims someone else made can still re-sign, not hit a dead end
+    expect(
+      checkOrgKey(ORG, [unsigned(OWNER, "owner", BOB)], { userId: OWNER, role: "owner" }, pins, memoryEpochs()),
+    ).toEqual({ status: "unsigned", canResign: true });
   });
 });
 
@@ -162,6 +169,21 @@ describe("buildRotation", () => {
   const ITEM = "55555555-5555-4555-8555-555555555555";
   const SECRET: LoginItem = { type: "login", name: "db", username: "root", password: "s3cret", urls: [], customFields: [] };
 
+  function rotationBase(oldKey: CryptoKey, identity: Awaited<ReturnType<typeof orgWithItem>>["identity"], pins: KeyPinStore) {
+    return {
+      orgId: ORG,
+      ownerUserId: OWNER,
+      currentEpoch: 1,
+      oldKey,
+      removeUserId: null,
+      known: { items: [], members: [] },
+      dropItemIds: [],
+      pins,
+      revisions: new MemoryRevisionStore(),
+      identity,
+    };
+  }
+
   async function orgWithItem() {
     const owner = await makeUser(1, OWNER);
     const bob = await makeUser(2, BOB);
@@ -192,19 +214,16 @@ describe("buildRotation", () => {
   }
 
   it("cuts the removed member off, keeps remaining members in, and re-keys every item", async () => {
-    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+    const { owner, bob, carol, oldKey, item, pins, identity } = await orgWithItem();
 
     // Carol is removed: she keeps only the old key she already had
-    const { request } = await buildRotation({
-      orgId: ORG,
-      ownerUserId: OWNER,
-      currentEpoch: 1,
-      oldKey,
+    const { request, losesAccess } = await buildRotation({
+      ...rotationBase(oldKey, identity, pins),
       items: [item],
-      remainingMembers: [owner.member("owner"), bob.member("member")],
-      pins,
-      identity,
+      members: [owner.member("owner"), bob.member("member"), carol.member("member")],
+      removeUserId: CAROL,
     });
+    expect(losesAccess).toEqual([CAROL]);
     expect(request.newEpoch).toBe(2);
     expect(request.wraps.map((w) => w.userId).sort()).toEqual([OWNER, BOB].sort());
     expect(request.items.map((i) => i.id)).toEqual([ITEM]);
@@ -282,16 +301,40 @@ describe("buildRotation", () => {
     const nobodyConfirmed = memoryPins();
     await expect(
       buildRotation({
-        orgId: ORG,
-        ownerUserId: OWNER,
-        currentEpoch: 1,
-        oldKey,
+        ...rotationBase(oldKey, identity, nobodyConfirmed),
         items: [item],
-        remainingMembers: [owner.member("owner"), bob.member("member")],
-        pins: nobodyConfirmed,
-        identity,
+        members: [owner.member("owner"), bob.member("member")],
       }),
     ).rejects.toBeInstanceOf(UnconfirmedMembersError);
+  });
+
+  it("refuses when the server leaves out an item or member this device has seen", async () => {
+    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+    const members = [owner.member("owner"), bob.member("member")];
+    const base = { ...rotationBase(oldKey, identity, pins), items: [item], members };
+
+    await expect(
+      buildRotation({ ...base, items: [], known: { items: [ITEM], members: [] } }),
+    ).rejects.toBeInstanceOf(RotationSetIncompleteError);
+    await expect(
+      buildRotation({ ...base, known: { items: [], members: [OWNER, BOB, CAROL] } }),
+    ).rejects.toBeInstanceOf(RotationSetIncompleteError);
+  });
+
+  it("stops on an item it cannot decrypt (including a rolled-back one) until the owner chooses to delete it", async () => {
+    const { owner, bob, oldKey, item, pins, identity } = await orgWithItem();
+    const revisions = new MemoryRevisionStore({ revisions: { [ITEM]: 9 } }); // the server replays revision 4
+    const base = {
+      ...rotationBase(oldKey, identity, pins),
+      revisions,
+      items: [item],
+      members: [owner.member("owner"), bob.member("member")],
+    };
+
+    await expect(buildRotation(base)).rejects.toBeInstanceOf(UndecryptableItemsError);
+    const plan = await buildRotation({ ...base, dropItemIds: [ITEM] });
+    expect(plan.request.items).toEqual([]);
+    expect(plan.request.deleteItemIds).toEqual([ITEM]);
   });
 
   it("reads items written before a rotation with a retired key, but prefers the current one", async () => {

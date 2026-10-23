@@ -61,6 +61,19 @@ export async function openRevisionStore(
     mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(path, JSON.stringify(snapshot), { encoding: "utf-8", mode: 0o600 });
   });
+  // Before the upgrade the file was named by the default vault id in this
+  // machine's saved session. Fold it in (max per item) and remove it.
+  const savedVaultId = loadSession()?.defaultVaultId;
+  const legacyPath = savedVaultId && join(SESSION_DIR, `item-revisions-${savedVaultId}.json`);
+  if (legacyPath && existsSync(legacyPath)) {
+    try {
+      const legacy = JSON.parse(readFileSync(legacyPath, "utf-8")) as Record<string, number>;
+      for (const [itemId, revision] of Object.entries(legacy)) store.record(itemId, revision);
+      unlinkSync(legacyPath);
+    } catch {
+      // unreadable — leave it for inspection rather than lose it silently
+    }
+  }
   if (fetchMarker) {
     try {
       await applyV2OnlyMarker((await fetchMarker()).marker, vaultMacKey, store);

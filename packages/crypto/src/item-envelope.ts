@@ -336,20 +336,22 @@ export async function encryptVaultItem(
 }
 
 /**
- * Re-encrypt every decryptable v1 item as v2. `write` persists one item and
- * should throw on failure (conflict, network); failures are counted and the
- * item is left for the next run or the next normal save.
+ * Re-encrypt every v1 item as v2, tombstones included: a deleted item can be
+ * restored, and once the account is v2-only a v1 tombstone would come back
+ * unreadable. `write` persists one item and should throw on failure
+ * (conflict, network). `legacyLeft` counts v1 items still on the server
+ * afterwards; only when it is 0 may the account be marked v2-only.
  */
 export async function upgradeLegacyItems(
   items: EncryptedVaultItem[],
   keys: { vaultEncKey: CryptoKey; vaultMacKey: CryptoKey },
   revisions: RevisionStore,
   write: (item: EncryptedVaultItem, encrypted: EncryptedBlob) => Promise<void>,
-): Promise<{ upgraded: number; failed: number }> {
+): Promise<{ upgraded: number; failed: number; legacyLeft: number }> {
   let upgraded = 0;
   let failed = 0;
   for (const item of items) {
-    if (item.deletedAt !== null || !isLegacyItemBlob(item)) continue;
+    if (!isLegacyItemBlob(item)) continue;
     const binding = bindingForItem(item);
     try {
       const current = await decryptVaultItem(item, binding, keys, revisions);
@@ -367,5 +369,5 @@ export async function upgradeLegacyItems(
       failed++;
     }
   }
-  return { upgraded, failed };
+  return { upgraded, failed, legacyLeft: failed };
 }

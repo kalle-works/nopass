@@ -120,7 +120,17 @@ pub async fn invite_member(
     role: &str,
     wrap: SignedWrap<'_>,
     invited_by: Uuid,
-) -> Result<()> {
+) -> Result<bool> {
+    // Lock the org row so a concurrent rotation can't retire this epoch
+    // between the check and the insert
+    let mut tx = pool.begin().await?;
+    let epoch: i32 = sqlx::query_scalar("SELECT key_epoch FROM organizations WHERE id = $1 FOR UPDATE")
+        .bind(org_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if epoch != wrap.key_epoch {
+        return Ok(false);
+    }
     sqlx::query(
         r#"INSERT INTO organization_members
            (org_id, user_id, role, status, encrypted_org_key, wrap_signature, key_epoch, invited_by)
@@ -134,9 +144,10 @@ pub async fn invite_member(
     .bind(wrap.wrap_signature)
     .bind(wrap.key_epoch)
     .bind(invited_by)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
-    Ok(())
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// The chain of wraps vouching for `user_id`'s org key: their own wrap, then
@@ -265,16 +276,6 @@ pub async fn accept_invite(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result
     Ok(rows.rows_affected() > 0)
 }
 
-pub async fn remove_member(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<bool> {
-    let rows =
-        sqlx::query("DELETE FROM organization_members WHERE org_id = $1 AND user_id = $2 AND role != 'owner'")
-            .bind(org_id)
-            .bind(user_id)
-            .execute(pool)
-            .await?;
-    Ok(rows.rows_affected() > 0)
-}
-
 pub async fn current_key_epoch(pool: &PgPool, org_id: Uuid) -> Result<Option<i32>> {
     let epoch = sqlx::query_scalar::<_, i32>("SELECT key_epoch FROM organizations WHERE id = $1")
         .bind(org_id)
@@ -326,6 +327,8 @@ pub struct Rotation<'a> {
     pub remove_user_id: Option<Uuid>,
     pub wraps: &'a [RewrapEntry],
     pub items: Vec<ReencryptedItem>,
+    /// Items the owner chose to delete because they could not be decrypted
+    pub delete_item_ids: &'a [Uuid],
 }
 
 pub enum RotationOutcome {
@@ -389,10 +392,18 @@ pub async fn rotate_key(pool: &PgPool, org_id: Uuid, owner_id: Uuid, r: Rotation
             .await?
             .into_iter()
             .collect();
-    let submitted: HashSet<Uuid> = r.items.iter().map(|i| i.id).collect();
-    if submitted.len() != r.items.len() || submitted != existing {
+    // Every org item is either re-encrypted or deleted, exactly once
+    let covered: Vec<Uuid> = r.items.iter().map(|i| i.id).chain(r.delete_item_ids.iter().copied()).collect();
+    let submitted: HashSet<Uuid> = covered.iter().copied().collect();
+    if submitted.len() != covered.len() || submitted != existing {
         return Ok(RotationOutcome::IncompleteItems);
     }
+
+    sqlx::query("DELETE FROM vault_items WHERE org_id = $1 AND id = ANY($2)")
+        .bind(org_id)
+        .bind(r.delete_item_ids)
+        .execute(&mut *tx)
+        .await?;
 
     for item in &r.items {
         sqlx::query(

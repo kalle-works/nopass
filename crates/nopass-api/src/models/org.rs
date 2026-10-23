@@ -86,6 +86,9 @@ pub struct RotateKeyBody {
     pub remove_user_id: Option<Uuid>,
     pub wraps: Vec<RewrapEntry>,
     pub items: Vec<ReencryptedOrgItem>,
+    /// Undecryptable items the owner chose to delete in the same transaction
+    #[serde(default)]
+    pub delete_item_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
