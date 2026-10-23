@@ -1,5 +1,8 @@
 # Prometheus scrapes the API's internal metrics listener (nopwd-api-metrics
-# Service). The release label is what kube-prometheus-stack selects on.
+# Service). kube-prometheus-stack in hetzner-k3s-flux-mail sets
+# serviceMonitorSelectorNilUsesHelmValues: false and no namespace selector, so
+# it picks up every ServiceMonitor in every namespace; the release label is not
+# required there and is kept only for a stock chart install.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

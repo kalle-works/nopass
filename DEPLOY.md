@@ -72,6 +72,15 @@ Non-secret settings are in `k8s/configmap.yaml`:
   reach the API pods. Rate limiting and the activity log read the client IP
   from `X-Forwarded-For` only when the peer is in this list.
 
+### Health probes
+
+Liveness and readiness are exec probes (`nopass-api healthcheck` for the API, a
+`node -e fetch` for web), not HTTP probes, so the kubelet needs no network path
+into the pods and the default-deny policy needs no node-network rule. The
+subcommand exists from the release that added it; an older API image started
+with these probes would run a second server instead and never become Ready.
+Ship the manifest change and an image bump to a release that has it together.
+
 ### Metrics
 
 The API serves Prometheus metrics on port 9100 (`NOPASS_METRICS_PORT`, `0`

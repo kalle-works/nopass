@@ -12,8 +12,8 @@
 #   backup            -> postgresql namespace :5432, public internet :22 (offsite git push)
 #   restore drill     -> nothing (restores into a Postgres inside its own pod)
 #   every pod         -> cluster DNS
-# Probes come from the node's own address and are allowed by the CNI for local
-# pods; verify after the first rollout that pods stay Ready.
+# Liveness and readiness are exec probes, so the kubelet needs no network path
+# into the pods and nothing here has to admit node traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

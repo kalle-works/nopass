@@ -71,18 +71,18 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "1000m"
+          # Exec probes: the kubelet's network path into the pod is not needed, so
+          # the namespace default-deny needs no node-network rule
           livenessProbe:
-            httpGet:
-              path: /v1/health
-              port: 3001
+            exec:
+              command: ["nopass-api", "healthcheck"]
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
-            httpGet:
-              path: /v1/health
-              port: 3001
+            exec:
+              command: ["nopass-api", "healthcheck"]
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3

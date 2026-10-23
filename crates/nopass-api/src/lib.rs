@@ -1,6 +1,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod healthcheck;
 pub mod metrics;
 pub mod middleware;
 pub mod models;
