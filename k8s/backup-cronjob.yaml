@@ -26,6 +26,10 @@ spec:
             app.kubernetes.io/name: nopwd-backup
         spec:
           restartPolicy: Never
+          # nopwd-ops is built for amd64 only; on the arm64 node the pull
+          # fails with "no match for platform in manifest".
+          nodeSelector:
+            kubernetes.io/arch: amd64
           automountServiceAccountToken: false
           imagePullSecrets:
             - name: ghcr-pull-secret
