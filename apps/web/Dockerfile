@@ -3,7 +3,7 @@
 #   docker build -f apps/web/Dockerfile \
 #     --build-arg NEXT_PUBLIC_API_URL=https://api.nopwd.dev .
 
-FROM node:22-slim AS builder
+FROM node:25-slim AS builder
 WORKDIR /build
 RUN corepack enable
 
@@ -18,7 +18,7 @@ RUN pnpm install --frozen-lockfile --filter @nopass/web...
 COPY apps/web ./apps/web
 RUN pnpm --filter @nopass/web build
 
-FROM node:22-slim
+FROM node:25-slim
 WORKDIR /app
 ENV NODE_ENV=production
 RUN useradd --system --uid 10001 nopass
