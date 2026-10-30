@@ -1,7 +1,7 @@
 # Multi-stage build for the nopwd API.
 # Build from the repo root: docker build -f crates/nopass-api/Dockerfile .
 
-FROM rust:1.93-slim AS builder
+FROM rust:1.98-slim AS builder
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
